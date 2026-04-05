@@ -1,11 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
-import { LoginPage } from "./pages/LoginPage";
-import { RegisterPage } from "./pages/RegisterPage";
-import { HomePage } from "./pages/HomePage";
-import { SearchFriendsPage } from "./pages/SearchFriendsPage";
-import { FriendRequestsPage } from "./pages/FriendRequestsPage";
-import { FriendsPage } from "./pages/FriendsPage";
-import { PrivateRoute } from "./components/common/PrivateRoute";
+import { LoginPage, RegisterPage, HomePage, SearchFriendsPage, FriendRequestsPage, FriendsPage } from "./web/pages";
+import { PrivateRoute } from "./web/components/common";
 
 function App() {
   return (
