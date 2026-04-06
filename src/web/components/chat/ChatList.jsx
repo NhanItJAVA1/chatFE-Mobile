@@ -21,7 +21,7 @@ export const ChatList = () => {
   ]);
 
   return (
-    <div className="flex flex-col h-full w-full border-r dark:border-slate-700 bg-white dark:bg-slate-900">
+    <div className="flex flex-col h-full w-full">
       {/* Search */}
       <div className="sticky top-0 p-3 bg-white dark:bg-slate-900 border-b dark:border-slate-700">
         <input

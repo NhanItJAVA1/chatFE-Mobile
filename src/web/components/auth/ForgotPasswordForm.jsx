@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { authService } from "../../../services/auth.service";
+import { authService } from "../../../shared/services";
 
 const getErrorMessage = (error) => {
   if (!error) return "Request failed";
@@ -44,8 +44,7 @@ export const ForgotPasswordForm = ({ onSuccess }) => {
       const payload = buildPayload(identifier);
       await authService.forgotPassword(payload);
 
-      const message =
-        "Yêu cầu đã được gửi. Vui lòng kiểm tra email/SMS để tiếp tục đặt lại mật khẩu.";
+      const message = "Yêu cầu đã được gửi. Vui lòng kiểm tra email/SMS để tiếp tục đặt lại mật khẩu.";
       setSuccessMessage(message);
       onSuccess?.(message);
     } catch (requestError) {
@@ -58,9 +57,7 @@ export const ForgotPasswordForm = ({ onSuccess }) => {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Số điện thoại hoặc Email
-        </label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Số điện thoại hoặc Email</label>
         <input
           type="text"
           value={identifier}
@@ -72,9 +69,7 @@ export const ForgotPasswordForm = ({ onSuccess }) => {
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-          {error}
-        </div>
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
       )}
 
       {successMessage && (
