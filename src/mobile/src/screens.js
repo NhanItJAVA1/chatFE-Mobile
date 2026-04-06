@@ -168,6 +168,14 @@ export const RegisterScreen = ({ onSwitchToLogin }) => {
 export const HomeScreen = () => {
   const { user } = useAuth();
   const [query, setQuery] = useState("");
+
+  const truncateName = (name, maxLength = 20) => {
+    if (!name || name.length <= maxLength) {
+      return name;
+    }
+    return name.slice(0, Math.floor(maxLength / 2)) + "...";
+  };
+
   const filteredChats = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) {
@@ -190,7 +198,7 @@ export const HomeScreen = () => {
           </Pressable>
         </View>
 
-        <SectionTitle title="Chat" subtitle={user?.displayName ? `Hello, ${user.displayName}` : "Your recent conversations"} rightLabel="S\u1eeda" />
+        <SectionTitle title="Chat" subtitle={user?.displayName ? `Hello, ${truncateName(user.displayName, 20)}` : "Your recent conversations"} rightLabel="S\u1eeda" />
 
         <View style={styles.searchBar}>
           <Ionicons name="search" size={18} color={colors.textMuted} />
@@ -212,7 +220,7 @@ export const HomeScreen = () => {
               <Avatar label={item.initials} size={54} backgroundColor={item.accent} textSize={16} />
               <View style={styles.chatMeta}>
                 <View style={styles.chatTopLine}>
-                  <Text style={styles.chatName} numberOfLines={1}>{item.name}{item.verified ? " " : ""}</Text>
+                  <Text style={styles.chatName} numberOfLines={1}>{truncateName(item.name)}{item.verified ? " " : ""}</Text>
                   <Text style={styles.chatTime}>{item.time}</Text>
                 </View>
                 <View style={styles.chatBottomLine}>
@@ -228,15 +236,22 @@ export const HomeScreen = () => {
   );
 };
 
-export const ChatScreen = () => {
+export const ChatScreen = ({ onBackPress }) => {
+  const truncateName = (name, maxLength = 20) => {
+    if (!name || name.length <= maxLength) {
+      return name;
+    }
+    return name.slice(0, Math.floor(maxLength / 2)) + "...";
+  };
+
   return (
     <View style={styles.screen}>
       <View style={styles.chatHeaderWrap}>
-        <Pressable style={styles.backButton}>
+        <Pressable style={styles.backButton} onPress={onBackPress}>
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <View style={styles.chatHeaderCard}>
-          <Text style={styles.chatHeaderTitle}>\u0110\u1ee9c Tu\u1ef3n Th\u1ee7</Text>
+          <Text style={styles.chatHeaderTitle} numberOfLines={1}>{truncateName("\u0110\u1ee9c Tu\u1ef3n Th\u1ee7")}</Text>
           <Text style={styles.chatHeaderSubtitle}>tr\u1ef1c tuy\u1ebfn 2 gi\u1edd tr\u01b0\u1edbc</Text>
         </View>
         <View style={styles.headerAvatarWrap}>
@@ -274,6 +289,13 @@ export const ChatScreen = () => {
 export const ProfileScreen = () => {
   const { user, logout } = useAuth();
 
+  const truncateName = (name, maxLength = 20) => {
+    if (!name || name.length <= maxLength) {
+      return name;
+    }
+    return name.slice(0, Math.floor(maxLength / 2)) + "...";
+  };
+
   const handleLogout = async () => {
     await logout();
   };
@@ -290,7 +312,7 @@ export const ProfileScreen = () => {
       </View>
 
       <Avatar label={(user?.displayName || "U").slice(0, 1).toUpperCase()} size={104} backgroundColor="#3d6df2" textSize={34} style={styles.profileAvatar} />
-      <Text style={styles.profileName}>{user?.displayName || "Hu\u1ef3nh Tr\u1ecdng Nh\u00e2n"}</Text>
+      <Text style={styles.profileName}>{truncateName(user?.displayName || "Hu\u1ef3nh Tr\u1ecdng Nh\u00e2n")}</Text>
       <Text style={styles.profilePhone}>{user?.phone || "+84 91 446 22 97"}</Text>
 
       <Card style={styles.profileCard}>

@@ -33,7 +33,7 @@ const MainShell = () => {
 
   const renderScreen = () => {
     if (activeTab === "chat") {
-      return <ChatScreen />;
+      return <ChatScreen onBackPress={() => setActiveTab("home")} />;
     }
 
     if (activeTab === "profile") {
@@ -46,7 +46,7 @@ const MainShell = () => {
   return (
     <View style={styles.appShell}>
       <View style={styles.content}>{renderScreen()}</View>
-      <BottomTabBar activeTab={activeTab} onChangeTab={setActiveTab} />
+      {activeTab !== "chat" && <BottomTabBar activeTab={activeTab} onChangeTab={setActiveTab} />}
     </View>
   );
 };
