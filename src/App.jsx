@@ -1,5 +1,13 @@
 import { Routes, Route, Navigate } from "react-router-dom";
-import { LoginPage, RegisterPage, HomePage, SearchFriendsPage, FriendRequestsPage, FriendsPage } from "./web/pages";
+import {
+  LoginPage,
+  RegisterPage,
+  ForgotPasswordPage,
+  HomePage,
+  SearchFriendsPage,
+  FriendRequestsPage,
+  FriendsPage,
+} from "./web/pages";
 import { PrivateRoute } from "./web/components/common";
 
 function App() {
@@ -7,6 +15,7 @@ function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route
         path="/"
         element={
