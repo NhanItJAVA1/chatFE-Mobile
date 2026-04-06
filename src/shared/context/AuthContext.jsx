@@ -1,7 +1,7 @@
-import React, { createContext, useState, useEffect } from "react";
+import React, { createContext, useEffect, useState } from "react";
 import { authService } from "../services/authService";
 
-export const AuthContext = createContext();
+export const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -9,13 +9,27 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Initialize auth from localStorage
   useEffect(() => {
-    const savedToken = authService.getToken();
-    const savedUser = authService.getUser();
+    let isActive = true;
 
-    if (savedToken) {
-      setToken(savedToken);
+    const restoreSession = async () => {
+      const savedToken = await authService.getToken();
+      const savedUser = await authService.getUser();
+
+      if (!isActive) {
+        return;
+      }
+
+      if (savedToken) {
+        setToken(savedToken);
+
+        try {
+          const profileResponse = await authService.getProfile(savedToken);
+          const profile = profileResponse.data;
+
+          if (!isActive) {
+            return;
+          }
 
       // Fetch latest profile from server
       authService
@@ -23,27 +37,35 @@ export const AuthProvider = ({ children }) => {
         .then((response) => {
           const profile = response; // axios interceptor already extracts data
           setUser(profile);
-          authService.saveUser(profile);
-        })
-        .catch(() => {
-          // If profile fetch fails, use saved user
+          await authService.saveUser(profile);
+        } catch {
+          if (!isActive) {
+            return;
+          }
+
           setUser(savedUser);
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    } else {
-      setLoading(false);
-    }
+        }
+      } else if (savedUser) {
+        setUser(savedUser);
+      }
+
+      if (isActive) {
+        setLoading(false);
+      }
+    };
+
+    restoreSession();
+
+    return () => {
+      isActive = false;
+    };
   }, []);
 
-  // Register
   const register = async (userData) => {
     try {
       setError(null);
       setLoading(true);
-      const response = await authService.register(userData);
-      return response;
+      return await authService.register(userData);
     } catch (err) {
       const errorMessage = err.message || "Registration failed";
       setError(errorMessage);
@@ -53,7 +75,6 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Login
   const login = async (phone, password) => {
     try {
       setError(null);
@@ -69,7 +90,7 @@ export const AuthProvider = ({ children }) => {
       const profileResponse = await authService.getProfile(data.token || data.accessToken);
       const profile = profileResponse; // axios interceptor already extracts data
 
-      authService.saveUser(profile);
+      await authService.saveUser(profile);
       setUser(profile);
 
       return profile;
@@ -82,22 +103,23 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Logout
-  const logout = () => {
-    authService.logout();
+  const logout = async () => {
+    await authService.logout();
     setUser(null);
     setToken(null);
     setError(null);
   };
 
-  // Get profile
   const getProfile = async () => {
     try {
-      if (!token) throw new Error("No token available");
+      if (!token) {
+        throw new Error("No token available");
+      }
+
       const response = await authService.getProfile(token);
       const profile = response; // axios interceptor already extracts data
       setUser(profile);
-      authService.saveUser(profile);
+      await authService.saveUser(profile);
       return profile;
     } catch (err) {
       setError(err.message);

@@ -1,26 +1,14 @@
-# Mobile App Structure
+# Mobile App
 
-This folder is reserved for React Native mobile app code.
+This folder contains the Expo React Native app that reuses the shared auth hooks and services from `src/shared`.
 
-## Getting Started
+## Run
 
-To set up the mobile app:
+1. Install dependencies inside this folder.
+2. Start Expo with `npm run start`.
 
-1. Create subdirectories here (screens, components, navigation, etc.)
-2. Share code from `/shared` folder:
-   ```javascript
-   import { useAuth } from "../../shared/hooks";
-   import { authService } from "../../shared/services";
-   ```
+## Notes
 
-## Recommended Structure
-
-```
-mobile/
-├── screens/        # App screens/pages
-├── components/     # Reusable components
-├── navigation/     # Navigation setup
-├── styles/         # Mobile styling
-├── services/       # Mobile-specific services
-└── App.js
-```
+- `AuthProvider` and `useAuth` are shared with the web app.
+- Storage is injected with `AsyncStorage` on mobile.
+- The UI mirrors the screenshots for chat list, conversation view, profile, and auth screens.
