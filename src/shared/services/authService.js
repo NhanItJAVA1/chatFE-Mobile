@@ -1,9 +1,23 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/v1";
+import { getApiBaseUrl } from "../runtime/config";
+import { authStorage } from "../runtime/storage";
+
+const buildUrl = (endpoint) => {
+  const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  return `${getApiBaseUrl()}${normalizedEndpoint}`;
+};
+
+const readErrorMessage = async (response, fallbackMessage) => {
+  try {
+    const error = await response.json();
+    return error?.message || error?.msg || fallbackMessage;
+  } catch {
+    return fallbackMessage;
+  }
+};
 
 export const authService = {
-  // Register new user
   register: async (userData) => {
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+    const response = await fetch(buildUrl("/auth/register"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -12,16 +26,14 @@ export const authService = {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || "Registration failed");
+      throw new Error(await readErrorMessage(response, "Registration failed"));
     }
 
     return await response.json();
   },
 
-  // Login user
   login: async (phone, password) => {
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    const response = await fetch(buildUrl("/auth/login"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -30,55 +42,49 @@ export const authService = {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || "Login failed");
-    }
-
-    const data = await response.json();
-    return data; // { status, msg, data: { token, ... } }
-  },
-
-  // Get user profile
-  getProfile: async (token) => {
-    const response = await fetch(`${API_BASE_URL}/profile`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch profile");
+      throw new Error(await readErrorMessage(response, "Login failed"));
     }
 
     return await response.json();
   },
 
-  // Save token to localStorage
-  saveToken: (token) => {
-    localStorage.setItem("token", token);
+  getProfile: async (token) => {
+    const resolvedToken = token || (await authStorage.getItem("token"));
+
+    const response = await fetch(buildUrl("/profile"), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...(resolvedToken ? { Authorization: `Bearer ${resolvedToken}` } : {}),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, "Failed to fetch profile"));
+    }
+
+    return await response.json();
   },
 
-  // Get token from localStorage
-  getToken: () => {
-    return localStorage.getItem("token");
+  saveToken: async (token) => {
+    await authStorage.setItem("token", token);
   },
 
-  // Save user to localStorage
-  saveUser: (user) => {
-    localStorage.setItem("user", JSON.stringify(user));
+  getToken: async () => {
+    return await authStorage.getItem("token");
   },
 
-  // Get user from localStorage
-  getUser: () => {
-    const user = localStorage.getItem("user");
+  saveUser: async (user) => {
+    await authStorage.setItem("user", JSON.stringify(user));
+  },
+
+  getUser: async () => {
+    const user = await authStorage.getItem("user");
     return user ? JSON.parse(user) : null;
   },
 
-  // Logout
-  logout: () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+  logout: async () => {
+    await authStorage.removeItem("token");
+    await authStorage.removeItem("user");
   },
 };
