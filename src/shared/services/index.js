@@ -15,9 +15,11 @@ export {
   updateProfile,
   updateProfileFields,
   updateAvatar,
+  updateAvatarViaAuth,
   updateDisplayName,
   updateBio,
   updatePassword,
   updatePrivacy,
   userService,
 } from "./userService";
+export { uploadMedia, uploadMultipleMedia, deleteMedia, mediaService } from "./mediaService";

@@ -36,8 +36,12 @@ export const Sidebar = ({ isOpen, onClose, activeView, onViewChange, darkMode, o
             className="flex items-center gap-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-700 p-2 rounded-lg"
             onClick={() => setShowProfileMenu(!showProfileMenu)}
           >
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white font-bold">
-              {user?.displayName?.charAt(0) || "U"}
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white font-bold overflow-hidden">
+              {user?.avatarUrl ? (
+                <img src={user.avatarUrl} alt={user?.displayName} className="w-full h-full object-cover" />
+              ) : (
+                user?.displayName?.charAt(0) || "U"
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-semibold text-gray-900 dark:text-white truncate">{user?.displayName || "User"}</p>

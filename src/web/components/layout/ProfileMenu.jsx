@@ -55,8 +55,12 @@ export const ProfileMenu = ({ onClose, onOpenProfile }) => {
         {/* User Profile Header */}
         <div className="bg-gradient-to-r from-blue-500 to-blue-600 p-4">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-blue-600 font-bold text-lg shadow-md">
-              {user?.displayName?.charAt(0) || "U"}
+            <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-blue-600 font-bold text-lg shadow-md overflow-hidden">
+              {user?.avatarUrl ? (
+                <img src={user.avatarUrl} alt={user?.displayName} className="w-full h-full object-cover" />
+              ) : (
+                user?.displayName?.charAt(0) || "U"
+              )}
             </div>
             <div>
               <p className="font-semibold text-white">{user?.displayName || "User"}</p>
