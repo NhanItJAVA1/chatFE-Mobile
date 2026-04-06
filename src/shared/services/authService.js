@@ -44,7 +44,6 @@ export const authService = {
     return authData;
   },
 
-  // Get user profile
   getProfile: async (token) => {
     try {
       const response = await axiosInstance.get("/profile", {
@@ -58,24 +57,20 @@ export const authService = {
     }
   },
 
-  // Save token to localStorage
-  saveToken: (token) => {
-    localStorage.setItem("token", token);
+  saveToken: async (token) => {
+    await authStorage.setItem("token", token);
   },
 
-  // Get token from localStorage
-  getToken: () => {
-    return localStorage.getItem("token");
+  getToken: async () => {
+    return await authStorage.getItem("token");
   },
 
-  // Save user to localStorage
-  saveUser: (user) => {
-    localStorage.setItem("user", JSON.stringify(user));
+  saveUser: async (user) => {
+    await authStorage.setItem("user", JSON.stringify(user));
   },
 
-  // Get user from localStorage
-  getUser: () => {
-    const user = localStorage.getItem("user");
+  getUser: async () => {
+    const user = await authStorage.getItem("user");
     return user ? JSON.parse(user) : null;
   },
 

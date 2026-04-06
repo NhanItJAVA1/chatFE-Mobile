@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "ChatChit Mobile",
+    "slug": "chatchit-mobile",
+    "version": "1.0.0",
+    "sdkVersion": "54.0.0",
+    "orientation": "portrait",
+    "entryPoint": "./App.js",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "useFrameworks": "static"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.anonymous.chatchitmobile"
+    }
+  }
+}

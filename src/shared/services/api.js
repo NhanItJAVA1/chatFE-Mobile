@@ -1,20 +1,25 @@
-// API service
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/v1";
+import { getApiBaseUrl } from "../runtime/config";
+import { authStorage } from "../runtime/storage";
 
-const getAuthToken = () => {
-  return localStorage.getItem("token");
+const buildUrl = (endpoint) => {
+  const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  return `${getApiBaseUrl()}${normalizedEndpoint}`;
+};
+
+const getAuthToken = async () => {
+  return await authStorage.getItem("token");
 };
 
 export const apiCall = async (endpoint, options = {}) => {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const token = getAuthToken();
+  const url = buildUrl(endpoint);
+  const token = await getAuthToken();
 
   try {
     const response = await fetch(url, {
       headers: {
         "Content-Type": "application/json",
-        ...(token && { Authorization: `Bearer ${token}` }),
-        ...options.headers,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
       },
       cache: "no-store",
       ...options,
@@ -24,6 +29,10 @@ export const apiCall = async (endpoint, options = {}) => {
       throw new Error(`API error: ${response.status}`);
     }
 
+    if (response.status === 204) {
+      return null;
+    }
+
     return await response.json();
   } catch (error) {
     console.error("API call failed:", error);
@@ -31,12 +40,12 @@ export const apiCall = async (endpoint, options = {}) => {
   }
 };
 
-// API client with get/post methods similar to axios
 export const api = {
   get: async (endpoint, config = {}) => {
     const { params, ...restConfig } = config;
-    const queryString = params ? "?" + new URLSearchParams(params).toString() : "";
-    return apiCall(endpoint + queryString, {
+    const queryString = params ? `?${new URLSearchParams(params).toString()}` : "";
+
+    return apiCall(`${endpoint}${queryString}`, {
       method: "GET",
       ...restConfig,
     });
