@@ -1,58 +1,61 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/v1";
+import { axiosInstance, authTokenStorage, setAuthTokens } from "../../api/axios-instance";
+
+const publicRequestConfig = {
+  skipAuth: true,
+};
+
+const readAccessToken = (payload) => {
+  return payload?.accessToken || payload?.token || "";
+};
+
+const readUserProfile = (payload) => {
+  return payload?.user || payload?.profile;
+};
 
 export const authService = {
-  // Register new user
+  // Register new user with axios
   register: async (userData) => {
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(userData),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
+    try {
+      const response = await axiosInstance.post("/auth/register", userData, publicRequestConfig);
+      return response;
+    } catch (error) {
       throw new Error(error.message || "Registration failed");
     }
-
-    return await response.json();
   },
 
-  // Login user
-  login: async (phone, password) => {
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ phone, password }),
-    });
+  // Login user with axios and proper token management
+  login: async (payload) => {
+    const authData = await axiosInstance.post("/auth/login", payload, { ...publicRequestConfig });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || "Login failed");
+    const accessToken = readAccessToken(authData);
+
+    if (accessToken) {
+      setAuthTokens({
+        accessToken,
+        refreshToken: authData.refreshToken,
+      });
     }
 
-    const data = await response.json();
-    return data; // { status, msg, data: { token, ... } }
+    const userProfile = readUserProfile(authData);
+    if (userProfile) {
+      localStorage.setItem("user", JSON.stringify(userProfile));
+    }
+
+    return authData;
   },
 
   // Get user profile
   getProfile: async (token) => {
-    const response = await fetch(`${API_BASE_URL}/profile`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
+    try {
+      const response = await axiosInstance.get("/profile", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      return response;
+    } catch (error) {
       throw new Error("Failed to fetch profile");
     }
-
-    return await response.json();
   },
 
   // Save token to localStorage
@@ -77,8 +80,36 @@ export const authService = {
   },
 
   // Logout
-  logout: () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+  async logout(request) {
+    const refreshToken = request?.refreshToken || authTokenStorage.getRefreshToken() || undefined;
+
+    try {
+      const responseData = await axiosInstance.post(
+        "/auth/logout",
+        { refreshToken },
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      return responseData;
+    } finally {
+      authTokenStorage.clearAuthTokens();
+      localStorage.removeItem("user");
+    }
+  },
+
+  // Forgot password
+  async forgotPassword(payload) {
+    const responseData = await axiosInstance.post("/auth/forgot-password", payload, publicRequestConfig);
+    return responseData;
+  },
+
+  // Update password
+  async updatePassword(payload) {
+    const responseData = await axiosInstance.patch("/auth/update-password", payload);
+    return responseData;
   },
 };
