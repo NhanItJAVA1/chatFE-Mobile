@@ -30,6 +30,8 @@ export const uploadMedia = async (file) => {
     }
 
     const data = await response.json();
+    console.log("[mediaService] Upload response:", JSON.stringify(data, null, 2));
+    console.log("[mediaService] Upload data:", JSON.stringify(data.data, null, 2));
     return data.data;
   } catch (error) {
     console.error("Media upload failed:", error);
@@ -68,6 +70,8 @@ export const uploadMultipleMedia = async (files) => {
     }
 
     const data = await response.json();
+    console.log("[mediaService] Upload multiple response:", JSON.stringify(data, null, 2));
+    console.log("[mediaService] Upload multiple data:", JSON.stringify(data.data, null, 2));
     return data.data;
   } catch (error) {
     console.error("Media upload failed:", error);

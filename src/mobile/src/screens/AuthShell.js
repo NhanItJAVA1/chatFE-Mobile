@@ -13,7 +13,7 @@ export const AuthShell = ({ children, title, subtitle, footer }) => (
             <ScrollView contentContainerStyle={styles.authScroll} keyboardShouldPersistTaps="handled">
                 <View style={styles.authBadge}>
                     <Ionicons name="paper-plane" size={16} color={colors.text} />
-                    <Text style={styles.authBadgeText}>Telegram</Text>
+                    <Text style={styles.authBadgeText}>ChatChit</Text>
                 </View>
                 <Text style={styles.authTitle}>{title}</Text>
                 <Text style={styles.authSubtitle}>{subtitle}</Text>

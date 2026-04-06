@@ -1,57 +1,59 @@
 import axios from "axios";
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || "/v1";
+import { authStorage } from "../shared/runtime/storage";
+import { getApiBaseUrl } from "../shared/runtime/config";
 
 const ACCESS_TOKEN_KEY = "token";
 const REFRESH_TOKEN_KEY = "refreshToken";
 
-const getAccessToken = () => {
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
+// Use authStorage (async) for mobile compatibility
+const getAccessToken = async () => {
+  return await authStorage.getItem(ACCESS_TOKEN_KEY);
 };
 
-const getRefreshToken = () => {
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
+const getRefreshToken = async () => {
+  return await authStorage.getItem(REFRESH_TOKEN_KEY);
 };
 
-const setAccessToken = (token) => {
-  localStorage.setItem(ACCESS_TOKEN_KEY, token);
+const setAccessToken = async (token) => {
+  await authStorage.setItem(ACCESS_TOKEN_KEY, token);
 };
 
-const setRefreshToken = (token) => {
-  localStorage.setItem(REFRESH_TOKEN_KEY, token);
+const setRefreshToken = async (token) => {
+  await authStorage.setItem(REFRESH_TOKEN_KEY, token);
 };
 
-export const setAuthTokens = ({ accessToken, refreshToken }) => {
-  setAccessToken(accessToken);
+export const setAuthTokens = async ({ accessToken, refreshToken }) => {
+  await setAccessToken(accessToken);
   if (refreshToken) {
-    setRefreshToken(refreshToken);
+    await setRefreshToken(refreshToken);
   }
 };
 
-export const clearAuthTokens = () => {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+export const clearAuthTokens = async () => {
+  await authStorage.removeItem(ACCESS_TOKEN_KEY);
+  await authStorage.removeItem(REFRESH_TOKEN_KEY);
 };
 
-const clearAuthSession = () => {
-  clearAuthTokens();
-  localStorage.removeItem("user");
+const clearAuthSession = async () => {
+  await clearAuthTokens();
+  await authStorage.removeItem("user");
 };
 
-const redirectToLogin = () => {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  if (window.location.pathname !== "/login") {
-    window.location.assign("/login");
+const notifySessionExpired = () => {
+  if (typeof window !== "undefined" && window.dispatchEvent && typeof CustomEvent !== "undefined") {
+    window.dispatchEvent(new CustomEvent("auth:session-expired"));
   }
 };
 
-const handleUnauthorized = () => {
-  clearAuthSession();
-  window.dispatchEvent(new CustomEvent("auth:session-expired"));
-  redirectToLogin();
+const handleUnauthorized = async () => {
+  await clearAuthSession();
+  notifySessionExpired();
+  // Only redirect in browser environment
+  if (typeof window !== "undefined" && window.location) {
+    if (window.location.pathname !== "/login") {
+      window.location.assign("/login");
+    }
+  }
 };
 
 const extractTokens = (response) => {
@@ -67,7 +69,7 @@ const extractTokens = (response) => {
 };
 
 export const axiosInstance = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: getApiBaseUrl(),
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",
@@ -94,17 +96,22 @@ const processQueue = (error, token = null) => {
   failedQueue = [];
 };
 
+// Setup async interceptor for request
 axiosInstance.interceptors.request.use(
-  (config) => {
+  async (config) => {
     const requestConfig = config;
 
     if (requestConfig.skipAuth) {
       return requestConfig;
     }
 
-    const token = getAccessToken();
-    if (token) {
-      requestConfig.headers.Authorization = `Bearer ${token}`;
+    try {
+      const token = await getAccessToken();
+      if (token) {
+        requestConfig.headers.Authorization = `Bearer ${token}`;
+      }
+    } catch (err) {
+      console.warn("Failed to get token for request:", err);
     }
 
     return requestConfig;
@@ -135,7 +142,7 @@ axiosInstance.interceptors.response.use(
     const errorCode = error.response?.data?.code;
 
     if (errorCode === "UNAUTHORIZED" && (!originalRequest || originalRequest._retry)) {
-      handleUnauthorized();
+      await handleUnauthorized();
       return Promise.reject(error);
     }
 
@@ -143,7 +150,7 @@ axiosInstance.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    if (originalRequest.url?.includes("/auth/login") || originalRequest.url?.includes("/auth/refresh-token")) {
+    if (originalRequest.url?.includes("/auth/login") || originalRequest.url?.includes("/auth/refresh")) {
       return Promise.reject(error);
     }
 
@@ -164,13 +171,13 @@ axiosInstance.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const refreshToken = getRefreshToken();
+      const refreshToken = await getRefreshToken();
       if (!refreshToken) {
-        handleUnauthorized();
+        await handleUnauthorized();
         throw new Error("Missing refresh token.");
       }
 
-      const refreshResponse = await axios.post(`${API_BASE_URL}/auth/refresh-token`, {
+      const refreshResponse = await axios.post(`${getApiBaseUrl()}/auth/refresh`, {
         refreshToken,
       });
 
@@ -179,9 +186,9 @@ axiosInstance.interceptors.response.use(
         throw new Error("Invalid refresh token response.");
       }
 
-      setAccessToken(newTokens.accessToken);
+      await setAccessToken(newTokens.accessToken);
       if (newTokens.refreshToken) {
-        setRefreshToken(newTokens.refreshToken);
+        await setRefreshToken(newTokens.refreshToken);
       }
 
       processQueue(null, newTokens.accessToken);
@@ -192,7 +199,7 @@ axiosInstance.interceptors.response.use(
       return axiosInstance(originalRequest);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      handleUnauthorized();
+      await handleUnauthorized();
 
       return Promise.reject(refreshError);
     } finally {

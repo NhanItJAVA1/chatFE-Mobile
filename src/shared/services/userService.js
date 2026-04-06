@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { authStorage } from "../runtime/storage";
 
 /**
  * Lấy thông tin profile của user hiện tại
@@ -53,18 +54,21 @@ export const updateProfile = async (profileData) => {
     });
 
     const response = await api.patch("/profile", updateData);
+    console.log("[userService] PATCH /profile request data:", JSON.stringify(updateData, null, 2));
+    console.log("[userService] PATCH /profile response:", JSON.stringify(response, null, 2));
 
-    // Cập nhật localStorage với dữ liệu mới
-    if (response.data) {
-      const currentUser = localStorage.getItem("user");
-      if (currentUser) {
-        try {
+    // Cập nhật storage với dữ liệu mới (thay vì localStorage để compatible với mobile)
+    if (response) {
+      try {
+        const currentUser = await authStorage.getItem("user");
+        if (currentUser) {
           const user = JSON.parse(currentUser);
           const updatedUser = { ...user, ...updateData };
-          localStorage.setItem("user", JSON.stringify(updatedUser));
-        } catch (parseError) {
-          console.warn("Could not parse user from localStorage");
+          await authStorage.setItem("user", JSON.stringify(updatedUser));
+          console.log("[userService] Profile updated in storage:", JSON.stringify(updatedUser, null, 2));
         }
+      } catch (parseError) {
+        console.warn("[userService] Could not update user in storage:", parseError);
       }
     }
 
@@ -93,17 +97,18 @@ export const updateAvatarViaAuth = async (avatarUrl) => {
     const { authService } = await import("./authService");
     const response = await authService.updateAvatar(avatarUrl);
 
-    // Cập nhật localStorage với dữ liệu mới
-    if (response.data || response) {
-      const currentUser = localStorage.getItem("user");
-      if (currentUser) {
-        try {
+    // Cập nhật storage với dữ liệu mới (AsyncStorage thay vì localStorage)
+    if (response) {
+      try {
+        const currentUser = await authStorage.getItem("user");
+        if (currentUser) {
           const user = JSON.parse(currentUser);
           const updatedUser = { ...user, avatarUrl };
-          localStorage.setItem("user", JSON.stringify(updatedUser));
-        } catch (parseError) {
-          console.warn("Could not parse user from localStorage");
+          await authStorage.setItem("user", JSON.stringify(updatedUser));
+          console.log("[userService] Avatar updated in storage:", avatarUrl);
         }
+      } catch (parseError) {
+        console.warn("[userService] Could not update avatar in storage:", parseError);
       }
     }
 

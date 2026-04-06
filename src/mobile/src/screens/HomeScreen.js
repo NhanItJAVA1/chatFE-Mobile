@@ -33,7 +33,7 @@ export const HomeScreen = () => {
                 <View style={styles.homeTopRow}>
                     <View style={styles.brandPill}>
                         <Ionicons name="paper-plane" size={14} color={colors.text} />
-                        <Text style={styles.brandText}>Telegram</Text>
+                        <Text style={styles.brandText}>ChatChit</Text>
                     </View>
                     <View style={styles.actionCircle}>
                         <Ionicons name="create-outline" size={22} color={colors.text} />
@@ -59,13 +59,13 @@ export const HomeScreen = () => {
                 <Card style={styles.chatListCard}>
                     {filteredChats.map((item, index) => (
                         <View key={item.id} style={[styles.chatRow, index !== filteredChats.length - 1 && styles.rowDivider]}>
-                            {item.avatar ? (
-                                <Image source={{ uri: item.avatar }} style={[styles.avatarImage, { width: 54, height: 54, borderRadius: 27 }]} />
+                            {item.avatarUrl || item.avatar ? (
+                                <Image source={{ uri: item.avatarUrl || item.avatar }} style={[styles.avatarImage, { width: 54, height: 54, borderRadius: 27 }]} />
                             ) : (
-                                <Avatar 
-                                    label={item.initials} 
-                                    size={54} 
-                                    backgroundColor={item.accent} 
+                                <Avatar
+                                    label={item.initials}
+                                    size={54}
+                                    backgroundColor={item.accent}
                                     textSize={16}
                                 />
                             )}

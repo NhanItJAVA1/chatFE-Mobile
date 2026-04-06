@@ -70,36 +70,49 @@ export const authService = {
         if (!response.ok) throw new Error(`Profile fetch failed: ${response.status}`);
 
         const responseData = await response.json();
-        console.log("Profile response:", responseData);
+        console.log("[authService] Profile JSON:", JSON.stringify(responseData, null, 2));
+
+        const profile = responseData.data || responseData;
 
         // Extract from wrapper if exists
-        return responseData.data || responseData;
+        return profile;
       }
 
       // Otherwise use api.get which pulls token from storage
       const response = await api.get("/profile");
+
+      // axios interceptor already extracts .data, so response is the profile object
+      let profile = response;
+
+      // If somehow still wrapped (shouldn't happen with interceptor)
+      if (response.data && typeof response.data === 'object' && (response.data.id || response.data.displayName)) {
+        profile = response.data;
+      }
+
+      console.log("[authService] Profile JSON (api.get):", JSON.stringify(profile, null, 2));
+
       // Extract from wrapper if backend returns { data: {...} }
-      return response.data || response;
+      return profile;
     } catch (error) {
-      console.error("Get profile error:", error);
+      console.error("[authService] Get profile error:", error);
       throw new Error("Failed to fetch profile");
     }
   },
 
-  saveToken: (token) => {
-    localStorage.setItem("token", token);
+  saveToken: async (token) => {
+    await authStorage.setItem("token", token);
   },
 
-  getToken: () => {
-    return localStorage.getItem("token");
+  getToken: async () => {
+    return await authStorage.getItem("token");
   },
 
-  saveUser: (user) => {
-    localStorage.setItem("user", JSON.stringify(user));
+  saveUser: async (user) => {
+    await authStorage.setItem("user", JSON.stringify(user));
   },
 
-  getUser: () => {
-    const user = localStorage.getItem("user");
+  getUser: async () => {
+    const user = await authStorage.getItem("user");
     return user ? JSON.parse(user) : null;
   },
 

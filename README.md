@@ -131,7 +131,7 @@ FE/
 
 ### 3. **UI/UX** ✅
 
-- **3-Column Layout**: Sidebar | Left Panel | Right Panel (Telegram-style)
+- **3-Column Layout**: Sidebar | Left Panel | Right Panel (ChatChit-style)
 - **Sidebar Menu**: Profile, All Chats, Contacts, Calls, Saved Messages, Night Mode, Settings, Logout
 - **Dynamic Left Panel**: Switch giữa ChatList hoặc Contacts
 - **Dark Mode**: Toggle via Night Mode switch
@@ -346,7 +346,7 @@ export const MyComponent = () => {
 - ✅ Friend Search
 - ✅ Friend Requests (Send/Accept/Decline)
 - ✅ Friends List
-- ✅ UI (Telegram-style 3-column)
+- ✅ UI (ChatChit-style 3-column)
 - ⏳ Chat Messaging (Ready for implementation)
 - ⏳ Chat History (Ready for implementation)
 

@@ -19,7 +19,7 @@ export const ProfileScreen = () => {
         phone: user?.phone || "",
         email: user?.email || "",
         bio: user?.bio || "",
-        avatar: user?.avatar || null,
+        avatarUrl: user?.avatarUrl || user?.avatar || null,
     });
 
     const truncateName = (name, maxLength = 20) => {
@@ -33,29 +33,29 @@ export const ProfileScreen = () => {
     const uploadImage = async (imageUri) => {
         try {
             let token = await authStorage.getItem("token");
-            
+
             // Clean token: remove whitespace and ensure it's a string
             if (token) {
                 token = String(token).trim();
             }
-            
+
             console.log("[Upload] Token:", token ? "✅ exists (" + token.substring(0, 20) + "...)" : "❌ missing");
-            
+
             if (!token) {
                 throw new Error("No authentication token found. Please login again.");
             }
-            
+
             const apiUrl = getApiBaseUrl();
             console.log("[Upload] API URL:", apiUrl);
-            
+
             // Helper to perform upload
             const performUpload = async (uploadToken) => {
                 const formData = new FormData();
-                
+
                 // Extract filename from URI
                 const filename = imageUri.split("/").pop() || "avatar.jpg";
                 const fileType = "image/jpeg"; // Default to JPEG
-                
+
                 // Append file to FormData
                 formData.append("file", {
                     uri: imageUri,
@@ -78,13 +78,13 @@ export const ProfileScreen = () => {
             try {
                 const response = await performUpload(token);
                 console.log("[Upload] Image uploaded successfully:", response.data);
-                
+
                 // Extract URL from response structure: response.data.data.url
                 const uploadedUrl = response.data?.data?.url;
                 if (!uploadedUrl) {
                     throw new Error("No URL returned from server");
                 }
-                
+
                 return uploadedUrl;
             } catch (uploadError) {
                 // If 401 (token expired), try to refresh and retry
@@ -94,14 +94,14 @@ export const ProfileScreen = () => {
                         const newToken = await authService.refreshAccessToken();
                         console.log("[Upload] Token refreshed, retrying upload...");
                         const retryResponse = await performUpload(newToken);
-                        
+
                         console.log("[Upload] Image uploaded successfully (after refresh):", retryResponse.data);
-                        
+
                         const uploadedUrl = retryResponse.data?.data?.url;
                         if (!uploadedUrl) {
                             throw new Error("No URL returned from server");
                         }
-                        
+
                         return uploadedUrl;
                     } catch (refreshError) {
                         console.error("[Upload] Token refresh failed:", refreshError.message);
@@ -130,7 +130,7 @@ export const ProfileScreen = () => {
             if (!result.canceled) {
                 const imageUri = result.assets[0].uri;
                 setSelectedImage(imageUri);
-                setEditData((current) => ({ ...current, avatar: imageUri }));
+                setEditData((current) => ({ ...current, avatarUrl: imageUri }));
                 console.log("[Profile] Image selected:", imageUri);
             }
         } catch (error) {
@@ -155,13 +155,26 @@ export const ProfileScreen = () => {
             if (selectedImage) {
                 console.log("[Profile] Uploading image...");
                 const uploadedUrl = await uploadImage(selectedImage);
-                profileData.avatar = uploadedUrl; // Update with server URL
+                profileData.avatarUrl = uploadedUrl; // Use correct field name for backend
                 console.log("[Profile] Image uploaded, using URL:", uploadedUrl);
+            } else if (editData.avatarUrl && editData.avatarUrl.startsWith("http")) {
+                // If avatar is already a URL, send it as avatarUrl
+                profileData.avatarUrl = editData.avatarUrl;
+            }
+
+            // Only send allowed fields
+            const updateData = {
+                displayName: profileData.displayName,
+                bio: profileData.bio,
+            };
+
+            if (profileData.avatarUrl) {
+                updateData.avatarUrl = profileData.avatarUrl;
             }
 
             // Update profile via context (saves to storage + syncs to backend)
-            const result = await updateProfile(profileData);
-            
+            const result = await updateProfile(updateData);
+
             console.log("[Profile] Profile updated successfully");
             setIsEditing(false);
             setSelectedImage(null);
@@ -184,8 +197,8 @@ export const ProfileScreen = () => {
 
                 {selectedImage ? (
                     <Image source={{ uri: selectedImage }} style={styles.profileAvatarImage} />
-                ) : user?.avatar ? (
-                    <Image source={{ uri: user.avatar }} style={styles.profileAvatarImage} />
+                ) : (user?.avatarUrl || user?.avatar) ? (
+                    <Image source={{ uri: user.avatarUrl || user.avatar }} style={styles.profileAvatarImage} />
                 ) : (
                     <Avatar label={(editData.displayName || "U").slice(0, 1).toUpperCase()} size={104} backgroundColor="#3d6df2" textSize={34} style={styles.profileAvatar} />
                 )}
@@ -224,13 +237,14 @@ export const ProfileScreen = () => {
                 </Pressable>
             </View>
 
-            {user?.avatar ? (
-                <Image source={{ uri: user.avatar }} style={styles.profileAvatarImage} />
+            {(user?.avatarUrl || user?.avatar) ? (
+                <Image source={{ uri: user.avatarUrl || user.avatar }} style={styles.profileAvatarImage} />
             ) : (
                 <Avatar label={(user?.displayName || "U").slice(0, 1).toUpperCase()} size={104} backgroundColor="#3d6df2" textSize={34} style={styles.profileAvatar} />
             )}
             <Text style={styles.profileName}>{truncateName(user?.displayName || "Huỳnh Trọng Nhân")}</Text>
             <Text style={styles.profilePhone}>{user?.phone || "+84 91 446 22 97"}</Text>
+            {user?.bio && <Text style={styles.profileBio}>{user.bio}</Text>}
 
             <Card style={styles.profileCard}>
                 <Pressable style={styles.profileActionRow}>
@@ -249,7 +263,7 @@ export const ProfileScreen = () => {
                     <View style={styles.warningIcon}><Ionicons name="alert-circle" size={20} color="#ff6b6b" /></View>
                     <Text style={styles.warningTitle}>+84 91 446 22 97 vẫn là số của bạn?</Text>
                 </View>
-                <Text style={styles.warningBody}>Chú ý kiểm tra số điện thoại để bạn luôn có thể đăng nhập Telegram. Tìm hiểu thêm</Text>
+                <Text style={styles.warningBody}>Chú ý kiểm tra số điện thoại để bạn luôn có thể đăng nhập ChatChit. Tìm hiểu thêm</Text>
                 <View style={styles.warningDivider} />
                 <Pressable style={styles.warningLinkRow}><Text style={styles.warningLink}>Giữ số +84 91 446 22 97</Text></Pressable>
                 <View style={styles.warningDivider} />
@@ -325,6 +339,13 @@ const styles = StyleSheet.create({
         color: colors.textMuted,
         fontSize: 18,
         textAlign: "center",
+    },
+    profileBio: {
+        color: colors.textSoft,
+        fontSize: 16,
+        textAlign: "center",
+        lineHeight: 20,
+        marginTop: 4,
     },
     profileCard: {
         width: "100%",

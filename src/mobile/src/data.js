@@ -4,7 +4,7 @@
   { id: 3, name: "L\u1eadp tr\u00ecnh di \u0111\u1ed9ng", message: "\u0110\u1ee9c Tu\u1ef3n Th\u1ee7", time: "13/10/25", unread: 0, accent: "#ff9f45", initials: "LD" },
   { id: 4, name: "Con B\u00e0 T\u1ecbnh", message: "Ai bi\u1ebft \u0111c", time: "07/09/25", unread: 0, accent: "#74d18b", initials: "CB" },
   { id: 5, name: "S\u1eafc Ph\u00fac Ph\u1edd \u00dac Ph\u00fac", message: "...\u0111\u00e3 tham gia Telegram", time: "21/08/25", unread: 0, accent: "#7d7cff", initials: "PS" },
-  { id: 6, name: "Telegram", message: "Ok", time: "17/08/25", unread: 2, accent: "#2d9cdb", initials: "TG", verified: true },
+  { id: 6, name: "ChatChit", message: "Ok", time: "17/08/25", unread: 2, accent: "#2d9cdb", initials: "CC", verified: true },
 ];
 
 export const conversation = [

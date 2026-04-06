@@ -15,7 +15,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }) => {
     // Use provided chatUser prop if available, otherwise use mock data
     const userName = chatUser?.displayName || mockUserName;
     const userInitials = chatUser?.displayName?.split(" ").map(n => n[0]).join("") || mockUserInitials;
-    const userAvatar = chatUser?.avatar || mockUserAvatar;
+    const userAvatar = chatUser?.avatarUrl || chatUser?.avatar || mockUserAvatar;
     const userColor = chatUser?.color || mockUserColor;
 
     const truncateName = (name, maxLength = 20) => {
@@ -39,11 +39,11 @@ export const ChatScreen = ({ onBackPress, chatUser = null }) => {
                     {userAvatar ? (
                         <Image source={{ uri: userAvatar }} style={[styles.avatarImage, { width: 52, height: 52, borderRadius: 26 }]} />
                     ) : (
-                        <Avatar 
-                            label={userInitials} 
-                            size={52} 
-                            backgroundColor={userColor} 
-                            textSize={14} 
+                        <Avatar
+                            label={userInitials}
+                            size={52}
+                            backgroundColor={userColor}
+                            textSize={14}
                         />
                     )}
                 </View>
