@@ -105,6 +105,13 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Update user profile locally (called after API update)
+  const updateUserProfile = (updatedData) => {
+    const newUser = { ...user, ...updatedData };
+    setUser(newUser);
+    authService.saveUser(newUser);
+  };
+
   const value = {
     user,
     token,
@@ -114,6 +121,7 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     getProfile,
+    updateUserProfile,
     isAuthenticated: !!token,
   };
 
