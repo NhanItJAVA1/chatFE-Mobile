@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "../../../shared/hooks";
-import { updateProfile } from "../../../shared/services";
+import { updateProfile, updateAvatarViaAuth } from "../../../shared/services";
+import { AvatarEditor } from "./AvatarEditor";
 
 /**
  * UserProfileModal - Shared component for viewing and editing user profile
@@ -24,34 +25,46 @@ export const UserProfileModal = ({ isOpen, onClose, onSuccess }) => {
     displayName: user?.displayName || "",
     phone: user?.phone || "",
     email: user?.email || "",
-    username: user?.username || "",
     bio: user?.bio || "",
     avatarUrl: user?.avatarUrl || "",
   });
 
-  // Update form when user changes
+  // Check if there are unsaved changes
+  const hasUnsavedChanges = () => {
+    return (
+      formData.displayName !== (user?.displayName || "") ||
+      formData.phone !== (user?.phone || "") ||
+      formData.email !== (user?.email || "") ||
+      formData.bio !== (user?.bio || "")
+    );
+  };
+
+  // Update form when modal opens
   useEffect(() => {
-    if (user) {
+    if (isOpen && user) {
       setFormData({
         displayName: user.displayName || "",
         phone: user.phone || "",
         email: user.email || "",
-        username: user.username || "",
         bio: user.bio || "",
         avatarUrl: user.avatarUrl || "",
       });
+      // Reset editing state when modal opens
+      setIsEditing(false);
+      setError("");
+      setSuccess("");
     }
-  }, [user, isOpen]);
+  }, [isOpen]);
 
   // Close on escape key or outside click
   useEffect(() => {
     const handleEscape = (e) => {
-      if (e.key === "Escape") onClose?.();
+      if (e.key === "Escape") handleCloseModal();
     };
 
     const handleClickOutside = (e) => {
       if (modalRef.current && !modalRef.current.contains(e.target)) {
-        onClose?.();
+        handleCloseModal();
       }
     };
 
@@ -75,40 +88,19 @@ export const UserProfileModal = ({ isOpen, onClose, onSuccess }) => {
     setError("");
   };
 
-  const handleAvatarUrlChange = (url) => {
-    setFormData((prev) => ({
-      ...prev,
-      avatarUrl: url,
-    }));
-  };
-
   const handleSave = async () => {
     setLoading(true);
     setError("");
     setSuccess("");
 
     try {
-      // Prepare update data - only include changed fields
-      const updateData = {};
-      const originalFields = {
-        displayName: user?.displayName || "",
-        phone: user?.phone || "",
-        email: user?.email || "",
-        username: user?.username || "",
-        bio: user?.bio || "",
-        avatarUrl: user?.avatarUrl || "",
+      // Prepare update data - send all form data
+      const updateData = {
+        displayName: formData.displayName,
+        phone: formData.phone,
+        email: formData.email,
+        bio: formData.bio,
       };
-
-      Object.keys(formData).forEach((key) => {
-        if (formData[key] !== originalFields[key]) {
-          updateData[key] = formData[key];
-        }
-      });
-
-      if (Object.keys(updateData).length === 0) {
-        setSuccess("No changes to save");
-        return;
-      }
 
       await updateProfile(updateData);
 
@@ -144,10 +136,60 @@ export const UserProfileModal = ({ isOpen, onClose, onSuccess }) => {
       displayName: user?.displayName || "",
       phone: user?.phone || "",
       email: user?.email || "",
-      username: user?.username || "",
       bio: user?.bio || "",
       avatarUrl: user?.avatarUrl || "",
     });
+  };
+
+  const handleAvatarChangeSuccess = (avatarData) => {
+    // Update form data with new avatar URL
+    const newAvatarUrl = avatarData.url;
+    setFormData((prev) => ({
+      ...prev,
+      avatarUrl: newAvatarUrl,
+    }));
+
+    // Update auth context
+    if (updateUserProfile) {
+      updateUserProfile({
+        ...user,
+        avatarUrl: newAvatarUrl,
+      });
+    }
+
+    // Update localStorage immediately
+    const currentUser = localStorage.getItem("user");
+    if (currentUser) {
+      try {
+        const userObj = JSON.parse(currentUser);
+        userObj.avatarUrl = newAvatarUrl;
+        localStorage.setItem("user", JSON.stringify(userObj));
+      } catch (e) {
+        console.warn("Could not update localStorage");
+      }
+    }
+
+    setSuccess("Avatar updated successfully!");
+    // Clear success message after 3 seconds
+    setTimeout(() => setSuccess(""), 3000);
+
+    // Call onSuccess callback if provided
+    onSuccess?.();
+  };
+
+  const handleAvatarError = (errorMessage) => {
+    setError(errorMessage);
+  };
+
+  const handleCloseModal = () => {
+    if (isEditing && hasUnsavedChanges()) {
+      const confirmed = window.confirm("You have unsaved changes. Are you sure you want to close?");
+      if (confirmed) {
+        onClose?.();
+      }
+    } else {
+      onClose?.();
+    }
   };
 
   if (!isOpen) return null;
@@ -172,7 +214,7 @@ export const UserProfileModal = ({ isOpen, onClose, onSuccess }) => {
               </button>
             ) : null}
             <button
-              onClick={onClose}
+              onClick={handleCloseModal}
               className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg text-gray-600 dark:text-gray-400 transition"
             >
               ✕
@@ -183,21 +225,32 @@ export const UserProfileModal = ({ isOpen, onClose, onSuccess }) => {
         {/* Content */}
         <div className="px-6 py-6">
           {/* Avatar Section */}
-          <div className="flex flex-col items-center mb-6">
-            <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white text-4xl font-bold shadow-lg mb-3">
-              {formData.avatarUrl ? (
-                <img
-                  src={formData.avatarUrl}
-                  alt={formData.displayName}
-                  className="w-full h-full rounded-full object-cover"
-                />
-              ) : (
-                formData.displayName?.charAt(0) || "U"
-              )}
-            </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {user?.status === "online" ? "🟢 Online" : "🔘 Offline"}
-            </p>
+          <div className="flex flex-col items-center mb-8">
+            {isEditing ? (
+              <AvatarEditor
+                currentAvatarUrl={formData.avatarUrl}
+                displayName={formData.displayName}
+                onAvatarChange={handleAvatarChangeSuccess}
+                onError={handleAvatarError}
+              />
+            ) : (
+              <>
+                <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white text-4xl font-bold shadow-lg mb-3">
+                  {formData.avatarUrl ? (
+                    <img
+                      src={formData.avatarUrl}
+                      alt={formData.displayName}
+                      className="w-full h-full rounded-full object-cover"
+                    />
+                  ) : (
+                    formData.displayName?.charAt(0) || "U"
+                  )}
+                </div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {user?.status === "online" ? "🟢 Online" : "🔘 Offline"}
+                </p>
+              </>
+            )}
           </div>
 
           {/* Messages */}
@@ -230,25 +283,6 @@ export const UserProfileModal = ({ isOpen, onClose, onSuccess }) => {
               ) : (
                 <p className="px-4 py-2 bg-gray-50 dark:bg-slate-700 rounded-lg text-gray-900 dark:text-white">
                   {formData.displayName || "—"}
-                </p>
-              )}
-            </div>
-
-            {/* Username */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  name="username"
-                  value={formData.username}
-                  onChange={handleInputChange}
-                  disabled={loading}
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              ) : (
-                <p className="px-4 py-2 bg-gray-50 dark:bg-slate-700 rounded-lg text-gray-900 dark:text-white">
-                  @{formData.username || "—"}
                 </p>
               )}
             </div>
@@ -310,22 +344,6 @@ export const UserProfileModal = ({ isOpen, onClose, onSuccess }) => {
                 </p>
               )}
             </div>
-
-            {/* Avatar URL */}
-            {isEditing && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Avatar URL</label>
-                <input
-                  type="url"
-                  name="avatarUrl"
-                  value={formData.avatarUrl}
-                  onChange={handleInputChange}
-                  disabled={loading}
-                  placeholder="https://example.com/avatar.jpg"
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                />
-              </div>
-            )}
           </div>
 
           {/* Action Buttons */}

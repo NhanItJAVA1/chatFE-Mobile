@@ -13,14 +13,34 @@ export const AuthProvider = ({ children }) => {
     let isActive = true;
 
     const restoreSession = async () => {
-      const savedToken = await authService.getToken();
-      const savedUser = await authService.getUser();
+      const savedToken = authService.getToken();
+      const savedUser = authService.getUser();
 
       if (!isActive) return;
 
       if (savedToken) {
         setToken(savedToken);
-        setUser(savedUser || null);
+
+        try {
+          const profileResponse = await authService.getProfile(savedToken);
+          const profile = profileResponse;
+
+          if (!isActive) {
+            return;
+          }
+
+          setUser(profile);
+          authService.saveUser(profile);
+        } catch (err) {
+          if (!isActive) {
+            return;
+          }
+
+          // If profile fetch fails, use saved user
+          if (savedUser) {
+            setUser(savedUser);
+          }
+        }
       } else if (savedUser) {
         setUser(savedUser);
       }
@@ -65,16 +85,8 @@ export const AuthProvider = ({ children }) => {
         // Ensure token is properly saved
         await authService.saveToken(accessToken);
 
-        // Verify it was saved
-        const savedToken = await authService.getToken();
-        if (!savedToken) {
-          throw new Error("Failed to save authentication token");
-        }
-        console.log("[AuthContext] Login: token saved and verified ✅");
-        setToken(accessToken);
-      } else {
-        console.warn("[AuthContext] Login: no token in response", data);
-      }
+      authService.saveUser(profile);
+      setUser(profile);
 
       // Check if login response already contains user profile
       let userProfile = data.user || data.profile || null;
@@ -115,10 +127,15 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
-    await authService.logout();
-    setUser(null);
-    setToken(null);
-    setError(null);
+    try {
+      await authService.logout();
+    } catch (err) {
+      console.error("Logout error:", err);
+    } finally {
+      setUser(null);
+      setToken(null);
+      setError(null);
+    }
   };
 
   const updateProfile = async (profileData) => {
@@ -139,13 +156,11 @@ export const AuthProvider = ({ children }) => {
         }
       }
 
-      // Call authService.updateProfile (handles offline-first + optional backend sync)
-      const updatedUser = await authService.updateProfile(profileData);
-
-      // Update state with the locally saved data
-      setUser(updatedUser);
-      console.log("[AuthContext] Profile updated successfully (may be syncing to backend)");
-      return updatedUser;
+      const response = await authService.getProfile(token);
+      const profile = response; // axios interceptor already extracts data
+      setUser(profile);
+      authService.saveUser(profile);
+      return profile;
     } catch (err) {
       const errorMessage = err.message || "Update failed";
       setError(errorMessage);

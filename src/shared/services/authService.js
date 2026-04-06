@@ -86,27 +86,21 @@ export const authService = {
     }
   },
 
-  saveToken: async (token) => {
-    await authStorage.setItem("token", token);
+  saveToken: (token) => {
+    localStorage.setItem("token", token);
   },
 
-  getToken: async () => {
-    return await authStorage.getItem("token");
+  getToken: () => {
+    return localStorage.getItem("token");
   },
 
-  saveUser: async (user) => {
-    await authStorage.setItem("user", JSON.stringify(user));
+  saveUser: (user) => {
+    localStorage.setItem("user", JSON.stringify(user));
   },
 
-  getUser: async () => {
-    const user = await authStorage.getItem("user");
-    if (!user) return null;
-    try {
-      return JSON.parse(user);
-    } catch (e) {
-      console.error("[AUTH] Failed to parse stored user:", e);
-      return null;
-    }
+  getUser: () => {
+    const user = localStorage.getItem("user");
+    return user ? JSON.parse(user) : null;
   },
 
   // Logout
@@ -137,86 +131,15 @@ export const authService = {
     return responseData;
   },
 
-  // Update profile
-  async updateProfile(profileData) {
+  // Update avatar
+  async updateAvatar(avatarUrl) {
     try {
-      console.log("[AUTH] Updating profile with:", profileData);
-
-      // Get current user to preserve all existing fields
-      const currentUser = await authStorage.getItem("user");
-      const parsedUser = currentUser ? JSON.parse(currentUser) : {};
-
-      // Merge: backend data takes precedence, fallback to current data
-      const updatedUser = { ...parsedUser, ...profileData };
-
-      // Save merged data to local storage first (offline support)
-      await authStorage.setItem("user", JSON.stringify(updatedUser));
-      console.log("[AUTH] Profile saved to local storage ✅");
-
-      // Try to sync to backend (optional - doesn't block the save)
-      try {
-        const response = await api.patch("/profile", profileData);
-        const syncedUser = response?.user || response?.data || response;
-
-        if (syncedUser && typeof syncedUser === 'object') {
-          // Backend response takes full priority - store exactly what backend returns
-          await authStorage.setItem("user", JSON.stringify(syncedUser));
-          console.log("[AUTH] Profile synced to backend ✅");
-          return syncedUser;
-        } else {
-          // If no user data in response, return locally merged data
-          return updatedUser;
-        }
-      } catch (apiError) {
-        console.warn("[AUTH] Backend sync failed (working offline):", apiError.message);
-        // Still return the locally merged data - offline first approach
-        return updatedUser;
-      }
+      const response = await axiosInstance.patch("/auth/avatar", {
+        avatarUrl,
+      });
+      return response;
     } catch (error) {
-      console.error("[AUTH] Update profile error:", error.message);
-      throw new Error(error.message || "Failed to update profile");
+      throw new Error(error.message || "Failed to update avatar");
     }
   },
-
-  // Refresh access token using refresh token
-  async refreshAccessToken() {
-    try {
-      console.log("[AUTH] Attempting to refresh token...");
-      const refreshToken = await authStorage.getItem("refreshToken");
-      
-      if (!refreshToken) {
-        throw new Error("No refresh token available");
-      }
-
-      const url = `${getApiBaseUrl()}/auth/refresh-token`;
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ refreshToken }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Refresh failed: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const newAccessToken = data?.token || data?.accessToken || data?.data?.token;
-
-      if (!newAccessToken) {
-        throw new Error("No token in refresh response");
-      }
-
-      await authStorage.setItem("token", newAccessToken);
-      console.log("[AUTH] Token refreshed successfully ✅");
-      return newAccessToken;
-    } catch (error) {
-      console.error("[AUTH] Token refresh failed:", error.message);
-      // Clear tokens on refresh failure
-      await authStorage.removeItem("token");
-      await authStorage.removeItem("refreshToken");
-      throw new Error("Session expired - please login again");
-    }
-  }
 };
