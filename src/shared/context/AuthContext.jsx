@@ -31,6 +31,11 @@ export const AuthProvider = ({ children }) => {
             return;
           }
 
+      // Fetch latest profile from server
+      authService
+        .getProfile(savedToken)
+        .then((response) => {
+          const profile = response; // axios interceptor already extracts data
           setUser(profile);
           await authService.saveUser(profile);
         } catch {
@@ -74,14 +79,16 @@ export const AuthProvider = ({ children }) => {
     try {
       setError(null);
       setLoading(true);
-      const response = await authService.login(phone, password);
-      const data = response.data;
+      const response = await authService.login({ phone, password });
+      // axios interceptor already returns the data, not wrapped in .data
+      const data = response || {};
 
-      await authService.saveToken(data.token);
-      setToken(data.token);
+      authService.saveToken(data.token || data.accessToken);
+      setToken(data.token || data.accessToken);
 
-      const profileResponse = await authService.getProfile(data.token);
-      const profile = profileResponse.data;
+      // Fetch full profile from /profile endpoint
+      const profileResponse = await authService.getProfile(data.token || data.accessToken);
+      const profile = profileResponse; // axios interceptor already extracts data
 
       await authService.saveUser(profile);
       setUser(profile);
@@ -110,7 +117,7 @@ export const AuthProvider = ({ children }) => {
       }
 
       const response = await authService.getProfile(token);
-      const profile = response.data;
+      const profile = response; // axios interceptor already extracts data
       setUser(profile);
       await authService.saveUser(profile);
       return profile;
@@ -118,6 +125,13 @@ export const AuthProvider = ({ children }) => {
       setError(err.message);
       throw err;
     }
+  };
+
+  // Update user profile locally (called after API update)
+  const updateUserProfile = (updatedData) => {
+    const newUser = { ...user, ...updatedData };
+    setUser(newUser);
+    authService.saveUser(newUser);
   };
 
   const value = {
@@ -129,6 +143,7 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     getProfile,
+    updateUserProfile,
     isAuthenticated: !!token,
   };
 

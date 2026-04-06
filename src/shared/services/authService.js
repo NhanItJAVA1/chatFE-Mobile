@@ -1,69 +1,60 @@
-import { getApiBaseUrl } from "../runtime/config";
-import { authStorage } from "../runtime/storage";
+import { axiosInstance, authTokenStorage, setAuthTokens } from "../../api/axios-instance";
 
-const buildUrl = (endpoint) => {
-  const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
-  return `${getApiBaseUrl()}${normalizedEndpoint}`;
+const publicRequestConfig = {
+  skipAuth: true,
 };
 
-const readErrorMessage = async (response, fallbackMessage) => {
-  try {
-    const error = await response.json();
-    return error?.message || error?.msg || fallbackMessage;
-  } catch {
-    return fallbackMessage;
-  }
+const readAccessToken = (payload) => {
+  return payload?.accessToken || payload?.token || "";
+};
+
+const readUserProfile = (payload) => {
+  return payload?.user || payload?.profile;
 };
 
 export const authService = {
+  // Register new user with axios
   register: async (userData) => {
-    const response = await fetch(buildUrl("/auth/register"), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(userData),
-    });
-
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response, "Registration failed"));
+    try {
+      const response = await axiosInstance.post("/auth/register", userData, publicRequestConfig);
+      return response;
+    } catch (error) {
+      throw new Error(error.message || "Registration failed");
     }
-
-    return await response.json();
   },
 
-  login: async (phone, password) => {
-    const response = await fetch(buildUrl("/auth/login"), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ phone, password }),
-    });
+  // Login user with axios and proper token management
+  login: async (payload) => {
+    const authData = await axiosInstance.post("/auth/login", payload, { ...publicRequestConfig });
 
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response, "Login failed"));
+    const accessToken = readAccessToken(authData);
+
+    if (accessToken) {
+      setAuthTokens({
+        accessToken,
+        refreshToken: authData.refreshToken,
+      });
     }
 
-    return await response.json();
+    const userProfile = readUserProfile(authData);
+    if (userProfile) {
+      localStorage.setItem("user", JSON.stringify(userProfile));
+    }
+
+    return authData;
   },
 
   getProfile: async (token) => {
-    const resolvedToken = token || (await authStorage.getItem("token"));
-
-    const response = await fetch(buildUrl("/profile"), {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        ...(resolvedToken ? { Authorization: `Bearer ${resolvedToken}` } : {}),
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response, "Failed to fetch profile"));
+    try {
+      const response = await axiosInstance.get("/profile", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      return response;
+    } catch (error) {
+      throw new Error("Failed to fetch profile");
     }
-
-    return await response.json();
   },
 
   saveToken: async (token) => {
@@ -83,8 +74,37 @@ export const authService = {
     return user ? JSON.parse(user) : null;
   },
 
-  logout: async () => {
-    await authStorage.removeItem("token");
-    await authStorage.removeItem("user");
+  // Logout
+  async logout(request) {
+    const refreshToken = request?.refreshToken || authTokenStorage.getRefreshToken() || undefined;
+
+    try {
+      const responseData = await axiosInstance.post(
+        "/auth/logout",
+        { refreshToken },
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      return responseData;
+    } finally {
+      authTokenStorage.clearAuthTokens();
+      localStorage.removeItem("user");
+    }
+  },
+
+  // Forgot password
+  async forgotPassword(payload) {
+    const responseData = await axiosInstance.post("/auth/forgot-password", payload, publicRequestConfig);
+    return responseData;
+  },
+
+  // Update password
+  async updatePassword(payload) {
+    const responseData = await axiosInstance.patch("/auth/update-password", payload);
+    return responseData;
   },
 };

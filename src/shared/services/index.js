@@ -10,3 +10,14 @@ export {
   getFriends,
   removeFriend,
 } from "./friendService";
+export {
+  getProfile,
+  updateProfile,
+  updateProfileFields,
+  updateAvatar,
+  updateDisplayName,
+  updateBio,
+  updatePassword,
+  updatePrivacy,
+  userService,
+} from "./userService";
