@@ -57,20 +57,20 @@ export const authService = {
     }
   },
 
-  saveToken: async (token) => {
-    await authStorage.setItem("token", token);
+  saveToken: (token) => {
+    localStorage.setItem("token", token);
   },
 
-  getToken: async () => {
-    return await authStorage.getItem("token");
+  getToken: () => {
+    return localStorage.getItem("token");
   },
 
-  saveUser: async (user) => {
-    await authStorage.setItem("user", JSON.stringify(user));
+  saveUser: (user) => {
+    localStorage.setItem("user", JSON.stringify(user));
   },
 
-  getUser: async () => {
-    const user = await authStorage.getItem("user");
+  getUser: () => {
+    const user = localStorage.getItem("user");
     return user ? JSON.parse(user) : null;
   },
 
@@ -106,5 +106,17 @@ export const authService = {
   async updatePassword(payload) {
     const responseData = await axiosInstance.patch("/auth/update-password", payload);
     return responseData;
+  },
+
+  // Update avatar
+  async updateAvatar(avatarUrl) {
+    try {
+      const response = await axiosInstance.patch("/auth/avatar", {
+        avatarUrl,
+      });
+      return response;
+    } catch (error) {
+      throw new Error(error.message || "Failed to update avatar");
+    }
   },
 };

@@ -13,8 +13,8 @@ export const AuthProvider = ({ children }) => {
     let isActive = true;
 
     const restoreSession = async () => {
-      const savedToken = await authService.getToken();
-      const savedUser = await authService.getUser();
+      const savedToken = authService.getToken();
+      const savedUser = authService.getUser();
 
       if (!isActive) {
         return;
@@ -25,25 +25,23 @@ export const AuthProvider = ({ children }) => {
 
         try {
           const profileResponse = await authService.getProfile(savedToken);
-          const profile = profileResponse.data;
+          const profile = profileResponse;
 
           if (!isActive) {
             return;
           }
 
-      // Fetch latest profile from server
-      authService
-        .getProfile(savedToken)
-        .then((response) => {
-          const profile = response; // axios interceptor already extracts data
           setUser(profile);
-          await authService.saveUser(profile);
-        } catch {
+          authService.saveUser(profile);
+        } catch (err) {
           if (!isActive) {
             return;
           }
 
-          setUser(savedUser);
+          // If profile fetch fails, use saved user
+          if (savedUser) {
+            setUser(savedUser);
+          }
         }
       } else if (savedUser) {
         setUser(savedUser);
@@ -90,7 +88,7 @@ export const AuthProvider = ({ children }) => {
       const profileResponse = await authService.getProfile(data.token || data.accessToken);
       const profile = profileResponse; // axios interceptor already extracts data
 
-      await authService.saveUser(profile);
+      authService.saveUser(profile);
       setUser(profile);
 
       return profile;
@@ -104,10 +102,15 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
-    await authService.logout();
-    setUser(null);
-    setToken(null);
-    setError(null);
+    try {
+      await authService.logout();
+    } catch (err) {
+      console.error("Logout error:", err);
+    } finally {
+      setUser(null);
+      setToken(null);
+      setError(null);
+    }
   };
 
   const getProfile = async () => {
@@ -119,7 +122,7 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.getProfile(token);
       const profile = response; // axios interceptor already extracts data
       setUser(profile);
-      await authService.saveUser(profile);
+      authService.saveUser(profile);
       return profile;
     } catch (err) {
       setError(err.message);

@@ -84,7 +84,37 @@ export const updateProfileFields = async (fields) => {
 };
 
 /**
- * Cập nhật avatar
+ * Cập nhật avatar qua endpoint /auth/avatar
+ * @param {string} avatarUrl - URL của ảnh đại diện mới
+ * @returns {Promise<Object>} Response data
+ */
+export const updateAvatarViaAuth = async (avatarUrl) => {
+  try {
+    const { authService } = await import("./authService");
+    const response = await authService.updateAvatar(avatarUrl);
+
+    // Cập nhật localStorage với dữ liệu mới
+    if (response.data || response) {
+      const currentUser = localStorage.getItem("user");
+      if (currentUser) {
+        try {
+          const user = JSON.parse(currentUser);
+          const updatedUser = { ...user, avatarUrl };
+          localStorage.setItem("user", JSON.stringify(updatedUser));
+        } catch (parseError) {
+          console.warn("Could not parse user from localStorage");
+        }
+      }
+    }
+
+    return response;
+  } catch (error) {
+    throw new Error(error.message || "Failed to update avatar");
+  }
+};
+
+/**
+ * Cập nhật avatar (backwards compatibility - uses profile endpoint)
  * @param {string} avatarUrl - URL của ảnh đại diện mới
  * @returns {Promise<Object>} Response data
  */
