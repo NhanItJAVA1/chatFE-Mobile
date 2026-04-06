@@ -25,14 +25,11 @@ export const authService = {
   login: async (payload) => {
     try {
       let authData = await api.post("/auth/login", payload);
-      console.log("[authService] Login response from server:", JSON.stringify(authData, null, 2));
 
       // If response is wrapped in { data }, extract it
       if (authData?.data && !authData?.token && !authData?.accessToken) {
         authData = authData.data;
       }
-
-      console.log("[AUTH] Processed login data:", JSON.stringify(authData, null, 2));
 
       const accessToken = readAccessToken(authData);
 
@@ -47,8 +44,6 @@ export const authService = {
       }
 
       const userProfile = readUserProfile(authData);
-      console.log("[AUTH] User profile extracted:", JSON.stringify(userProfile, null, 2));
-      
       if (userProfile) {
         await authStorage.setItem("user", JSON.stringify(userProfile));
       }
@@ -156,20 +151,17 @@ export const authService = {
 
       // Save merged data to local storage first (offline support)
       await authStorage.setItem("user", JSON.stringify(updatedUser));
-      console.log("[AUTH] Profile saved to local storage ✅", JSON.stringify(updatedUser, null, 2));
+      console.log("[AUTH] Profile saved to local storage ✅");
 
       // Try to sync to backend (optional - doesn't block the save)
       try {
         const response = await api.patch("/profile", profileData);
-        console.log("[AUTH] Backend response:", JSON.stringify(response, null, 2));
-        
         const syncedUser = response?.user || response?.data || response;
-        console.log("[AUTH] Synced user:", JSON.stringify(syncedUser, null, 2));
 
         if (syncedUser && typeof syncedUser === 'object') {
           // Backend response takes full priority - store exactly what backend returns
           await authStorage.setItem("user", JSON.stringify(syncedUser));
-          console.log("[AUTH] Profile synced to backend ✅", JSON.stringify(syncedUser, null, 2));
+          console.log("[AUTH] Profile synced to backend ✅");
           return syncedUser;
         } else {
           // If no user data in response, return locally merged data

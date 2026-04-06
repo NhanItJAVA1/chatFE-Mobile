@@ -159,11 +159,8 @@ export const ProfileScreen = () => {
                 console.log("[Profile] Image uploaded, using URL:", uploadedUrl);
             }
 
-            console.log("[Profile] Saving profile with data:", JSON.stringify(profileData, null, 2));
-
             // Update profile via context (saves to storage + syncs to backend)
             const result = await updateProfile(profileData);
-            console.log("[Profile] Profile update result:", JSON.stringify(result, null, 2));
             
             console.log("[Profile] Profile updated successfully");
             setIsEditing(false);
