@@ -16,35 +16,11 @@ export const AuthProvider = ({ children }) => {
       const savedToken = await authService.getToken();
       const savedUser = await authService.getUser();
 
-      if (!isActive) {
-        return;
-      }
+      if (!isActive) return;
 
       if (savedToken) {
         setToken(savedToken);
-
-        try {
-          const profileResponse = await authService.getProfile(savedToken);
-          const profile = profileResponse.data;
-
-          if (!isActive) {
-            return;
-          }
-
-      // Fetch latest profile from server
-      authService
-        .getProfile(savedToken)
-        .then((response) => {
-          const profile = response; // axios interceptor already extracts data
-          setUser(profile);
-          await authService.saveUser(profile);
-        } catch {
-          if (!isActive) {
-            return;
-          }
-
-          setUser(savedUser);
-        }
+        setUser(savedUser || null);
       } else if (savedUser) {
         setUser(savedUser);
       }
@@ -80,20 +56,55 @@ export const AuthProvider = ({ children }) => {
       setError(null);
       setLoading(true);
       const response = await authService.login({ phone, password });
-      // axios interceptor already returns the data, not wrapped in .data
       const data = response || {};
 
-      authService.saveToken(data.token || data.accessToken);
-      setToken(data.token || data.accessToken);
+      const accessToken = data.token || data.accessToken;
 
-      // Fetch full profile from /profile endpoint
-      const profileResponse = await authService.getProfile(data.token || data.accessToken);
-      const profile = profileResponse; // axios interceptor already extracts data
+      // Save token
+      if (accessToken) {
+        // Ensure token is properly saved
+        await authService.saveToken(accessToken);
 
-      await authService.saveUser(profile);
-      setUser(profile);
+        // Verify it was saved
+        const savedToken = await authService.getToken();
+        if (!savedToken) {
+          throw new Error("Failed to save authentication token");
+        }
+        console.log("[AuthContext] Login: token saved and verified ✅");
+        setToken(accessToken);
+      } else {
+        console.warn("[AuthContext] Login: no token in response", data);
+      }
 
-      return profile;
+      // Check if login response already contains user profile
+      let userProfile = data.user || data.profile || null;
+
+      // If profile not in login response, construct from available response data
+      if (!userProfile) {
+        // Use data from backend response, fallback to phone
+        userProfile = {
+          phone: data.phone || phone,
+          displayName: data.displayName || "",
+          email: data.email || "",
+          bio: data.bio || "",
+          id: data.id,
+        };
+      } else {
+        // Ensure critical fields exist in backend response
+        userProfile = {
+          id: userProfile.id,
+          phone: userProfile.phone || phone,
+          displayName: userProfile.displayName || "",
+          email: userProfile.email || "",
+          bio: userProfile.bio || "",
+        };
+      }
+
+      // Save user
+      await authService.saveUser(userProfile);
+      setUser(userProfile);
+
+      return userProfile;
     } catch (err) {
       const errorMessage = err.message || "Login failed";
       setError(errorMessage);
@@ -110,28 +121,39 @@ export const AuthProvider = ({ children }) => {
     setError(null);
   };
 
-  const getProfile = async () => {
+  const updateProfile = async (profileData) => {
     try {
-      if (!token) {
-        throw new Error("No token available");
+      setLoading(true);
+
+      // Verify token exists before API call
+      const currentToken = await authService.getToken();
+      if (!currentToken) {
+        console.warn("[AuthContext] No token available, restoring session...");
+        const savedToken = await authService.getToken();
+        const savedUser = await authService.getUser();
+        if (savedToken) {
+          setToken(savedToken);
+          setUser(savedUser || null);
+        } else {
+          throw new Error("Not authenticated - please login again");
+        }
       }
 
-      const response = await authService.getProfile(token);
-      const profile = response; // axios interceptor already extracts data
-      setUser(profile);
-      await authService.saveUser(profile);
-      return profile;
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
-  };
+      // Call authService.updateProfile (handles offline-first + optional backend sync)
+      const updatedUser = await authService.updateProfile(profileData);
 
-  // Update user profile locally (called after API update)
-  const updateUserProfile = (updatedData) => {
-    const newUser = { ...user, ...updatedData };
-    setUser(newUser);
-    authService.saveUser(newUser);
+      // Update state with the locally saved data
+      setUser(updatedUser);
+      console.log("[AuthContext] Profile updated successfully (may be syncing to backend)");
+      return updatedUser;
+    } catch (err) {
+      const errorMessage = err.message || "Update failed";
+      setError(errorMessage);
+      console.error("[AuthContext] updateProfile error:", err);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
   };
 
   const value = {
@@ -142,8 +164,7 @@ export const AuthProvider = ({ children }) => {
     login,
     register,
     logout,
-    getProfile,
-    updateUserProfile,
+    updateProfile,
     isAuthenticated: !!token,
   };
 

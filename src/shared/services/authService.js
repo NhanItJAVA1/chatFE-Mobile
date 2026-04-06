@@ -1,8 +1,6 @@
-import { axiosInstance, authTokenStorage, setAuthTokens } from "../../api/axios-instance";
-
-const publicRequestConfig = {
-  skipAuth: true,
-};
+import { api } from "./api";
+import { authStorage } from "../runtime/storage";
+import { getApiBaseUrl } from "../runtime/config";
 
 const readAccessToken = (payload) => {
   return payload?.accessToken || payload?.token || "";
@@ -13,46 +11,79 @@ const readUserProfile = (payload) => {
 };
 
 export const authService = {
-  // Register new user with axios
+  // Register new user
   register: async (userData) => {
     try {
-      const response = await axiosInstance.post("/auth/register", userData, publicRequestConfig);
+      const response = await api.post("/auth/register", userData);
       return response;
     } catch (error) {
       throw new Error(error.message || "Registration failed");
     }
   },
 
-  // Login user with axios and proper token management
+  // Login user
   login: async (payload) => {
-    const authData = await axiosInstance.post("/auth/login", payload, { ...publicRequestConfig });
+    try {
+      let authData = await api.post("/auth/login", payload);
 
-    const accessToken = readAccessToken(authData);
+      // If response is wrapped in { data }, extract it
+      if (authData?.data && !authData?.token && !authData?.accessToken) {
+        authData = authData.data;
+      }
 
-    if (accessToken) {
-      setAuthTokens({
-        accessToken,
-        refreshToken: authData.refreshToken,
-      });
+      console.log("Login response:", authData);
+
+      const accessToken = readAccessToken(authData);
+
+      if (accessToken) {
+        console.log("[AUTH] Saving token:", accessToken.substring(0, 20) + "...");
+        await authStorage.setItem("token", accessToken);
+        if (authData.refreshToken) {
+          await authStorage.setItem("refreshToken", authData.refreshToken);
+        }
+      } else {
+        console.warn("[AUTH] No token in login response:", authData);
+      }
+
+      const userProfile = readUserProfile(authData);
+      if (userProfile) {
+        await authStorage.setItem("user", JSON.stringify(userProfile));
+      }
+
+      return authData;
+    } catch (error) {
+      throw new Error(error.message || "Login failed");
     }
-
-    const userProfile = readUserProfile(authData);
-    if (userProfile) {
-      localStorage.setItem("user", JSON.stringify(userProfile));
-    }
-
-    return authData;
   },
 
   getProfile: async (token) => {
     try {
-      const response = await axiosInstance.get("/profile", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      return response;
+      // If token is provided, use it directly
+      if (token) {
+        const url = `${getApiBaseUrl()}/profile`;
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) throw new Error(`Profile fetch failed: ${response.status}`);
+
+        const responseData = await response.json();
+        console.log("Profile response:", responseData);
+
+        // Extract from wrapper if exists
+        return responseData.data || responseData;
+      }
+
+      // Otherwise use api.get which pulls token from storage
+      const response = await api.get("/profile");
+      // Extract from wrapper if backend returns { data: {...} }
+      return response.data || response;
     } catch (error) {
+      console.error("Get profile error:", error);
       throw new Error("Failed to fetch profile");
     }
   },
@@ -71,40 +102,81 @@ export const authService = {
 
   getUser: async () => {
     const user = await authStorage.getItem("user");
-    return user ? JSON.parse(user) : null;
+    if (!user) return null;
+    try {
+      return JSON.parse(user);
+    } catch (e) {
+      console.error("[AUTH] Failed to parse stored user:", e);
+      return null;
+    }
   },
 
   // Logout
-  async logout(request) {
-    const refreshToken = request?.refreshToken || authTokenStorage.getRefreshToken() || undefined;
-
+  async logout() {
     try {
-      const responseData = await axiosInstance.post(
-        "/auth/logout",
-        { refreshToken },
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
-        },
-      );
-
-      return responseData;
+      const refreshToken = await authStorage.getItem("refreshToken");
+      if (refreshToken) {
+        await api.post("/auth/logout", { refreshToken });
+      }
+    } catch (error) {
+      console.error("Logout failed:", error);
     } finally {
-      authTokenStorage.clearAuthTokens();
-      localStorage.removeItem("user");
+      await authStorage.removeItem("token");
+      await authStorage.removeItem("refreshToken");
+      await authStorage.removeItem("user");
     }
   },
 
   // Forgot password
   async forgotPassword(payload) {
-    const responseData = await axiosInstance.post("/auth/forgot-password", payload, publicRequestConfig);
+    const responseData = await api.post("/auth/forgot-password", payload);
     return responseData;
   },
 
   // Update password
   async updatePassword(payload) {
-    const responseData = await axiosInstance.patch("/auth/update-password", payload);
+    const responseData = await api.patch("/auth/update-password", payload);
     return responseData;
   },
+
+  // Update profile
+  async updateProfile(profileData) {
+    try {
+      console.log("[AUTH] Updating profile with:", profileData);
+
+      // Get current user to preserve all existing fields
+      const currentUser = await authStorage.getItem("user");
+      const parsedUser = currentUser ? JSON.parse(currentUser) : {};
+
+      // Merge: backend data takes precedence, fallback to current data
+      const updatedUser = { ...parsedUser, ...profileData };
+
+      // Save merged data to local storage first (offline support)
+      await authStorage.setItem("user", JSON.stringify(updatedUser));
+      console.log("[AUTH] Profile saved to local storage ✅");
+
+      // Try to sync to backend (optional - doesn't block the save)
+      try {
+        const response = await api.patch("/profile", profileData);
+        const syncedUser = response?.user || response?.data || response;
+
+        if (syncedUser && typeof syncedUser === 'object') {
+          // Backend response takes full priority - store exactly what backend returns
+          await authStorage.setItem("user", JSON.stringify(syncedUser));
+          console.log("[AUTH] Profile synced to backend ✅");
+          return syncedUser;
+        } else {
+          // If no user data in response, return locally merged data
+          return updatedUser;
+        }
+      } catch (apiError) {
+        console.warn("[AUTH] Backend sync failed (working offline):", apiError.message);
+        // Still return the locally merged data - offline first approach
+        return updatedUser;
+      }
+    } catch (error) {
+      console.error("[AUTH] Update profile error:", error.message);
+      throw new Error(error.message || "Failed to update profile");
+    }
+  }
 };

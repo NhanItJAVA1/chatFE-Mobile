@@ -7,7 +7,13 @@ const buildUrl = (endpoint) => {
 };
 
 const getAuthToken = async () => {
-  return await authStorage.getItem("token");
+  let token = await authStorage.getItem("token");
+  // Clean token: remove whitespace and ensure it's a string
+  if (token) {
+    token = String(token).trim();
+  }
+  console.log("[API] Token retrieved:", token ? "✅ exists (" + token.substring(0, 20) + "...)" : "❌ missing");
+  return token;
 };
 
 export const apiCall = async (endpoint, options = {}) => {
@@ -15,18 +21,31 @@ export const apiCall = async (endpoint, options = {}) => {
   const token = await getAuthToken();
 
   try {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    };
+
+    console.log(`[API] ${options.method || "GET"} ${endpoint}`, {
+      hasToken: !!token,
+      authHeader: headers.Authorization ? "set" : "missing",
+    });
+
     const response = await fetch(url, {
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(options.headers || {}),
-      },
+      headers,
       cache: "no-store",
       ...options,
     });
 
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      if (response.status === 401) {
+        console.error(`[API] 401 Unauthorized on ${options.method || "GET"} ${endpoint}`, {
+          hasAuthHeader: !!headers.Authorization,
+          authHeaderValue: headers.Authorization ? "Bearer <token>" : "MISSING",
+        });
+      }
+      throw new Error(`API error: ${response.status} ${response.statusText}`);
     }
 
     if (response.status === 204) {
@@ -35,7 +54,10 @@ export const apiCall = async (endpoint, options = {}) => {
 
     return await response.json();
   } catch (error) {
-    console.error("API call failed:", error);
+    // Only log non-401 errors to avoid spam on startup
+    if (!error.message?.includes("401")) {
+      console.error("API call failed:", error);
+    }
     throw error;
   }
 };
