@@ -1,4 +1,4 @@
-﻿{
+{
   "expo": {
     "name": "ChatChit Mobile",
     "slug": "chatchit-mobile",
@@ -11,8 +11,15 @@
       "android",
       "web"
     ],
+    "ios": {
+      "supportsTablet": true,
+      "useFrameworks": "static"
+    },
     "assetBundlePatterns": [
       "**/*"
-    ]
+    ],
+    "android": {
+      "package": "com.anonymous.chatchitmobile"
+    }
   }
 }

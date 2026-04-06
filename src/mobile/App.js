@@ -6,7 +6,7 @@ import { AuthProvider, configureRuntime, configureStorage } from "../shared";
 import AppShell from "./src/AppShell";
 
 configureRuntime({
-  apiUrl: process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000/v1",
+  apiUrl: process.env.EXPO_PUBLIC_API_URL || "http://192.168.1.6:3000/v1",
 });
 
 configureStorage({
