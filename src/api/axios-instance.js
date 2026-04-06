@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_BASE_URL = "/v1";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "/v1";
 
 const ACCESS_TOKEN_KEY = "token";
 const REFRESH_TOKEN_KEY = "refreshToken";
@@ -57,12 +57,8 @@ const handleUnauthorized = () => {
 const extractTokens = (response) => {
   const responseData = response.data;
   const accessToken =
-    responseData?.data?.accessToken ||
-    responseData?.data?.token ||
-    responseData?.accessToken ||
-    responseData?.token;
-  const refreshToken =
-    responseData?.data?.refreshToken || responseData?.refreshToken;
+    responseData?.data?.accessToken || responseData?.data?.token || responseData?.accessToken || responseData?.token;
+  const refreshToken = responseData?.data?.refreshToken || responseData?.refreshToken;
 
   return {
     accessToken: accessToken || "",
@@ -138,10 +134,7 @@ axiosInstance.interceptors.response.use(
     const statusCode = error.response?.status;
     const errorCode = error.response?.data?.code;
 
-    if (
-      errorCode === "UNAUTHORIZED" &&
-      (!originalRequest || originalRequest._retry)
-    ) {
+    if (errorCode === "UNAUTHORIZED" && (!originalRequest || originalRequest._retry)) {
       handleUnauthorized();
       return Promise.reject(error);
     }
@@ -150,10 +143,7 @@ axiosInstance.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    if (
-      originalRequest.url?.includes("/auth/login") ||
-      originalRequest.url?.includes("/auth/refresh-token")
-    ) {
+    if (originalRequest.url?.includes("/auth/login") || originalRequest.url?.includes("/auth/refresh-token")) {
       return Promise.reject(error);
     }
 
@@ -180,12 +170,9 @@ axiosInstance.interceptors.response.use(
         throw new Error("Missing refresh token.");
       }
 
-      const refreshResponse = await axios.post(
-        `${API_BASE_URL}/auth/refresh-token`,
-        {
-          refreshToken,
-        },
-      );
+      const refreshResponse = await axios.post(`${API_BASE_URL}/auth/refresh-token`, {
+        refreshToken,
+      });
 
       const newTokens = extractTokens(refreshResponse);
       if (!newTokens.accessToken) {

@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect } from "react";
-import { authService } from "../services";
+import { authService } from "../services/authService";
 
 export const AuthContext = createContext();
 
@@ -21,7 +21,7 @@ export const AuthProvider = ({ children }) => {
       authService
         .getProfile(savedToken)
         .then((response) => {
-          const profile = response.data;
+          const profile = response; // axios interceptor already extracts data
           setUser(profile);
           authService.saveUser(profile);
         })
@@ -58,15 +58,16 @@ export const AuthProvider = ({ children }) => {
     try {
       setError(null);
       setLoading(true);
-      const response = await authService.login(phone, password);
-      const data = response.data; // Extract data from response
+      const response = await authService.login({ phone, password });
+      // axios interceptor already returns the data, not wrapped in .data
+      const data = response || {};
 
-      authService.saveToken(data.token);
-      setToken(data.token);
+      authService.saveToken(data.token || data.accessToken);
+      setToken(data.token || data.accessToken);
 
       // Fetch full profile from /profile endpoint
-      const profileResponse = await authService.getProfile(data.token);
-      const profile = profileResponse.data;
+      const profileResponse = await authService.getProfile(data.token || data.accessToken);
+      const profile = profileResponse; // axios interceptor already extracts data
 
       authService.saveUser(profile);
       setUser(profile);
@@ -94,7 +95,7 @@ export const AuthProvider = ({ children }) => {
     try {
       if (!token) throw new Error("No token available");
       const response = await authService.getProfile(token);
-      const profile = response.data; // Extract data from response
+      const profile = response; // axios interceptor already extracts data
       setUser(profile);
       authService.saveUser(profile);
       return profile;

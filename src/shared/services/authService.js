@@ -12,30 +12,20 @@ const readUserProfile = (payload) => {
   return payload?.user || payload?.profile;
 };
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/v1";
-
 export const authService = {
-  // Register new user (can use fetch or axios)
+  // Register new user with axios
   register: async (userData) => {
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(userData),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
+    try {
+      const response = await axiosInstance.post("/auth/register", userData, publicRequestConfig);
+      return response;
+    } catch (error) {
       throw new Error(error.message || "Registration failed");
     }
-
-    return await response.json();
   },
 
   // Login user with axios and proper token management
   login: async (payload) => {
-    const authData = await axiosInstance.post("/auth/login", payload, publicRequestConfig);
+    const authData = await axiosInstance.post("/auth/login", payload, { ...publicRequestConfig });
 
     const accessToken = readAccessToken(authData);
 
@@ -56,19 +46,16 @@ export const authService = {
 
   // Get user profile
   getProfile: async (token) => {
-    const response = await fetch(`${API_BASE_URL}/profile`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
+    try {
+      const response = await axiosInstance.get("/profile", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      return response;
+    } catch (error) {
       throw new Error("Failed to fetch profile");
     }
-
-    return await response.json();
   },
 
   // Save token to localStorage
