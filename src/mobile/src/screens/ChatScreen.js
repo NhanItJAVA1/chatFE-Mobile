@@ -1,11 +1,23 @@
 import React from "react";
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Avatar } from "../components";
 import { conversation } from "../data";
 import { colors } from "../theme";
 
-export const ChatScreen = ({ onBackPress }) => {
+export const ChatScreen = ({ onBackPress, chatUser = null }) => {
+    // Mock data for demo (will be replaced with real user data from props/context)
+    const mockUserName = "Đức Tuấn Thủ";
+    const mockUserInitials = "ĐT";
+    const mockUserAvatar = null;
+    const mockUserColor = "#4f8cff";
+
+    // Use provided chatUser prop if available, otherwise use mock data
+    const userName = chatUser?.displayName || mockUserName;
+    const userInitials = chatUser?.displayName?.split(" ").map(n => n[0]).join("") || mockUserInitials;
+    const userAvatar = chatUser?.avatar || mockUserAvatar;
+    const userColor = chatUser?.color || mockUserColor;
+
     const truncateName = (name, maxLength = 20) => {
         if (!name || name.length <= maxLength) {
             return name;
@@ -20,11 +32,20 @@ export const ChatScreen = ({ onBackPress }) => {
                     <Ionicons name="chevron-back" size={24} color={colors.text} />
                 </Pressable>
                 <View style={styles.chatHeaderCard}>
-                    <Text style={styles.chatHeaderTitle} numberOfLines={1}>{truncateName("Đức Tuấn Thủ")}</Text>
+                    <Text style={styles.chatHeaderTitle} numberOfLines={1}>{truncateName(userName)}</Text>
                     <Text style={styles.chatHeaderSubtitle}>trực tuyến 2 giờ trước</Text>
                 </View>
                 <View style={styles.headerAvatarWrap}>
-                    <Avatar label="ĐT" size={52} backgroundColor="#4f8cff" textSize={14} />
+                    {userAvatar ? (
+                        <Image source={{ uri: userAvatar }} style={[styles.avatarImage, { width: 52, height: 52, borderRadius: 26 }]} />
+                    ) : (
+                        <Avatar 
+                            label={userInitials} 
+                            size={52} 
+                            backgroundColor={userColor} 
+                            textSize={14} 
+                        />
+                    )}
                 </View>
             </View>
 
@@ -191,5 +212,8 @@ const styles = StyleSheet.create({
     },
     composerEmoji: {
         marginLeft: 8,
+    },
+    avatarImage: {
+        resizeMode: "cover",
     },
 });

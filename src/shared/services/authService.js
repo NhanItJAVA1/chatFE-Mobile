@@ -25,13 +25,14 @@ export const authService = {
   login: async (payload) => {
     try {
       let authData = await api.post("/auth/login", payload);
+      console.log("[authService] Login response from server:", JSON.stringify(authData, null, 2));
 
       // If response is wrapped in { data }, extract it
       if (authData?.data && !authData?.token && !authData?.accessToken) {
         authData = authData.data;
       }
 
-      console.log("Login response:", authData);
+      console.log("[AUTH] Processed login data:", JSON.stringify(authData, null, 2));
 
       const accessToken = readAccessToken(authData);
 
@@ -46,6 +47,8 @@ export const authService = {
       }
 
       const userProfile = readUserProfile(authData);
+      console.log("[AUTH] User profile extracted:", JSON.stringify(userProfile, null, 2));
+      
       if (userProfile) {
         await authStorage.setItem("user", JSON.stringify(userProfile));
       }
@@ -153,17 +156,20 @@ export const authService = {
 
       // Save merged data to local storage first (offline support)
       await authStorage.setItem("user", JSON.stringify(updatedUser));
-      console.log("[AUTH] Profile saved to local storage ✅");
+      console.log("[AUTH] Profile saved to local storage ✅", JSON.stringify(updatedUser, null, 2));
 
       // Try to sync to backend (optional - doesn't block the save)
       try {
         const response = await api.patch("/profile", profileData);
+        console.log("[AUTH] Backend response:", JSON.stringify(response, null, 2));
+        
         const syncedUser = response?.user || response?.data || response;
+        console.log("[AUTH] Synced user:", JSON.stringify(syncedUser, null, 2));
 
         if (syncedUser && typeof syncedUser === 'object') {
           // Backend response takes full priority - store exactly what backend returns
           await authStorage.setItem("user", JSON.stringify(syncedUser));
-          console.log("[AUTH] Profile synced to backend ✅");
+          console.log("[AUTH] Profile synced to backend ✅", JSON.stringify(syncedUser, null, 2));
           return syncedUser;
         } else {
           // If no user data in response, return locally merged data
@@ -177,6 +183,48 @@ export const authService = {
     } catch (error) {
       console.error("[AUTH] Update profile error:", error.message);
       throw new Error(error.message || "Failed to update profile");
+    }
+  },
+
+  // Refresh access token using refresh token
+  async refreshAccessToken() {
+    try {
+      console.log("[AUTH] Attempting to refresh token...");
+      const refreshToken = await authStorage.getItem("refreshToken");
+      
+      if (!refreshToken) {
+        throw new Error("No refresh token available");
+      }
+
+      const url = `${getApiBaseUrl()}/auth/refresh-token`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Refresh failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const newAccessToken = data?.token || data?.accessToken || data?.data?.token;
+
+      if (!newAccessToken) {
+        throw new Error("No token in refresh response");
+      }
+
+      await authStorage.setItem("token", newAccessToken);
+      console.log("[AUTH] Token refreshed successfully ✅");
+      return newAccessToken;
+    } catch (error) {
+      console.error("[AUTH] Token refresh failed:", error.message);
+      // Clear tokens on refresh failure
+      await authStorage.removeItem("token");
+      await authStorage.removeItem("refreshToken");
+      throw new Error("Session expired - please login again");
     }
   }
 };

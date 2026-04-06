@@ -2,9 +2,13 @@ import React, { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import axios from "axios";
 import { useAuth } from "../../../shared/hooks";
+import { authService } from "../../../shared/services/authService";
 import { Avatar, Card, PrimaryButton, TextField } from "../components";
 import { colors } from "../theme";
+import { getApiBaseUrl } from "../../../shared/runtime/config";
+import { authStorage } from "../../../shared/runtime/storage";
 
 export const ProfileScreen = () => {
     const { user, logout, updateProfile } = useAuth();
@@ -23,6 +27,95 @@ export const ProfileScreen = () => {
             return name;
         }
         return name.slice(0, Math.floor(maxLength / 2)) + "...";
+    };
+
+    // Upload image to server and return URL
+    const uploadImage = async (imageUri) => {
+        try {
+            let token = await authStorage.getItem("token");
+            
+            // Clean token: remove whitespace and ensure it's a string
+            if (token) {
+                token = String(token).trim();
+            }
+            
+            console.log("[Upload] Token:", token ? "✅ exists (" + token.substring(0, 20) + "...)" : "❌ missing");
+            
+            if (!token) {
+                throw new Error("No authentication token found. Please login again.");
+            }
+            
+            const apiUrl = getApiBaseUrl();
+            console.log("[Upload] API URL:", apiUrl);
+            
+            // Helper to perform upload
+            const performUpload = async (uploadToken) => {
+                const formData = new FormData();
+                
+                // Extract filename from URI
+                const filename = imageUri.split("/").pop() || "avatar.jpg";
+                const fileType = "image/jpeg"; // Default to JPEG
+                
+                // Append file to FormData
+                formData.append("file", {
+                    uri: imageUri,
+                    name: filename,
+                    type: fileType,
+                });
+
+                console.log("[Upload] Sending to:", `${apiUrl}/media/upload`);
+
+                const response = await axios.post(`${apiUrl}/media/upload`, formData, {
+                    headers: {
+                        Authorization: `Bearer ${uploadToken}`,
+                        // DO NOT set Content-Type - axios + FormData will handle it automatically
+                    },
+                });
+
+                return response;
+            };
+
+            try {
+                const response = await performUpload(token);
+                console.log("[Upload] Image uploaded successfully:", response.data);
+                
+                // Extract URL from response structure: response.data.data.url
+                const uploadedUrl = response.data?.data?.url;
+                if (!uploadedUrl) {
+                    throw new Error("No URL returned from server");
+                }
+                
+                return uploadedUrl;
+            } catch (uploadError) {
+                // If 401 (token expired), try to refresh and retry
+                if (uploadError.response?.status === 401) {
+                    console.log("[Upload] Token expired, attempting refresh...");
+                    try {
+                        const newToken = await authService.refreshAccessToken();
+                        console.log("[Upload] Token refreshed, retrying upload...");
+                        const retryResponse = await performUpload(newToken);
+                        
+                        console.log("[Upload] Image uploaded successfully (after refresh):", retryResponse.data);
+                        
+                        const uploadedUrl = retryResponse.data?.data?.url;
+                        if (!uploadedUrl) {
+                            throw new Error("No URL returned from server");
+                        }
+                        
+                        return uploadedUrl;
+                    } catch (refreshError) {
+                        console.error("[Upload] Token refresh failed:", refreshError.message);
+                        throw new Error("Session expired - please login again");
+                    }
+                }
+                // Re-throw other errors
+                throw uploadError;
+            }
+        } catch (error) {
+            console.error("[Upload] Failed to upload image:", error.message);
+            console.error("[Upload] Error details:", error.response?.status, error.response?.data);
+            throw new Error(error.message || "Failed to upload image");
+        }
     };
 
     const handlePickImage = async () => {
@@ -56,14 +149,28 @@ export const ProfileScreen = () => {
 
     const handleSaveProfile = async () => {
         try {
-            // Update profile via context (saves to storage)
-            await updateProfile(editData);
-            console.log("Profile updated successfully");
+            let profileData = { ...editData };
+
+            // If user selected a new image, upload it first
+            if (selectedImage) {
+                console.log("[Profile] Uploading image...");
+                const uploadedUrl = await uploadImage(selectedImage);
+                profileData.avatar = uploadedUrl; // Update with server URL
+                console.log("[Profile] Image uploaded, using URL:", uploadedUrl);
+            }
+
+            console.log("[Profile] Saving profile with data:", JSON.stringify(profileData, null, 2));
+
+            // Update profile via context (saves to storage + syncs to backend)
+            const result = await updateProfile(profileData);
+            console.log("[Profile] Profile update result:", JSON.stringify(result, null, 2));
+            
+            console.log("[Profile] Profile updated successfully");
             setIsEditing(false);
             setSelectedImage(null);
         } catch (err) {
-            console.error("Failed to save profile:", err);
-            // Optionally show error to user here
+            console.error("[Profile] Failed to save profile:", err);
+            Alert.alert("Error", err.message || "Failed to update profile");
         }
     };
 

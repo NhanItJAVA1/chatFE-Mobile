@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image } from "react-native";
 import { useAuth } from "../../../shared/hooks";
 import { Avatar, Card, SectionTitle } from "../components";
 import { chats } from "../data";
@@ -58,7 +59,16 @@ export const HomeScreen = () => {
                 <Card style={styles.chatListCard}>
                     {filteredChats.map((item, index) => (
                         <View key={item.id} style={[styles.chatRow, index !== filteredChats.length - 1 && styles.rowDivider]}>
-                            <Avatar label={item.initials} size={54} backgroundColor={item.accent} textSize={16} />
+                            {item.avatar ? (
+                                <Image source={{ uri: item.avatar }} style={[styles.avatarImage, { width: 54, height: 54, borderRadius: 27 }]} />
+                            ) : (
+                                <Avatar 
+                                    label={item.initials} 
+                                    size={54} 
+                                    backgroundColor={item.accent} 
+                                    textSize={16}
+                                />
+                            )}
                             <View style={styles.chatMeta}>
                                 <View style={styles.chatTopLine}>
                                     <Text style={styles.chatName} numberOfLines={1}>{truncateName(item.name)}{item.verified ? " " : ""}</Text>
@@ -217,5 +227,8 @@ const styles = StyleSheet.create({
         color: colors.text,
         fontSize: 11,
         fontWeight: "800",
+    },
+    avatarImage: {
+        resizeMode: "cover",
     },
 });

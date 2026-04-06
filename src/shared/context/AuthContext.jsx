@@ -16,6 +16,8 @@ export const AuthProvider = ({ children }) => {
       const savedToken = await authService.getToken();
       const savedUser = await authService.getUser();
 
+      console.log("[AuthContext] RestoreSession - savedUser:", JSON.stringify(savedUser, null, 2));
+
       if (!isActive) return;
 
       if (savedToken) {
@@ -56,6 +58,8 @@ export const AuthProvider = ({ children }) => {
       setError(null);
       setLoading(true);
       const response = await authService.login({ phone, password });
+      console.log("[AuthContext] Login response:", JSON.stringify(response, null, 2));
+      
       const data = response || {};
 
       const accessToken = data.token || data.accessToken;
@@ -78,6 +82,7 @@ export const AuthProvider = ({ children }) => {
 
       // Check if login response already contains user profile
       let userProfile = data.user || data.profile || null;
+      console.log("[AuthContext] User profile from response:", JSON.stringify(userProfile, null, 2));
 
       // If profile not in login response, construct from available response data
       if (!userProfile) {
