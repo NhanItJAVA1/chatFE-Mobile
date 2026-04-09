@@ -147,7 +147,7 @@ export const authService = {
   // Update avatar
   async updateAvatar(avatarUrl) {
     try {
-      const response = await axiosInstance.patch("/auth/avatar", {
+      const response = await api.patch("/auth/avatar", {
         avatarUrl,
       });
       return response;
