@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import {
     ActivityIndicator,
     Image,
+    Pressable,
     ScrollView,
     StyleSheet,
     Text,
@@ -14,10 +15,19 @@ import { Avatar, Card, SectionTitle } from "../components";
 import { colors } from "../theme";
 import type { Friend } from "@/types";
 
-export const HomeScreen = () => {
+interface HomeScreenProps {
+    onFriendPress?: (friend: any) => void;
+}
+
+export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
     const { user } = useAuth();
-    const { state } = useFriendship();
+    const { state, actions } = useFriendship();
     const [query, setQuery] = useState("");
+
+    // Load friends on mount
+    useEffect(() => {
+        actions.loadFriends();
+    }, []);
 
     const truncateName = (name: string | undefined, maxLength = 20) => {
         if (!name || name.length <= maxLength) {
@@ -39,6 +49,23 @@ export const HomeScreen = () => {
             item?.friendInfo?.phoneNumber?.toLowerCase().includes(needle)
         );
     }, [state?.friends, query]);
+
+    /**
+     * Handle friend press - navigate to chat
+     */
+    const handleFriendPress = (friend: Friend) => {
+        if (onFriendPress) {
+            onFriendPress({
+                id: friend.friendId,
+                displayName: friend.friendInfo?.displayName,
+                avatar: friend.friendInfo?.avatar,
+                avatarUrl: friend.friendInfo?.avatar,
+                phone: friend.friendInfo?.phoneNumber,
+                status: friend.friendInfo?.status,
+                _id: friend._id,
+            });
+        }
+    };
 
     return (
         <View style={styles.screen}>
@@ -116,12 +143,14 @@ export const HomeScreen = () => {
                             if (!friend || !friend.friendInfo) return null;
 
                             return (
-                                <View
+                                <Pressable
                                     key={friend._id}
-                                    style={[
+                                    onPress={() => handleFriendPress(friend)}
+                                    style={({ pressed }) => [
                                         styles.chatRow,
                                         index !== filteredFriends.length - 1 &&
                                         styles.rowDivider,
+                                        pressed && styles.chatRowPressed,
                                     ]}
                                 >
                                     {friend.friendInfo?.avatar ? (
@@ -173,7 +202,7 @@ export const HomeScreen = () => {
                                             </Text>
                                         </View>
                                     </View>
-                                </View>
+                                </Pressable>
                             );
                         })
                     )}
@@ -296,6 +325,10 @@ const styles = StyleSheet.create({
         gap: 12,
         padding: 14,
         alignItems: "center",
+    },
+    chatRowPressed: {
+        backgroundColor: colors.surface,
+        opacity: 0.7,
     },
     rowDivider: {
         borderBottomWidth: StyleSheet.hairlineWidth,

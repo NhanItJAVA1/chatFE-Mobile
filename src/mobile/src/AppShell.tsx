@@ -37,8 +37,16 @@ const AuthGate = () => {
 
 type TabKey = "home" | "chat" | "addFriend" | "requests" | "profile";
 
+interface SelectedChat {
+    friendId: string;
+    friendName: string;
+    friendAvatar?: string;
+    [key: string]: any;
+}
+
 const MainShell = () => {
     const [activeTab, setActiveTab] = useState<TabKey>("home");
+    const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
     const { isAuthenticated } = useAuth();
 
     useEffect(() => {
@@ -49,7 +57,15 @@ const MainShell = () => {
 
     const renderScreen = () => {
         if (activeTab === "chat") {
-            return <ChatScreen onBackPress={() => setActiveTab("home")} />;
+            return (
+                <ChatScreen
+                    chatUser={selectedChat}
+                    onBackPress={() => {
+                        setActiveTab("home");
+                        setSelectedChat(null);
+                    }}
+                />
+            );
         }
 
         if (activeTab === "profile") {
@@ -64,7 +80,14 @@ const MainShell = () => {
             return <FriendRequestsScreen />;
         }
 
-        return <HomeScreen />;
+        return (
+            <HomeScreen
+                onFriendPress={(friend) => {
+                    setSelectedChat(friend);
+                    setActiveTab("chat");
+                }}
+            />
+        );
     };
 
     return (

@@ -8,10 +8,12 @@ import {
     rejectFriendRequest,
     cancelFriendRequest,
     getFriends,
+    getFriendsWithEnrichment,
     checkFriendshipStatus,
     getMutualFriends,
     removeFriend,
 } from "../services/friendService";
+import { useAuth } from "./useAuth";
 import type { Friend, FriendRequest, FriendshipStatus, User } from "@/types";
 
 interface UseFriendshipOptions {
@@ -89,6 +91,7 @@ export const useFriendship = (
     options: UseFriendshipOptions = {}
 ): UseFriendshipReturn => {
     const { autoLoad = true } = options;
+    const { user } = useAuth();
 
     // Friends list
     const [friends, setFriends] = useState<Friend[]>([]);
@@ -127,10 +130,16 @@ export const useFriendship = (
 
     // Load friends
     const loadFriends = useCallback(async () => {
+        if (!user?.id) {
+            console.warn("[useFriendship] No user ID available");
+            setFriendsError("User not authenticated");
+            return;
+        }
+
         setFriendsLoading(true);
         setFriendsError(null);
         try {
-            const data = await getFriends();
+            const data = await getFriendsWithEnrichment(user.id);
             setFriends(data);
         } catch (error: any) {
             console.error("[useFriendship] Load friends error:", error);
@@ -138,7 +147,7 @@ export const useFriendship = (
         } finally {
             setFriendsLoading(false);
         }
-    }, []);
+    }, [user?.id]);
 
     // Load received requests
     const loadReceivedRequests = useCallback(async () => {

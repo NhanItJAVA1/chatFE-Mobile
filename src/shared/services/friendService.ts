@@ -274,40 +274,117 @@ export const cancelFriendRequest = async (requestId: string): Promise<boolean> =
 };
 
 /**
- * Xem danh sách bạn bè
+ * Get user info by ID
+ * Calls: GET /users/{userId}
  */
-export const getFriends = async (): Promise<Friend[]> => {
+const getUserInfo = async (userId: string): Promise<User> => {
     try {
+        const response = await api.get(`/users/${userId}`);
+        return response.data || response;
+    } catch (error: any) {
+        console.error(`[friendService] Error fetching user ${userId}:`, error);
+        // Return minimal user object on error
+        return { id: userId, email: "", displayName: "Unknown User", avatar: "" };
+    }
+};
+
+/**
+ * Transform raw friendship into enriched Friend object
+ * API returns: { id, userA, userB, createdAt }
+ * Expected: { _id, friendId, friendInfo, status, createdAt }
+ */
+const enrichFriendship = async (friendship: any, currentUserId: string): Promise<Friend | null> => {
+    try {
+        // Determine which user is the friend (not the current user)
+        const friendId = friendship.userA === currentUserId ? friendship.userB : friendship.userA;
+
+        console.log(
+            `[friendService] Enriching friendship: current=${currentUserId}, friend=${friendId}`
+        );
+
+        // Fetch friend's user info
+        const friendUser = await getUserInfo(friendId);
+
+        return {
+            _id: friendship.id || friendship._id,
+            friendId: friendId,
+            friendInfo: {
+                displayName: friendUser.displayName || "Unknown User",
+                phoneNumber: friendUser.phone || friendUser.phoneNumber || "",
+                avatar: friendUser.avatar || friendUser.avatarUrl || "",
+                status: (friendUser.status || "offline") as "online" | "offline",
+            },
+            status: "ACCEPTED",
+            createdAt: friendship.createdAt,
+        };
+    } catch (error: any) {
+        console.error("[friendService] Error enriching friendship:", error);
+        return null;
+    }
+};
+
+/**
+ * Xem danh sách bạn bè
+ * Transforms raw friendship data into enriched Friend objects with user profiles
+ * @param currentUserId - Current user's ID (required to determine which ID is the friend)
+ */
+export const getFriendsWithEnrichment = async (currentUserId: string): Promise<Friend[]> => {
+    try {
+        console.log("[friendService] Loading friends for user:", currentUserId);
         const response = await api.get("/friendships");
 
         // Extract data from response
         let data = response.data || response;
 
-        // Case 1: data is already an array
+        // Extract friendships array
+        let friendships: any[] = [];
         if (Array.isArray(data)) {
-            return data;
+            friendships = data;
+        } else if (data?.items && Array.isArray(data.items)) {
+            friendships = data.items;
+        } else if (data?.data && Array.isArray(data.data)) {
+            friendships = data.data;
         }
 
-        // Case 2: data is paginated response with items field
-        if (data && typeof data === "object") {
-            if (Array.isArray(data.items)) {
-                return data.items;
-            }
+        console.log("[friendService] Loaded friendships:", friendships.length);
 
-            // Case 3: data has friends field
-            if (Array.isArray(data.friends)) {
-                return data.friends;
-            }
-            
-            // Case 4: data has other array fields
-            const arrayField = data.list || data.data;
-            if (Array.isArray(arrayField)) {
-                return arrayField;
-            }
+        if (friendships.length === 0) {
+            return [];
         }
 
-        // Fallback to empty array
-        return [];
+        // Enrich each friendship with user profile data
+        const enrichedFriends = await Promise.all(
+            friendships.map((f) => enrichFriendship(f, currentUserId))
+        );
+
+        // Filter out null values (enrichment failures)
+        return enrichedFriends.filter((f) => f !== null) as Friend[];
+    } catch (error: any) {
+        console.error("[friendService] Load friends error:", error);
+        throw new Error(error.message || "Failed to load friends");
+    }
+};
+
+/**
+ * Xem danh sách bạn bè (fallback - returns raw data, should use getFriendsWithEnrichment)
+ */
+export const getFriends = async (): Promise<Friend[]> => {
+    try {
+        console.log("[friendService] Loading friends...");
+        const response = await api.get("/friendships");
+
+        let data = response.data || response;
+
+        // Extract friendships array
+        let friendships: any[] = [];
+        if (Array.isArray(data)) {
+            friendships = data;
+        } else if (data?.items && Array.isArray(data.items)) {
+            friendships = data.items;
+        }
+
+        console.log("[friendService] Loaded raw friendships:", friendships);
+        return friendships || [];
     } catch (error: any) {
         console.error("[friendService] Load friends error:", error);
         throw new Error(error.message || "Failed to load friends");
