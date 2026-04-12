@@ -7,6 +7,7 @@ import type { BottomTabBarProps, TabItem } from "@/types";
 export const BottomTabBar = ({
     activeTab,
     onChangeTab,
+    friendRequestCount = 0,
 }: BottomTabBarProps) => {
     const items: TabItem[] = [
         { key: "home", label: "Danh Bạ", icon: "people-outline" },
@@ -21,17 +22,28 @@ export const BottomTabBar = ({
             <View style={styles.tabBar}>
                 {items.map((item) => {
                     const active = activeTab === item.key;
+                    const showBadge = item.key === "requests" && friendRequestCount > 0;
+
                     return (
                         <Pressable
                             key={item.key}
                             onPress={() => onChangeTab(item.key)}
                             style={styles.tabItem}
                         >
-                            <Ionicons
-                                name={item.icon as any}
-                                size={24}
-                                color={active ? colors.accent : colors.tabInactive}
-                            />
+                            <View style={styles.iconContainer}>
+                                <Ionicons
+                                    name={item.icon as any}
+                                    size={24}
+                                    color={active ? colors.accent : colors.tabInactive}
+                                />
+                                {showBadge && (
+                                    <View style={styles.badge}>
+                                        <Text style={styles.badgeText}>
+                                            {friendRequestCount}
+                                        </Text>
+                                    </View>
+                                )}
+                            </View>
                             <Text
                                 style={[
                                     styles.tabLabel,
@@ -79,5 +91,31 @@ const styles = StyleSheet.create({
     },
     tabLabelActive: {
         color: colors.accent,
+    },
+    iconContainer: {
+        position: "relative",
+        width: 24,
+        height: 24,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    badge: {
+        position: "absolute",
+        top: -8,
+        right: -8,
+        backgroundColor: "#FF4B4B",
+        borderRadius: 10,
+        width: 20,
+        height: 20,
+        justifyContent: "center",
+        alignItems: "center",
+        borderWidth: 2,
+        borderColor: colors.background,
+    },
+    badgeText: {
+        color: "#FFFFFF",
+        fontSize: 10,
+        fontWeight: "700",
+        textAlign: "center",
     },
 });

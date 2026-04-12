@@ -10,10 +10,10 @@ import {
     Text,
     View,
 } from "react-native";
-import { useFriendRequests } from "../../../shared/hooks";
 import { Avatar, Card, PrimaryButton } from "../components";
 import { colors } from "../theme";
 import type { FriendRequestTransformed } from "@/shared/services/friendRequestService";
+import type { FriendRequestsScreenProps } from "@/types";
 
 /**
  * FriendRequestsScreen - Screen for viewing and managing friend requests
@@ -24,19 +24,17 @@ import type { FriendRequestTransformed } from "@/shared/services/friendRequestSe
  * - View request status and timestamps
  * - Pull-to-refresh
  * 
- * Uses: useFriendRequests hook with friendRequestService
- * Data is automatically transformed with senderInfo
+ * Props: Receives requests and actions from parent (AppShell)
+ * Ensures shared state between FriendRequestsScreen and badge counter
  */
-export const FriendRequestsScreen = () => {
-    const {
-        requests,
-        loading,
-        error,
-        acceptRequest,
-        declineRequest,
-        refresh,
-        pagination,
-    } = useFriendRequests();
+export const FriendRequestsScreen = ({
+    requests,
+    loading,
+    error,
+    acceptRequest,
+    declineRequest,
+    refresh,
+}: FriendRequestsScreenProps) => {
 
     // Handle accept request
     const handleAccept = async (requestId: string) => {

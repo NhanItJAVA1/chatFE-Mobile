@@ -59,7 +59,7 @@ export const requestPresignedUrl = async (
             expiresIn,
         });
 
-        const response = await api.post("/v1/media/request-upload-url", {
+        const response = await api.post("/media/request-upload-url", {
             ...payload,
             expiresIn,
         });
@@ -144,7 +144,7 @@ export const confirmUpload = async (
     try {
         console.log("[confirmUpload] Confirming upload:", payload.fileId);
 
-        const response = await api.post("/v1/media/confirm-upload", payload);
+        const response = await api.post("/media/confirm-upload", payload);
 
         console.log("[confirmUpload] Upload confirmed successfully");
 

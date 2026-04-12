@@ -143,66 +143,87 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
                             if (!friend || !friend.friendInfo) return null;
 
                             return (
-                                <Pressable
+                                <View
                                     key={friend._id}
-                                    onPress={() => handleFriendPress(friend)}
-                                    style={({ pressed }) => [
+                                    style={[
                                         styles.chatRow,
                                         index !== filteredFriends.length - 1 &&
                                         styles.rowDivider,
-                                        pressed && styles.chatRowPressed,
                                     ]}
                                 >
-                                    {friend.friendInfo?.avatar ? (
-                                        <Image
-                                            source={{
-                                                uri: friend.friendInfo.avatar,
-                                            }}
-                                            style={[
-                                                styles.avatarImage,
-                                                { width: 54, height: 54, borderRadius: 27 },
-                                            ]}
-                                        />
-                                    ) : (
-                                        <Avatar
-                                            label={(friend.friendInfo?.displayName || "U").slice(0, 1).toUpperCase()}
-                                            size={54}
-                                            backgroundColor="#3d6df2"
-                                            textSize={16}
-                                        />
-                                    )}
-                                    <View style={styles.chatMeta}>
-                                        <View style={styles.chatTopLine}>
-                                            <Text
-                                                style={styles.chatName}
-                                                numberOfLines={1}
-                                            >
-                                                {truncateName(friend.friendInfo?.displayName)}
-                                            </Text>
-                                            <View
+                                    <Pressable
+                                        onPress={() => handleFriendPress(friend)}
+                                        style={({ pressed }) => [
+                                            styles.chatRowContent,
+                                            pressed && styles.chatRowPressed,
+                                        ]}
+                                    >
+                                        {friend.friendInfo?.avatar ? (
+                                            <Image
+                                                source={{
+                                                    uri: friend.friendInfo.avatar,
+                                                }}
                                                 style={[
-                                                    styles.statusDot,
-                                                    {
-                                                        backgroundColor:
-                                                            friend.friendInfo?.status === "online"
-                                                                ? "#22c55e"
-                                                                : "#ef4444",
-                                                    },
+                                                    styles.avatarImage,
+                                                    { width: 54, height: 54, borderRadius: 27 },
                                                 ]}
                                             />
+                                        ) : (
+                                            <Avatar
+                                                label={(friend.friendInfo?.displayName || "U").slice(0, 1).toUpperCase()}
+                                                size={54}
+                                                backgroundColor="#3d6df2"
+                                                textSize={16}
+                                            />
+                                        )}
+                                        <View style={styles.chatMeta}>
+                                            <View style={styles.chatTopLine}>
+                                                <Text
+                                                    style={styles.chatName}
+                                                    numberOfLines={1}
+                                                >
+                                                    {truncateName(friend.friendInfo?.displayName)}
+                                                </Text>
+                                                <View
+                                                    style={[
+                                                        styles.statusDot,
+                                                        {
+                                                            backgroundColor:
+                                                                friend.friendInfo?.status === "online"
+                                                                    ? "#22c55e"
+                                                                    : "#ef4444",
+                                                        },
+                                                    ]}
+                                                />
+                                            </View>
+                                            <View style={styles.chatBottomLine}>
+                                                <Text
+                                                    style={styles.chatMessage}
+                                                    numberOfLines={1}
+                                                >
+                                                    {friend.friendInfo?.status === "online"
+                                                        ? "Online"
+                                                        : "Offline"}
+                                                </Text>
+                                            </View>
                                         </View>
-                                        <View style={styles.chatBottomLine}>
-                                            <Text
-                                                style={styles.chatMessage}
-                                                numberOfLines={1}
-                                            >
-                                                {friend.friendInfo?.status === "online"
-                                                    ? "Online"
-                                                    : "Offline"}
-                                            </Text>
-                                        </View>
-                                    </View>
-                                </Pressable>
+                                    </Pressable>
+
+                                    {/* Chat icon button on the right */}
+                                    <Pressable
+                                        onPress={() => handleFriendPress(friend)}
+                                        style={({ pressed }) => [
+                                            styles.chatIconButton,
+                                            pressed && styles.chatIconButtonPressed,
+                                        ]}
+                                    >
+                                        <Ionicons
+                                            name="chatbubble"
+                                            size={20}
+                                            color={colors.accent}
+                                        />
+                                    </Pressable>
+                                </View>
                             );
                         })
                     )}
@@ -325,10 +346,27 @@ const styles = StyleSheet.create({
         gap: 12,
         padding: 14,
         alignItems: "center",
+        justifyContent: "space-between",
+    },
+    chatRowContent: {
+        flex: 1,
+        flexDirection: "row",
+        gap: 12,
+        alignItems: "center",
     },
     chatRowPressed: {
-        backgroundColor: colors.surface,
-        opacity: 0.7,
+        backgroundColor: "rgba(59,130,246,0.08)",
+    },
+    chatIconButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: "rgba(59,130,246,0.1)",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    chatIconButtonPressed: {
+        backgroundColor: "rgba(59,130,246,0.2)",
     },
     rowDivider: {
         borderBottomWidth: StyleSheet.hairlineWidth,

@@ -24,6 +24,7 @@ export {
     friendRequestService,
 } from "./friendRequestService";
 export { SocketService } from "./socketService";
+export { FriendSocketService } from "./friendSocket";
 export { ConversationService } from "./conversationService";
 export type { Conversation, MessageResponse, MessagePage } from "./conversationService";
 export type { MessagePayload, TypingData, SeenData } from "./socketService";

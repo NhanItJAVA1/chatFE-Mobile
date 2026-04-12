@@ -140,6 +140,40 @@ class FriendRequestService {
     }
 
     /**
+     * Get a single received request by ID with full sender info
+     * Fallback: If specific endpoint doesn't exist, reload all received requests
+     */
+    async getSingleReceivedRequest(requestId: string): Promise<FriendRequestTransformed> {
+        try {
+            // Try the specific endpoint first
+            const response = await api.get(`/friend-requests/received/${requestId}`);
+            const item = response.data || response;
+            return await this.transformRequestItem(item);
+        } catch (error: any) {
+            // If single-request endpoint doesn't exist, reload all requests
+            // This ensures we get the newly arrived request with all details
+            console.warn(
+                `[friendRequestService] Single request endpoint not available, reloading all requests for ${requestId}`
+            );
+
+            try {
+                const result = await this.getReceivedRequests(1, 50);
+                const foundRequest = result.items.find((req) => req._id === requestId);
+
+                if (foundRequest) {
+                    return foundRequest;
+                }
+
+                throw new Error(`Request ${requestId} not found in received requests`);
+            } catch (reloadError: any) {
+                throw new Error(
+                    reloadError.message || "Failed to load request details"
+                );
+            }
+        }
+    }
+
+    /**
      * Chấp nhận lời mời kết bạn
      * Calls: PATCH /v1/friend-requests/{requestId} with status: accepted
      */

@@ -47,6 +47,7 @@ export type SectionTitleProps = {
 export type BottomTabBarProps = {
     activeTab: string;
     onChangeTab: (tab: string) => void;
+    friendRequestCount?: number;
 };
 
 export type TabItem = {
@@ -59,6 +60,16 @@ export type TabItem = {
 export type ChatScreenProps = {
     onBackPress: () => void;
     chatUser?: any;
+};
+
+// FriendRequestsScreen Component
+export type FriendRequestsScreenProps = {
+    requests: any[];
+    loading: boolean;
+    error: string | null;
+    acceptRequest: (requestId: string) => Promise<boolean>;
+    declineRequest: (requestId: string) => Promise<boolean>;
+    refresh: () => Promise<void>;
 };
 
 // ProfileScreen Types

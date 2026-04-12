@@ -169,8 +169,21 @@ export const apiCall = async (
         }
 
         if (!response.ok) {
+            let errorDetails = "";
+            try {
+                const bodyText = await response.text();
+                try {
+                    const errorBody = JSON.parse(bodyText);
+                    errorDetails = JSON.stringify(errorBody, null, 2);
+                } catch {
+                    errorDetails = bodyText;
+                }
+            } catch {
+                errorDetails = "Unable to read response body";
+            }
             const errorMsg = `API error: ${response.status} ${response.statusText}`;
             console.error(`[API] ${errorMsg} on ${options.method || "GET"} ${endpoint}`);
+            console.error(`[API] Response body:`, errorDetails);
             throw new Error(errorMsg);
         }
 

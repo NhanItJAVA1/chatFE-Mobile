@@ -19,7 +19,21 @@
       "**/*"
     ],
     "android": {
-      "package": "com.anonymous.chatchitmobile"
-    }
+      "package": "com.anonymous.chatchitmobile",
+      "permissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Cho phép truy cập thư viện ảnh",
+          "cameraPermission": "Cho phép truy cập camera"
+        }
+      ]
+    ]
   }
 }

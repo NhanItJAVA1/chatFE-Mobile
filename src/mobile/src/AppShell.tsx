@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
-import { useAuth } from "../../shared/hooks";
+import { useAuth, useFriendRequests, useFriendship } from "../../shared/hooks";
 import { BottomTabBar } from "./components";
 import {
     ChatScreen,
@@ -48,6 +48,17 @@ const MainShell = () => {
     const [activeTab, setActiveTab] = useState<TabKey>("home");
     const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
     const { isAuthenticated } = useAuth();
+    const {
+        requests,
+        loading,
+        error,
+        acceptRequest,
+        declineRequest,
+        refresh,
+    } = useFriendRequests();
+
+    // Shared friendship state (for sent requests, friends list, etc.)
+    const friendshipResult = useFriendship();
 
     useEffect(() => {
         if (!isAuthenticated) {
@@ -73,11 +84,20 @@ const MainShell = () => {
         }
 
         if (activeTab === "addFriend") {
-            return <AddFriendScreen />;
+            return <AddFriendScreen state={friendshipResult.state} actions={friendshipResult.actions} />;
         }
 
         if (activeTab === "requests") {
-            return <FriendRequestsScreen />;
+            return (
+                <FriendRequestsScreen
+                    requests={requests}
+                    loading={loading}
+                    error={error}
+                    acceptRequest={acceptRequest}
+                    declineRequest={declineRequest}
+                    refresh={refresh}
+                />
+            );
         }
 
         return (
@@ -97,6 +117,7 @@ const MainShell = () => {
                 <BottomTabBar
                     activeTab={activeTab}
                     onChangeTab={(tab) => setActiveTab(tab as TabKey)}
+                    friendRequestCount={requests.length}
                 />
             )}
         </View>

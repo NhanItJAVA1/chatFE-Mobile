@@ -48,5 +48,16 @@ export type {
     Friend,
 } from "./message";
 
+// Media types
+export type {
+    MessageMedia,
+    ChatMessageWithMedia,
+    UploadProgressCallback,
+    MediaUploadResponse,
+    RequestPresignedUrlPayload,
+} from "./media";
+
+export { MediaFileType } from "./media";
+
 // Common utility types
 export type { ApiCallOptions, UseFetchResult } from "./common";

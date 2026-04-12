@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { ConversationService, Conversation, MessagePage, MessageResponse } from "../services/conversationService";
 import { SocketService, MessagePayload, TypingData } from "../services/socketService";
 import { useAuth } from "./useAuth";
+import { saveMessagesToCache, loadMessagesFromCache, mergeMessages } from "../utils/cacheUtils";
 
 export interface UseChatMessageState {
     conversation: Conversation | null;
@@ -36,6 +37,17 @@ const MESSAGE_LIMIT = 30;
 const TYPING_DEBOUNCE_TIME = 3000;
 
 /**
+ * Persistent cache for conversations to prevent message loss on exit/re-entry
+ * Maps conversationId -> { conversation, messages, hasMoreMessages, currentPage }
+ */
+const conversationCache = new Map<string, {
+    conversation: Conversation;
+    messages: MessagePayload[];
+    hasMoreMessages: boolean;
+    currentPage: number;
+}>();
+
+/**
  * Custom hook for managing chat messages and real-time communication
  * @param friendId - ID of the friend/user to chat with
  * @param token - JWT auth token
@@ -58,6 +70,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const messageListenerActiveRef = useRef(false);
+    const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     /**
      * Initialize conversation and Socket.IO
@@ -77,6 +90,18 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             error: null,
         }));
 
+        // Set timeout to ensure loading always stops (5 seconds max)
+        const timeoutId = setTimeout(() => {
+            console.warn('[useChat] Loading timeout after 5s');
+            setState((prev) => ({
+                ...prev,
+                isLoading: false,
+                error: prev.error || "Tải tin nhắn lâu quá - vui lòng thử lại",
+            }));
+        }, 5000);
+
+        loadingTimeoutRef.current = timeoutId;
+
         try {
             // Step 1: Connect Socket.IO
             const socket = SocketService.connect(token);
@@ -93,29 +118,106 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 MESSAGE_LIMIT
             );
 
+            console.log('[useChat] Messages loaded from API:', messagesResponse);
+
+            // Clear timeout since loading succeeded
+            if (loadingTimeoutRef.current) {
+                clearTimeout(loadingTimeoutRef.current);
+                loadingTimeoutRef.current = null;
+            }
+
             // Step 4: Join conversation room
             await SocketService.joinConversation(
                 conversation._id || conversation.id
             );
 
             // Update state with initial data
-            setState((prev) => ({
-                ...prev,
+            const conversationId = conversation._id || conversation.id;
+
+            // Step 3a: Load from cache FIRST (for immediate display)
+            console.log('[useChat] Loading from cache...');
+            let cachedMessages: MessagePayload[] = [];
+            try {
+                cachedMessages = await loadMessagesFromCache(conversationId);
+                console.log('[useChat] ✓ Loaded', cachedMessages.length, 'messages from cache');
+            } catch (error) {
+                console.error('[useChat] Failed to load from cache:', error);
+            }
+
+            // Step 3b: Load from API
+            let loadedMessages = messagesResponse?.items || [];
+            const hasMore = messagesResponse?.hasMore ?? (loadedMessages.length >= MESSAGE_LIMIT);
+
+            // Step 3c: Merge messages intelligently
+            let finalMessages = loadedMessages;
+            if (loadedMessages.length === 0 && cachedMessages.length > 0) {
+                // API returned nothing, use cache
+                console.log('[useChat] API empty, using', cachedMessages.length, 'cached messages');
+                finalMessages = cachedMessages;
+            } else if (loadedMessages.length > 0 && cachedMessages.length > 0) {
+                // Both have data, merge smart
+                console.log('[useChat] Merging API + cache messages');
+                finalMessages = mergeMessages(loadedMessages, cachedMessages);
+            }
+
+            console.log('[useChat] ====== ABOUT TO SET STATE (with cache) ======');
+            console.log('[useChat] finalMessages count:', finalMessages.length);
+            console.log('[useChat] hasMore:', hasMore);
+
+            setState((prev) => {
+                const newState = {
+                    ...prev,
+                    conversation,
+                    messages: finalMessages,
+                    isLoading: false,
+                    hasMoreMessages: hasMore,
+                    currentPage: 1,
+                };
+                console.log('[useChat] ====== STATE UPDATED ======');
+                console.log('[useChat] new messages count:', newState.messages.length);
+                return newState;
+            });
+
+            // Step 3d: Save final messages to cache
+            try {
+                await saveMessagesToCache(conversationId, finalMessages);
+            } catch (error) {
+                console.error('[useChat] Failed to save to cache:', error);
+            }
+
+            // Save to in-memory cache too
+            conversationCache.set(conversationId, {
                 conversation,
-                messages: messagesResponse.items || [],
-                isLoading: false,
-                hasMoreMessages: messagesResponse.hasMore || false,
+                messages: finalMessages,
+                hasMoreMessages: hasMore,
                 currentPage: 1,
-            }));
+            });
+            console.log('[useChat] Saved to in-memory cache. Size:', conversationCache.size);
 
             // Step 5: Setup Socket.IO event listeners
-            setupSocketListeners(conversation._id || conversation.id);
+            console.log('[useChat] About to call setupSocketListeners...');
+            setupSocketListeners(conversationId);
+            console.log('[useChat] setupSocketListeners completed');
         } catch (error: any) {
-            setState((prev) => ({
-                ...prev,
-                error: error.message || "Failed to initialize chat",
-                isLoading: false,
-            }));
+            console.error('[useChat] Initialize error:', error);
+
+            // Clear timeout on error
+            if (loadingTimeoutRef.current) {
+                clearTimeout(loadingTimeoutRef.current);
+                loadingTimeoutRef.current = null;
+            }
+
+            console.log('[useChat] ====== ERROR - SETTING isLoading to FALSE ======');
+            setState((prev) => {
+                const newState = {
+                    ...prev,
+                    error: error.message || "Failed to initialize chat",
+                    isLoading: false,
+                };
+                console.log('[useChat] new isLoading:', newState.isLoading);
+                console.log('[useChat] new error:', newState.error);
+                return newState;
+            });
         }
     }, [friendId, token]);
 
@@ -124,16 +226,44 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
      */
     const setupSocketListeners = useCallback(
         (conversationId: string) => {
+            console.log('[useChat] setupSocketListeners called for conversationId:', conversationId);
+            console.log('[useChat] messageListenerActiveRef.current:', messageListenerActiveRef.current);
+
             if (messageListenerActiveRef.current) {
+                console.log('[useChat] Listeners already active, skipping setup');
                 return;
             }
 
             // Incoming messages
             SocketService.onMessage((message: MessagePayload) => {
-                setState((prev) => ({
-                    ...prev,
-                    messages: [message, ...prev.messages],
-                }));
+                console.log('[useChat] Received message:', {
+                    text: message.text?.substring(0, 50),
+                    hasMedia: !!message.media,
+                    mediaCount: message.media?.length,
+                    mediaTypes: message.media?.map((m: any) => m.mediaType),
+                });
+                setState((prev) => {
+                    const newState = {
+                        ...prev,
+                        messages: [message, ...prev.messages],
+                    };
+                    // Update cache with new message (both in-memory and device storage)
+                    if (prev.conversation) {
+                        const conversationId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(conversationId, {
+                            conversation: prev.conversation,
+                            messages: newState.messages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            currentPage: prev.currentPage,
+                        });
+
+                        // Also save to AsyncStorage
+                        saveMessagesToCache(conversationId, newState.messages).catch((error) => {
+                            console.error('[useChat] Failed to save message to cache:', error);
+                        });
+                    }
+                    return newState;
+                });
             });
 
             // Message seen events
@@ -163,18 +293,58 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
             // Message updates (edit, delete)
             SocketService.onMessageUpdated((message: any) => {
-                setState((prev) => ({
-                    ...prev,
-                    messages: prev.messages.map((msg) =>
-                        msg._id === message._id ? message : msg
-                    ),
-                }));
+                setState((prev) => {
+                    const newState = {
+                        ...prev,
+                        messages: prev.messages.map((msg) =>
+                            msg._id === message._id ? message : msg
+                        ),
+                    };
+                    // Update cache with updated message (both in-memory and device storage)
+                    if (prev.conversation) {
+                        const conversationId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(conversationId, {
+                            conversation: prev.conversation,
+                            messages: newState.messages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            currentPage: prev.currentPage,
+                        });
+
+                        // Also save to AsyncStorage
+                        saveMessagesToCache(conversationId, newState.messages).catch((error) => {
+                            console.error('[useChat] Failed to save updated message to cache:', error);
+                        });
+                    }
+                    return newState;
+                });
             });
 
+            console.log('[useChat] ====== ALL LISTENERS SET UP ======');
             messageListenerActiveRef.current = true;
+            console.log('[useChat] messageListenerActiveRef set to true');
         },
         []
     );
+
+    /**
+     * Update both state and cache
+     */
+    const updateStateAndCache = useCallback((updates: Partial<UseChatMessageState>) => {
+        setState((prev) => {
+            const newState = { ...prev, ...updates };
+            // Update cache if conversation exists
+            if (newState.conversation) {
+                const conversationId = newState.conversation._id || newState.conversation.id;
+                conversationCache.set(conversationId, {
+                    conversation: newState.conversation,
+                    messages: newState.messages,
+                    hasMoreMessages: newState.hasMoreMessages,
+                    currentPage: newState.currentPage,
+                });
+            }
+            return newState;
+        });
+    }, []);
 
     /**
      * Send message
@@ -200,11 +370,10 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
                 // Message will be added via onMessage listener
                 // But add it immediately for better UX
-                setState((prev) => ({
-                    ...prev,
-                    messages: [message, ...prev.messages],
+                updateStateAndCache({
+                    messages: [message, ...state.messages],
                     isSending: false,
-                }));
+                });
             } catch (error: any) {
                 setState((prev) => ({
                     ...prev,
@@ -213,7 +382,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 }));
             }
         },
-        [state.conversation]
+        [state.conversation, state.messages, updateStateAndCache]
     );
 
     /**
@@ -285,12 +454,24 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     MESSAGE_LIMIT
                 );
 
-                setState((prev) => ({
-                    ...prev,
-                    messages: [...prev.messages, ...(response.items || [])],
-                    hasMoreMessages: response.hasMore || false,
-                    currentPage: page,
-                }));
+                setState((prev) => {
+                    const newState = {
+                        ...prev,
+                        messages: [...prev.messages, ...(response.items || [])],
+                        hasMoreMessages: response.hasMore || false,
+                        currentPage: page,
+                    };
+
+                    // Save updated messages to cache
+                    if (prev.conversation) {
+                        const conversationId = prev.conversation._id || prev.conversation.id;
+                        saveMessagesToCache(conversationId, newState.messages).catch((error) => {
+                            console.error('[useChat] Failed to save loaded messages to cache:', error);
+                        });
+                    }
+
+                    return newState;
+                });
             } catch (error: any) {
                 setState((prev) => ({
                     ...prev,
@@ -410,7 +591,16 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         initializeConversation();
 
         return () => {
-            // Cleanup
+            // Cleanup timeouts
+            if (loadingTimeoutRef.current) {
+                clearTimeout(loadingTimeoutRef.current);
+                loadingTimeoutRef.current = null;
+            }
+            if (typingTimeoutRef.current) {
+                clearTimeout(typingTimeoutRef.current);
+            }
+
+            // Cleanup socket
             if (state.conversation) {
                 SocketService.leaveConversation(
                     state.conversation._id || state.conversation.id
@@ -420,10 +610,6 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             SocketService.offMessageSeen();
             SocketService.offTyping();
             SocketService.offMessageUpdated();
-
-            if (typingTimeoutRef.current) {
-                clearTimeout(typingTimeoutRef.current);
-            }
 
             messageListenerActiveRef.current = false;
         };
