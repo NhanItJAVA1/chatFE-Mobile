@@ -496,28 +496,52 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
     /**
      * Mark messages as seen
      */
+    // Track last marked message ID to avoid duplicate calls
+    const lastMarkedMessageId = useRef<string>("");
+    const markAsSeenTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     const markAsSeen = useCallback(
         async (messageIds: string[]) => {
             if (!state.conversation || messageIds.length === 0) {
                 return;
             }
 
-            try {
-                const conversationId = state.conversation._id || state.conversation.id;
-                const lastId = messageIds[messageIds.length - 1];
+            const conversationId = state.conversation._id || state.conversation.id;
+            const lastId = messageIds[messageIds.length - 1];
 
-                // Call API to mark as read
-                await ConversationService.markConversationAsRead(conversationId, lastId);
-
-                // Emit socket event
-                await SocketService.markMessagesSeen(conversationId, lastId);
-            } catch (error: any) {
-                console.error('[useChat] Error marking messages as seen:', error);
-                // Silently fail
+            // Skip if same message already marked
+            if (lastMarkedMessageId.current === lastId) {
+                return;
             }
+
+            // Debounce: clear previous timeout and set new one
+            if (markAsSeenTimeout.current) {
+                clearTimeout(markAsSeenTimeout.current);
+            }
+
+            markAsSeenTimeout.current = setTimeout(async () => {
+                try {
+                    // Only use Socket for marking as seen (no double HTTP call)
+                    // Socket is realtime and 2-way, so HTTP is redundant
+                    await SocketService.markMessagesSeen(conversationId, lastId);
+                    lastMarkedMessageId.current = lastId;
+                } catch (error: any) {
+                    console.error('[useChat] Error marking messages as seen:', error);
+                    // Silently fail
+                }
+            }, 500);
         },
         [state.conversation]
     );
+
+    // Cleanup timeouts on unmount
+    useEffect(() => {
+        return () => {
+            if (markAsSeenTimeout.current) {
+                clearTimeout(markAsSeenTimeout.current);
+            }
+        };
+    }, []);
 
     /**
      * Handle typing (with debounce)

@@ -14,10 +14,11 @@ const getAuthToken = async (): Promise<string | null> => {
     if (token) {
         token = String(token).trim();
     }
-    console.log(
-        "[API] Token retrieved:",
-        token ? "✅ exists (" + token.substring(0, 20) + "...)" : "❌ missing"
-    );
+    // Commented out debug log to reduce console spam
+    // console.log(
+    //     "[API] Token retrieved:",
+    //     token ? "✅ exists (" + token.substring(0, 20) + "...)" : "❌ missing"
+    // );
     return token;
 };
 
@@ -106,10 +107,11 @@ export const apiCall = async (
             ...(options.headers || {}),
         };
 
-        console.log(`[API] ${options.method || "GET"} ${endpoint}`, {
-            hasToken: !!token,
-            authHeader: headers.Authorization ? "set" : "missing",
-        });
+        // Commented out debug log to reduce console spam
+        // console.log(`[API] ${options.method || "GET"} ${endpoint}`, {
+        //     hasToken: !!token,
+        //     authHeader: headers.Authorization ? "set" : "missing",
+        // });
 
         let response = await fetch(url, {
             headers,

@@ -26,6 +26,8 @@ import { Avatar, ForwardDialog } from "../components";
 import { colors } from "../theme";
 import MediaMessage from "../components/MediaMessage";
 import chatMediaService from "../../../shared/services/chatMediaService";
+import { unfriend } from "../../../shared/services/friendService";
+import { FriendSocketService, type FriendshipNotification } from "../../../shared/services/friendSocket";
 import type { ChatScreenProps, MessageMedia } from "@/types";
 import type { MessagePayload } from "../../../shared/services/socketService";
 
@@ -363,6 +365,8 @@ export const ChatScreen = ({
     const [viewingGalleryMessages, setViewingGalleryMessages] = React.useState<MessagePayload[] | null>(null);
     const [selectedImageIndex, setSelectedImageIndex] = React.useState(0);
     const [allViewerImages, setAllViewerImages] = React.useState<Array<{ uri: string; key: string }>>([]);
+    const [showAvatarMenu, setShowAvatarMenu] = React.useState(false);
+    const [unfriending, setUnfriending] = React.useState(false);
     const flatListRef = useRef<FlatList>(null);
     const imageViewerScrollRef = useRef<FlatList>(null);
     const actionsRef = useRef<any>(null);
@@ -416,6 +420,37 @@ export const ChatScreen = ({
         }
     }, [viewingGalleryMessages, selectedImageIndex]);
 
+    // Listen for unfriend event - if current chat partner unfriends us, navigate back
+    React.useEffect(() => {
+        const handleUnfriended = (notification: FriendshipNotification): void => {
+            // notification.data.unfriendedBy = user who did the unfriending
+            // notification.data.userId = user who was unfriended
+            const unfrienderUserId = notification.data?.unfriendedBy;
+
+            // Check if we (current user) were unfriended by the person we're chatting with
+            if (unfrienderUserId === friendId) {
+                Alert.alert(
+                    "Kết nối bị hủy",
+                    `${truncateName(chatUser?.name || "Người dùng")} đã hủy kết bạn với bạn.`,
+                    [
+                        {
+                            text: "Quay lại",
+                            onPress: () => {
+                                onBackPress?.();
+                            },
+                        }
+                    ]
+                );
+            }
+        };
+
+        FriendSocketService.onFriendshipUnfriended(handleUnfriended);
+
+        return () => {
+            FriendSocketService.offFriendshipUnfriended();
+        };
+    }, [friendId, chatUser?.name, onBackPress]);
+
     const {
         conversation,
         messages,
@@ -432,27 +467,9 @@ export const ChatScreen = ({
     );
 
     // Auto-mark messages as seen when new messages arrive
-    React.useEffect(() => {
-        if (
-            !conversation ||
-            messages.length === 0 ||
-            !actionsRef.current?.markAsSeen
-        ) {
-            return;
-        }
-
-        // Find the latest message that's not from current user
-        const latestOtherMessage = messages.find(
-            (msg) => msg.senderId !== (currentUser?.id || currentUserId)
-        );
-
-        if (latestOtherMessage) {
-            // Mark the latest message as seen
-            setTimeout(() => {
-                actionsRef.current?.markAsSeen([latestOtherMessage._id || latestOtherMessage.id || ""]);
-            }, 500);
-        }
-    }, [messages, conversation, currentUser?.id, currentUserId]);
+    // Auto mark as seen handled by handleViewableItemsChanged callback
+    // (when new messages arrive, they become visible and scroll callback marks them)
+    // Removed redundant useEffect here to reduce spam
 
     // Truncate name helper
     const truncateName = (name: string | undefined, maxLength = 20) => {
@@ -757,12 +774,87 @@ export const ChatScreen = ({
     }, [conversation, messageText]);
 
     /**
-     * Pick and send audio
+     * Pick and send audio (voice recording)
      */
     const handlePickAudio = useCallback(async () => {
         setShowVoiceRecorder(true);
         setShowMediaMenu(false);
     }, [conversation, messageText]);
+
+    /**
+     * Pick audio file from device storage
+     */
+    const handlePickAudioFile = useCallback(async () => {
+        try {
+            if (!conversation?._id && !conversation?.id) {
+                Alert.alert("Error", "Conversation is not ready yet");
+                return;
+            }
+
+            console.log('[ChatScreen] handlePickAudioFile called');
+
+            const result = await DocumentPicker.getDocumentAsync({
+                type: ["audio/*"],
+            });
+
+            console.log('[ChatScreen] DocumentPicker result:', {
+                canceled: result.canceled,
+                assetsCount: result.assets?.length,
+            });
+
+            // Only close menu if user actually picked something
+            setShowMediaMenu(false);
+
+            if (result.canceled) {
+                console.log('[ChatScreen] User canceled audio file picker');
+                return;
+            }
+
+            if (!result.assets || result.assets.length === 0) {
+                console.log('[ChatScreen] No audio assets selected');
+                return;
+            }
+
+            const asset = result.assets[0];
+            const audioFile = {
+                uri: asset.uri,
+                name: asset.name || `audio-${Date.now()}.mp3`,
+                type: asset.mimeType || "audio/mpeg",
+                mimeType: asset.mimeType || "audio/mpeg",
+                size: asset.size || 0,
+            };
+
+            console.log('[ChatScreen] Audio file selected:', audioFile);
+            setUploading(true);
+            setUploadProgress(0);
+
+            try {
+                const sentMessages = await chatMediaService.sendAudio(
+                    conversation?._id || conversation?.id || "",
+                    audioFile
+                );
+
+                console.log('[ChatScreen] Audio sent from file picker:', sentMessages);
+
+                // Add messages to local state to show realtime
+                if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
+                    actionsRef.current.addMessages(sentMessages);
+                }
+
+                setUploading(false);
+                setUploadProgress(0);
+            } catch (uploadError: any) {
+                console.error('[ChatScreen] Failed to send audio file:', uploadError);
+                setUploading(false);
+                setUploadProgress(0);
+                Alert.alert("Error", `Failed to send audio: ${uploadError.message}`);
+            }
+        } catch (error: any) {
+            console.error('[ChatScreen] Error opening audio file picker:', error);
+            setShowMediaMenu(false);
+            Alert.alert("Error", `Failed to open file picker: ${error.message}`);
+        }
+    }, [conversation]);
 
     const startAudioRecording = useCallback(async () => {
         if (!conversation?._id && !conversation?.id) {
@@ -927,31 +1019,75 @@ export const ChatScreen = ({
      */
     const handlePickDocument = useCallback(async () => {
         try {
-            console.log('[ChatScreen] handlePickDocument called');
-            // Don't dismiss modal yet
-            // setShowMediaMenu(false);
-
-            // Request permission
-            const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (!permissionResult.granted) {
-                Alert.alert(
-                    "Permission required",
-                    "We need access to your storage. Please enable it in settings."
-                );
+            if (!conversation?._id && !conversation?.id) {
+                Alert.alert("Error", "Conversation is not ready yet");
                 return;
             }
 
-            // For documents, we'll use image library to select PDFs/docs
-            Alert.alert(
-                "Not Available",
-                "Document picker is not available in this version. Please use web or email the document."
-            );
-        } catch (error: any) {
-            Alert.alert("Error", `Failed to send document: ${error.message}`);
-        } finally {
+            console.log('[ChatScreen] handlePickDocument called');
+
+            const result = await DocumentPicker.getDocumentAsync({
+                type: ["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "text/plain", "application/x-zip-compressed", "application/x-rar-compressed"],
+            });
+
+            console.log('[ChatScreen] DocumentPicker result for document:', {
+                canceled: result.canceled,
+                assetsCount: result.assets?.length,
+            });
+
+            // Only close menu if operation is complete or canceled
             setShowMediaMenu(false);
+
+            if (result.canceled) {
+                console.log('[ChatScreen] User canceled document file picker');
+                return;
+            }
+
+            if (!result.assets || result.assets.length === 0) {
+                console.log('[ChatScreen] No document assets selected');
+                return;
+            }
+
+            const asset = result.assets[0];
+            const documentFile = {
+                uri: asset.uri,
+                name: asset.name || `document-${Date.now()}`,
+                type: asset.mimeType || "application/octet-stream",
+                mimeType: asset.mimeType || "application/octet-stream",
+                size: asset.size || 0,
+            };
+
+            console.log('[ChatScreen] Document file selected:', documentFile);
+            setUploading(true);
+            setUploadProgress(0);
+
+            try {
+                const sentMessages = await chatMediaService.sendDocument(
+                    conversation?._id || conversation?.id || "",
+                    documentFile
+                );
+
+                console.log('[ChatScreen] Document sent:', sentMessages);
+
+                // Add messages to local state to show realtime
+                if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
+                    actionsRef.current.addMessages(sentMessages);
+                }
+
+                setUploading(false);
+                setUploadProgress(0);
+            } catch (uploadError: any) {
+                console.error('[ChatScreen] Failed to send document:', uploadError);
+                setUploading(false);
+                setUploadProgress(0);
+                Alert.alert("Error", `Failed to send document: ${uploadError.message}`);
+            }
+        } catch (error: any) {
+            console.error('[ChatScreen] Error opening document file picker:', error);
+            setShowMediaMenu(false);
+            Alert.alert("Error", `Failed to open file picker: ${error.message}`);
         }
-    }, []);
+    }, [conversation]);
 
     /**
      * Handle send message
@@ -1032,6 +1168,37 @@ export const ChatScreen = ({
     /**
      * Load more messages
      */
+    const handleUnfriend = useCallback(async () => {
+        if (!chatUser?.id) return;
+
+        Alert.alert(
+            "Hủy kết bạn",
+            `Xác nhận hủy kết bạn với ${truncateName(userName)}?`,
+            [
+                { text: "Hủy", onPress: () => { }, style: "cancel" },
+                {
+                    text: "Xác nhận",
+                    onPress: async () => {
+                        try {
+                            setUnfriending(true);
+                            setShowAvatarMenu(false);
+                            await unfriend(chatUser.id!);
+                            // Navigate back after unfriend success
+                            setTimeout(() => {
+                                onBackPress?.();
+                            }, 500);
+                        } catch (error: any) {
+                            Alert.alert("Lỗi", `Hủy kết bạn thất bại: ${error.message}`);
+                        } finally {
+                            setUnfriending(false);
+                        }
+                    },
+                    style: "destructive",
+                },
+            ]
+        );
+    }, [chatUser?.id, userName, onBackPress]);
+
     const handleLoadMore = useCallback(() => {
         if (hasMoreMessages && !isLoading && actionsRef.current) {
             actionsRef.current.loadMoreMessages();
@@ -1245,7 +1412,10 @@ export const ChatScreen = ({
                         {typingUsers.size > 0 ? "đang gõ..." : "trực tuyến"}
                     </Text>
                 </View>
-                <View style={styles.headerAvatarWrap}>
+                <Pressable
+                    style={styles.headerAvatarWrap}
+                    onPress={() => setShowAvatarMenu(true)}
+                >
                     {userAvatar ? (
                         <Image
                             source={{ uri: userAvatar }}
@@ -1262,7 +1432,7 @@ export const ChatScreen = ({
                             textSize={14}
                         />
                     )}
-                </View>
+                </Pressable>
             </View>
 
             {/* Loading initial messages - overlay only if truly loading */}
@@ -1588,6 +1758,38 @@ export const ChatScreen = ({
                 </View>
             </Modal>
 
+            {/* Avatar Menu Modal */}
+            <Modal
+                visible={showAvatarMenu}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowAvatarMenu(false)}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setShowAvatarMenu(false)}
+                >
+                    <View style={styles.avatarMenuContainer}>
+                        <Pressable
+                            style={[styles.menuItem, styles.menuItemDanger]}
+                            onPress={handleUnfriend}
+                            disabled={unfriending}
+                        >
+                            {unfriending ? (
+                                <ActivityIndicator color={colors.dangerStrong} />
+                            ) : (
+                                <>
+                                    <Ionicons name="person-remove" size={20} color={colors.dangerStrong} />
+                                    <Text style={[styles.menuItemText, styles.menuItemTextDanger]}>
+                                        Hủy kết bạn
+                                    </Text>
+                                </>
+                            )}
+                        </Pressable>
+                    </View>
+                </Pressable>
+            </Modal>
+
             {/* Media Menu Modal */}
             <Modal
                 transparent
@@ -1623,7 +1825,7 @@ export const ChatScreen = ({
 
                         <Pressable
                             style={styles.mediaMenuButton}
-                            onPress={handlePickAudio}
+                            onPress={handlePickAudioFile}
                         >
                             <Ionicons name="musical-note" size={24} color={colors.mediaAudioIcon} />
                             <Text style={styles.mediaMenuButtonText}>Audio</Text>
@@ -2285,5 +2487,37 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: "600",
         color: colors.textOnAccent,
+    },
+
+    // Avatar menu styles
+    avatarMenuContainer: {
+        backgroundColor: colors.background,
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        paddingHorizontal: 16,
+        paddingTop: 20,
+        paddingBottom: 32,
+    },
+    menuItem: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: 12,
+        backgroundColor: colors.surface,
+    },
+    menuItemDanger: {
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.dangerSoft,
+    },
+    menuItemText: {
+        fontSize: 16,
+        fontWeight: "600",
+        color: colors.text,
+    },
+    menuItemTextDanger: {
+        color: colors.dangerStrong,
     },
 });

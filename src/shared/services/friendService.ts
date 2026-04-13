@@ -530,6 +530,11 @@ export const removeFriend = async (friendId: string): Promise<boolean> => {
         const response = await api.delete(`/friendships/${friendId}`);
         console.log("[friendService] Unfriend successful:", response);
 
+        // Handle null response
+        if (!response) {
+            return true; // Treat null as success (some APIs return 204 No Content)
+        }
+
         // Extract data from response
         let data = response.data !== undefined ? response.data : response;
 
@@ -546,7 +551,7 @@ export const removeFriend = async (friendId: string): Promise<boolean> => {
         return data !== false;
     } catch (error: any) {
         console.error("[friendService] Unfriend error:", error);
-        throw new Error(error.message || "Failed to unfriend user");
+        throw new Error(error?.message || "Failed to unfriend user");
     }
 };
 
