@@ -11,6 +11,8 @@ import {
     View,
 } from "react-native";
 import { useAuth, useFriendship } from "../../../shared/hooks";
+import { ConversationService, type Conversation, type ConversationLastMessageSummary } from "../../../shared/services/conversationService";
+import { SocketService } from "../../../shared/services/socketService";
 import { Avatar, Card, SectionTitle } from "../components";
 import { colors } from "../theme";
 import type { Friend } from "@/types";
@@ -20,13 +22,27 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
-    const { user } = useAuth();
+    const { user, token } = useAuth();
     const { state, actions } = useFriendship();
     const [query, setQuery] = useState("");
+    const [conversations, setConversations] = useState<Conversation[]>([]);
+    const [conversationsLoading, setConversationsLoading] = useState(false);
 
     // Load friends on mount
     useEffect(() => {
-        actions.loadFriends();
+        const loadHomeData = async () => {
+            setConversationsLoading(true);
+            try {
+                await Promise.all([
+                    actions.loadFriends(),
+                    ConversationService.getConversations(1, 50).then(setConversations),
+                ]);
+            } finally {
+                setConversationsLoading(false);
+            }
+        };
+
+        loadHomeData();
     }, []);
 
     const truncateName = (name: string | undefined, maxLength = 20) => {
@@ -36,9 +52,207 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
         return name.slice(0, Math.floor(maxLength / 2)) + "...";
     };
 
+    const getConversationId = (conversation: Conversation): string => {
+        return conversation.id || conversation._id;
+    };
+
+    const getLastMessageId = (conversation?: Conversation): string | undefined => {
+        if (!conversation?.lastMessage) return undefined;
+        const lastMessage = conversation.lastMessage as any;
+        return lastMessage.messageId || lastMessage.id || lastMessage._id;
+    };
+
+    const getPreviewFromMessageType = (messageType: string): string => {
+        const upperType = String(messageType || "").toUpperCase();
+        if (upperType === "IMAGE") return "📷 Image";
+        if (upperType === "VIDEO") return "🎬 Video";
+        if (upperType === "AUDIO") return "🎤 Audio";
+        if (upperType === "FILE" || upperType === "DOCUMENT") return "📎 File";
+        return "Tin nhắn";
+    };
+
+    const getLastMessageCreatedAt = (conversation?: Conversation): string | undefined => {
+        if (!conversation?.lastMessage) return conversation?.lastMessageAt;
+        const lastMessage = conversation.lastMessage as any;
+        return conversation.lastMessageAt || lastMessage.createdAt;
+    };
+
+    const formatChatTime = (iso?: string): string => {
+        if (!iso) return "";
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return "";
+
+        const now = new Date();
+        const isSameDay =
+            d.getFullYear() === now.getFullYear() &&
+            d.getMonth() === now.getMonth() &&
+            d.getDate() === now.getDate();
+
+        if (isSameDay) {
+            return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+        }
+
+        return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
+    };
+
+    const getLastMessagePreview = (conversation?: Conversation, fallbackStatus?: string): string => {
+        if (!conversation?.lastMessage) {
+            return fallbackStatus === "online" ? "Online" : "Offline";
+        }
+
+        const lastMessage = conversation.lastMessage as ConversationLastMessageSummary & { text?: string; media?: any[] };
+
+        if (lastMessage.textPreview) return lastMessage.textPreview;
+        if (lastMessage.text) return lastMessage.text;
+
+        const messageType = String(lastMessage.type || "").toUpperCase();
+        if (messageType === "IMAGE") return "📷 Image";
+        if (messageType === "VIDEO") return "🎬 Video";
+        if (messageType === "AUDIO") return "🎤 Audio";
+        if (messageType === "FILE" || messageType === "DOCUMENT") return "📎 File";
+
+        if (Array.isArray(lastMessage.media) && lastMessage.media.length > 0) {
+            const mediaType = String(lastMessage.media[0]?.mediaType || "").toLowerCase();
+            if (mediaType === "image") return "📷 Image";
+            if (mediaType === "video") return "🎬 Video";
+            if (mediaType === "audio") return "🎤 Audio";
+            return "📎 File";
+        }
+
+        return "Tin nhắn";
+    };
+
+    useEffect(() => {
+        if (!token) {
+            return;
+        }
+
+        try {
+            if (!SocketService.isConnected()) {
+                SocketService.connect(token);
+            }
+        } catch {
+            return;
+        }
+
+        const socket = SocketService.getSocket();
+        if (!socket) {
+            return;
+        }
+
+        const currentUserId = user?.id || (user as any)?._id;
+
+        const handleReceiveMessage = (data: any) => {
+            const message = data?.message || data;
+            const conversationId = message?.conversationId;
+            if (!conversationId) return;
+
+            setConversations((prev) => {
+                const next = prev.map((conversation) => {
+                    const id = conversation.id || conversation._id;
+                    if (id !== conversationId) return conversation;
+
+                    const textPreview = message?.text?.trim()
+                        ? message.text
+                        : getPreviewFromMessageType(message?.type || "");
+
+                    const nextUnread =
+                        message?.senderId && currentUserId && message.senderId !== currentUserId
+                            ? (conversation.unreadCount || 0) + 1
+                            : (conversation.unreadCount || 0);
+
+                    return {
+                        ...conversation,
+                        lastMessage: {
+                            messageId: message?._id || message?.id || "",
+                            senderId: message?.senderId || "",
+                            type: String(message?.type || "TEXT").toUpperCase(),
+                            textPreview,
+                            createdAt: message?.createdAt || new Date().toISOString(),
+                        },
+                        lastMessageAt: message?.createdAt || new Date().toISOString(),
+                        unreadCount: nextUnread,
+                        lastMessageStatus:
+                            message?.senderId && currentUserId && message.senderId === currentUserId
+                                ? "sent"
+                                : conversation.lastMessageStatus,
+                    } as Conversation;
+                });
+
+                return [...next].sort((a, b) => {
+                    const ta = new Date(getLastMessageCreatedAt(a) || 0).getTime() || 0;
+                    const tb = new Date(getLastMessageCreatedAt(b) || 0).getTime() || 0;
+                    return tb - ta;
+                });
+            });
+        };
+
+        const handleMessageSeen = (data: any) => {
+            const conversationId = data?.conversationId;
+            if (!conversationId) return;
+
+            setConversations((prev) =>
+                prev.map((conversation) => {
+                    const id = conversation.id || conversation._id;
+                    if (id !== conversationId) return conversation;
+
+                    const lastMessageId = getLastMessageId(conversation);
+                    const isLastSeen = !!lastMessageId && lastMessageId === data?.lastSeenMessageId;
+
+                    return {
+                        ...conversation,
+                        lastMessageStatus: isLastSeen ? "read" : conversation.lastMessageStatus,
+                    };
+                })
+            );
+        };
+
+        socket.on("receiveMessage", handleReceiveMessage);
+        socket.on("messageSeen", handleMessageSeen);
+
+        return () => {
+            socket.off("receiveMessage", handleReceiveMessage);
+            socket.off("messageSeen", handleMessageSeen);
+        };
+    }, [token, user]);
+
+    const conversationByFriendId = useMemo(() => {
+        const map = new Map<string, Conversation>();
+        const currentUserId = user?.id || (user as any)?._id;
+
+        conversations.forEach((conversation) => {
+            let otherMemberId: string | undefined;
+
+            // Preferred mapping for private chats from BE: pairKey = "userA_userB"
+            if (conversation.pairKey && currentUserId) {
+                const ids = conversation.pairKey.split("_");
+                otherMemberId = ids.find((id) => id && id !== currentUserId);
+            }
+
+            // Fallback mapping if members array is present
+            if (!otherMemberId) {
+                otherMemberId = conversation.members?.find((memberId) => memberId !== currentUserId);
+            }
+
+            if (otherMemberId) {
+                map.set(otherMemberId, conversation);
+            }
+        });
+
+        return map;
+    }, [conversations, user]);
+
     const filteredFriends = useMemo(() => {
         const needle = query.trim().toLowerCase();
-        const friendsList = state?.friends || [];
+        const friendsList = [...(state?.friends || [])];
+
+        friendsList.sort((a: Friend, b: Friend) => {
+            const conversationA = conversationByFriendId.get(a.friendId);
+            const conversationB = conversationByFriendId.get(b.friendId);
+            const tsA = getLastMessageCreatedAt(conversationA);
+            const tsB = getLastMessageCreatedAt(conversationB);
+            return (new Date(tsB || 0).getTime() || 0) - (new Date(tsA || 0).getTime() || 0);
+        });
 
         if (!needle) {
             return friendsList;
@@ -48,7 +262,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
             item?.friendInfo?.displayName?.toLowerCase().includes(needle) ||
             item?.friendInfo?.phoneNumber?.toLowerCase().includes(needle)
         );
-    }, [state?.friends, query]);
+    }, [state?.friends, query, conversationByFriendId]);
 
     /**
      * Handle friend press - navigate to chat
@@ -120,10 +334,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
                 </View>
 
                 <Card style={styles.chatListCard}>
-                    {state.friendsLoading ? (
+                    {state.friendsLoading || conversationsLoading ? (
                         <View style={styles.loadingContainer}>
                             <ActivityIndicator size="large" color={colors.accent} />
-                            <Text style={styles.loadingText}>Đang tải bạn bè...</Text>
+                            <Text style={styles.loadingText}>Đang tải danh sách chat...</Text>
                         </View>
                     ) : filteredFriends.length === 0 ? (
                         <View style={styles.emptyContainer}>
@@ -142,9 +356,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
                         filteredFriends.map((friend: Friend, index: number) => {
                             if (!friend || !friend.friendInfo) return null;
 
+                            const conversation = conversationByFriendId.get(friend.friendId);
+                            const unreadCount = conversation?.unreadCount || 0;
+                            const timeText = formatChatTime(getLastMessageCreatedAt(conversation));
+                            const previewText = getLastMessagePreview(conversation, friend.friendInfo?.status);
+
                             return (
                                 <View
-                                    key={friend._id}
+                                    key={getConversationId(conversation || ({ _id: friend._id, id: friend._id } as Conversation))}
                                     style={[
                                         styles.chatRow,
                                         index !== filteredFriends.length - 1 &&
@@ -201,10 +420,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
                                                     style={styles.chatMessage}
                                                     numberOfLines={1}
                                                 >
-                                                    {friend.friendInfo?.status === "online"
-                                                        ? "Online"
-                                                        : "Offline"}
+                                                    {previewText}
                                                 </Text>
+                                                {conversation?.lastMessageStatus ? (
+                                                    <Ionicons
+                                                        name={conversation.lastMessageStatus === "read" ? "checkmark-done" : "checkmark"}
+                                                        size={14}
+                                                        color={conversation.lastMessageStatus === "read" ? colors.accent : colors.textMuted}
+                                                    />
+                                                ) : null}
+                                                {timeText ? <Text style={styles.chatTime}>{timeText}</Text> : null}
+                                                {unreadCount > 0 ? (
+                                                    <View style={styles.unreadBadge}>
+                                                        <Text style={styles.unreadBadgeText}>
+                                                            {unreadCount > 99 ? "99+" : unreadCount}
+                                                        </Text>
+                                                    </View>
+                                                ) : null}
                                             </View>
                                         </View>
                                     </Pressable>
@@ -407,6 +639,20 @@ const styles = StyleSheet.create({
         flex: 1,
         color: colors.textSoft,
         fontSize: 13,
+    },
+    unreadBadge: {
+        minWidth: 20,
+        height: 20,
+        borderRadius: 10,
+        paddingHorizontal: 6,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.danger,
+    },
+    unreadBadgeText: {
+        color: colors.textOnAccent,
+        fontSize: 11,
+        fontWeight: "700",
     },
     avatarImage: {
         resizeMode: "cover",

@@ -1,15 +1,28 @@
 import { api } from "./api";
 import type { MessagePayload } from "./socketService";
 
+export interface ConversationLastMessageSummary {
+    messageId: string;
+    senderId: string;
+    type: string;
+    textPreview?: string;
+    createdAt: string;
+}
+
 export interface Conversation {
     _id: string;
     id?: string;
     type: "PRIVATE" | "GROUP";
     name?: string;
-    members: string[];
+    members?: string[];
+    pairKey?: string;
+    avatarUrl?: string;
     ownerId?: string;
     adminIds?: string[];
-    lastMessage?: MessagePayload;
+    lastMessage?: MessagePayload | ConversationLastMessageSummary;
+    lastMessageAt?: string;
+    lastMessageStatus?: "sent" | "delivered" | "read";
+    lastMessageTimeFormatted?: string;
     unreadCount?: number;
     createdAt: string;
     updatedAt: string;
@@ -94,7 +107,9 @@ export class ConversationService {
             });
 
             const data = response.data || response;
-            const items = data.data?.items || data.items || data.data || [];
+            const items = Array.isArray(data)
+                ? data
+                : data.data?.items || data.items || data.data || [];
 
             return Array.isArray(items) ? items : [];
         } catch (error: any) {
