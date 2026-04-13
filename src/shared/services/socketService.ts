@@ -6,6 +6,7 @@ const SOCKET_NAMESPACE = "/messages";
 
 export interface MessagePayload {
     _id?: string;
+    id?: string;
     conversationId: string;
     senderId: string;
     senderName: string;
@@ -17,7 +18,11 @@ export interface MessagePayload {
     status: "sent" | "delivered" | "seen";
     createdAt: string;
     updatedAt: string;
-    type?: "TEXT" | "MEDIA" | "FILE" | "SYSTEM";
+    type?: "text" | "image" | "file" | "link" | "system";
+    links?: string[];
+    deletedForUserIds?: string[];
+    deletedBy?: string;
+    deletedAt?: string;
 }
 
 export interface TypingData {
@@ -140,7 +145,7 @@ export class SocketService {
         conversationId: string,
         text: string,
         media?: any[]
-    ): Promise<MessagePayload> {
+    ): Promise<MessagePayload[]> {
         return new Promise((resolve, reject) => {
             if (!this.socket) {
                 reject(new Error("Socket not connected"));
@@ -155,7 +160,16 @@ export class SocketService {
 
             this.socket.emit("sendMessage", payload, (response: any) => {
                 if (response?.success) {
-                    resolve(response.message);
+                    const messages = response?.messages || response?.data || response?.message;
+                    if (Array.isArray(messages)) {
+                        resolve(messages);
+                        return;
+                    }
+                    if (messages) {
+                        resolve([messages]);
+                        return;
+                    }
+                    resolve([]);
                 } else {
                     reject(new Error(response?.error || "Failed to send message"));
                 }
@@ -382,6 +396,26 @@ export class SocketService {
     }
 
     /**
+     * Revoke message (delete for everyone)
+     */
+    static revokeMessage(messageId: string): Promise<any> {
+        return new Promise((resolve, reject) => {
+            if (!this.socket) {
+                reject(new Error("Socket not connected"));
+                return;
+            }
+
+            this.socket.emit("revokeMessage", { messageId }, (response: any) => {
+                if (response?.success) {
+                    resolve(response);
+                } else {
+                    reject(new Error(response?.error || "Failed to revoke message"));
+                }
+            });
+        });
+    }
+
+    /**
      * Listen for message updates
      */
     static onMessageUpdated(callback: (message: MessagePayload) => void): void {
@@ -394,7 +428,33 @@ export class SocketService {
 
         this.socket.on("message:deleted", (data: any) => {
             console.log("[SocketService] Message deleted:", data);
-            callback({ ...data, status: "deleted" } as any);
+            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
+            callback({
+                ...(data.message || {}),
+                id: messageId,
+                _id: messageId,
+                conversationId: data?.conversationId || data?.message?.conversationId,
+                status: "deleted",
+                deletedBy: data?.deletedBy,
+                deletedForUserIds: data?.deletedForUserIds || (data?.deletedBy ? [data.deletedBy] : []),
+                deletedAt: new Date().toISOString(),
+            } as any);
+        });
+
+        this.socket.on("message:revoked", (data: any) => {
+            console.log("[SocketService] Message revoked:", data);
+            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
+            callback({
+                ...(data.message || data),
+                id: messageId,
+                _id: messageId,
+                conversationId: data?.conversationId || data?.message?.conversationId,
+                deletedBy: data?.revokedBy,
+                text: "Đã thu hồi",
+                media: null,
+                type: "system",
+                deletedAt: new Date().toISOString(),
+            } as any);
         });
     }
 
@@ -405,6 +465,7 @@ export class SocketService {
         if (this.socket) {
             this.socket.off("message:edited");
             this.socket.off("message:deleted");
+            this.socket.off("message:revoked");
         }
     }
 }

@@ -13,7 +13,7 @@ import {
     getMutualFriends,
     removeFriend,
 } from "../services/friendService";
-import { FriendSocketService, FriendRequestNotification } from "../services/friendSocket";
+import { FriendSocketService, FriendRequestNotification, FriendshipNotification } from "../services/friendSocket";
 import { useAuth } from "./useAuth";
 import type { Friend, FriendRequest, FriendshipStatus, User } from "@/types";
 
@@ -94,6 +94,7 @@ export const useFriendship = (
 ): UseFriendshipReturn => {
     const { autoLoad = true } = options;
     const { user, token } = useAuth();
+    const currentUserId = user?.id || (user as any)?._id;
 
     // Store mapping of requestId -> userId for socket event handling
     const requestIdToUserIdRef = useRef<Map<string, string>>(new Map());
@@ -135,7 +136,7 @@ export const useFriendship = (
 
     // Load friends
     const loadFriends = useCallback(async () => {
-        if (!user?.id) {
+        if (!currentUserId) {
             console.warn("[useFriendship] No user ID available");
             setFriendsError("User not authenticated");
             return;
@@ -144,7 +145,7 @@ export const useFriendship = (
         setFriendsLoading(true);
         setFriendsError(null);
         try {
-            const data = await getFriendsWithEnrichment(user.id);
+            const data = await getFriendsWithEnrichment(currentUserId);
             setFriends(data);
         } catch (error: any) {
             console.error("[useFriendship] Load friends error:", error);
@@ -152,7 +153,7 @@ export const useFriendship = (
         } finally {
             setFriendsLoading(false);
         }
-    }, [user?.id]);
+    }, [currentUserId]);
 
     // Load received requests
     const loadReceivedRequests = useCallback(async () => {
@@ -178,6 +179,52 @@ export const useFriendship = (
             console.log('[useFriendship] loadSentRequests result:', JSON.stringify(data, null, 2));
             console.log('[useFriendship] Loaded sent requests:', data.map(r => ({ _id: r._id, receiverId: r.receiverId, senderId: r.senderId })));
             setSentRequests(data);
+
+            // Refresh requestId -> receiverId map for robust socket reconciliation
+            const nextMap = new Map<string, string>();
+            data.forEach((req: any) => {
+                const reqId = req?._id || req?.id;
+                const receiverId = req?.receiverId || req?.toUserId;
+                if (reqId && receiverId) {
+                    nextMap.set(String(reqId), String(receiverId));
+                }
+            });
+            requestIdToUserIdRef.current = nextMap;
+
+            // Reconcile cached friendship status with the latest sent requests from server.
+            // This fixes stale "pending" state when realtime events are missed on web.
+            const latestPendingUserIds = new Set<string>(
+                data
+                    .map((req: any) => String(req?.receiverId || req?.toUserId || ""))
+                    .filter(Boolean)
+            );
+
+            setFriendshipStatuses((prevStatus) => {
+                const updated = new Map(prevStatus);
+
+                // Ensure users that still have outgoing requests stay pending.
+                latestPendingUserIds.forEach((userId) => {
+                    const current = updated.get(userId);
+                    if (!current || current.status !== "pending") {
+                        updated.set(userId, {
+                            isFriend: false,
+                            status: "pending",
+                        });
+                    }
+                });
+
+                // Reset stale pending entries that are no longer present in sent requests.
+                updated.forEach((status, userId) => {
+                    if (status.status === "pending" && !latestPendingUserIds.has(userId)) {
+                        updated.set(userId, {
+                            isFriend: false,
+                            status: "none",
+                        });
+                    }
+                });
+
+                return updated;
+            });
         } catch (error: any) {
             console.error("[useFriendship] Load sent error:", error);
             setSentError(error.message);
@@ -191,11 +238,17 @@ export const useFriendship = (
         try {
             const request = await sendFriendRequest(userId);
             console.log('[useFriendship] Sent request returned:', JSON.stringify(request, null, 2));
-            setSentRequests([...sentRequests, request]);
+            setSentRequests((prev) => [...prev, request]);
+
+            const requestId = (request as any)?._id || (request as any)?.id;
+            if (requestId) {
+                requestIdToUserIdRef.current.set(String(requestId), userId);
+            }
+
             setFriendshipStatuses(
                 new Map(friendshipStatuses).set(userId, {
                     isFriend: false,
-                    status: "PENDING",
+                    status: "pending",
                 })
             );
             return request;
@@ -203,7 +256,7 @@ export const useFriendship = (
             console.error("[useFriendship] Send request error:", error);
             throw error;
         }
-    }, [sentRequests, friendshipStatuses]);
+    }, [friendshipStatuses]);
 
     // Accept friend request
     const acceptRequest = useCallback(async (requestId: string) => {
@@ -258,7 +311,7 @@ export const useFriendship = (
             const updated = new Map(prevStatus);
             updated.set(userId, {
                 isFriend: false,
-                status: "NONE",
+                status: "none",
             });
             console.log('[useFriendship] Friendship status reset to NONE for:', userId);
             return updated;
@@ -355,7 +408,7 @@ export const useFriendship = (
 
     // Setup Socket.IO listeners to sync sent requests
     useEffect(() => {
-        if (!user?.id || !token) {
+        if (!currentUserId || !token) {
             return;
         }
 
@@ -391,12 +444,19 @@ export const useFriendship = (
                         );
                     }
 
-                    // If still not found, try partial match
-                    if (!rejectedRequest && prev.length > 0) {
-                        console.log('[useFriendship] Try partial match with first request...');
-                        const first = prev[0];
-                        console.log('[useFriendship] First request keys:', Object.keys(first));
-                        rejectedRequest = first;
+                    // Fallback by receiverId from socket payload when requestId mapping is missing
+                    if (!rejectedRequest && notification.data?.rejectedBy) {
+                        rejectedRequest = prev.find(
+                            (r) => r.receiverId === notification.data.rejectedBy
+                        );
+                    }
+
+                    // Fallback by requestId -> receiverId map
+                    let mappedReceiverId: string | undefined;
+                    if (!rejectedRequest && notification.data?.requestId) {
+                        mappedReceiverId = requestIdToUserIdRef.current.get(
+                            String(notification.data.requestId)
+                        );
                     }
 
                     console.log('[useFriendship] Found request:', !!rejectedRequest);
@@ -404,17 +464,23 @@ export const useFriendship = (
                         console.log('[useFriendship] Request receiverId:', rejectedRequest.receiverId);
                     }
 
-                    if (rejectedRequest?.receiverId) {
-                        console.log('[useFriendship] Updating friendship status for receiverId:', rejectedRequest.receiverId);
+                    const receiverIdForReset =
+                        rejectedRequest?.receiverId ||
+                        mappedReceiverId ||
+                        notification.data?.rejectedBy ||
+                        notification.data?.fromUserId;
+
+                    if (receiverIdForReset) {
+                        console.log('[useFriendship] Updating friendship status for receiverId:', receiverIdForReset);
 
                         // Update friendship status to NONE
                         setFriendshipStatuses((prevStatus) => {
                             const updated = new Map(prevStatus);
-                            updated.set(rejectedRequest.receiverId, {
+                            updated.set(receiverIdForReset, {
                                 isFriend: false,
-                                status: "NONE",
+                                status: "none",
                             });
-                            console.log('[useFriendship] Updated friendship status to NONE for:', rejectedRequest.receiverId);
+                            console.log('[useFriendship] Updated friendship status to NONE for:', receiverIdForReset);
                             return updated;
                         });
                     } else {
@@ -426,10 +492,21 @@ export const useFriendship = (
                     }
 
                     // Remove from sent requests
-                    const filtered = prev.filter((r) => r._id !== notification.data.requestId && (r as any).id !== notification.data.requestId);
+                    const filtered = prev.filter((r) => {
+                        const sameRequestId = r._id === notification.data.requestId || (r as any).id === notification.data.requestId;
+                        const sameReceiver = receiverIdForReset && (r.receiverId === receiverIdForReset || (r as any).toUserId === receiverIdForReset);
+                        return !(sameRequestId || sameReceiver);
+                    });
+
+                    if (notification.data?.requestId) {
+                        requestIdToUserIdRef.current.delete(String(notification.data.requestId));
+                    }
                     console.log('[useFriendship] After filtering, sentRequests count:', filtered.length);
                     return filtered;
                 });
+
+                // Force sync with server in case payload misses mapping fields
+                loadSentRequests();
             };
 
             // Handle request accepted by receiver (someone accepts your sent request)
@@ -480,7 +557,7 @@ export const useFriendship = (
                             const updated = new Map(prevStatus);
                             updated.set(acceptedRequest.receiverId, {
                                 isFriend: true,
-                                status: "ACCEPTED",
+                                status: "accepted",
                             });
                             console.log('[useFriendship] Updated friendship status to ACCEPTED for:', acceptedRequest.receiverId);
                             return updated;
@@ -499,7 +576,7 @@ export const useFriendship = (
                                 const updated = new Map(prevStatus);
                                 updated.set(receiverId, {
                                     isFriend: true,
-                                    status: "ACCEPTED",
+                                    status: "accepted",
                                 });
                                 console.log('[useFriendship] Updated friendship status to ACCEPTED for:', receiverId);
                                 return updated;
@@ -551,7 +628,7 @@ export const useFriendship = (
                             const updated = new Map(prevStatus);
                             updated.set(canceledRequest.receiverId, {
                                 isFriend: false,
-                                status: "NONE",
+                                status: "none",
                             });
                             console.log('[useFriendship] Status updated to NONE for:', canceledRequest.receiverId);
                             return updated;
@@ -570,16 +647,36 @@ export const useFriendship = (
             FriendSocketService.onFriendRequestAccepted(handleAcceptedRequest);
             FriendSocketService.onFriendRequestCanceled(handleSenderCanceledRequest);
 
+            const handleUnfriended = (notification: FriendshipNotification): void => {
+                const unfriendedUserId = notification.data.friendId || notification.data.userId;
+                if (!unfriendedUserId) {
+                    return;
+                }
+
+                setFriends((prev) => prev.filter((f) => f.friendId !== unfriendedUserId));
+                setFriendshipStatuses((prevStatus) => {
+                    const updated = new Map(prevStatus);
+                    updated.set(unfriendedUserId, {
+                        isFriend: false,
+                        status: "none",
+                    });
+                    return updated;
+                });
+            };
+
+            FriendSocketService.onFriendshipUnfriended(handleUnfriended);
+
             // Cleanup
             return (): void => {
                 FriendSocketService.offFriendRequestRejected();
                 FriendSocketService.offFriendRequestAccepted();
                 FriendSocketService.offFriendRequestCanceled();
+                FriendSocketService.offFriendshipUnfriended();
             };
         } catch (err: unknown) {
             // Socket connection error - will retry automatically
         }
-    }, [user?.id, token, loadFriends]);
+    }, [currentUserId, token, loadFriends]);
 
     // Auto load on mount
     useEffect(() => {
@@ -589,6 +686,21 @@ export const useFriendship = (
             loadSentRequests();
         }
     }, [autoLoad, loadFriends, loadReceivedRequests, loadSentRequests]);
+
+    // Fallback sync: keep sent requests fresh in case socket event is missed on some clients (e.g. web tab idle/network hiccup)
+    useEffect(() => {
+        if (!autoLoad || !currentUserId || !token) {
+            return;
+        }
+
+        const intervalId = setInterval(() => {
+            loadSentRequests();
+        }, 5000);
+
+        return () => {
+            clearInterval(intervalId);
+        };
+    }, [autoLoad, currentUserId, token, loadSentRequests]);
 
     const state: UseFriendshipState = {
         friends,

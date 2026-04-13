@@ -184,11 +184,11 @@ export const AddFriendScreen = ({ state, actions }: AddFriendScreenProps) => {
         let buttonVariant: "primary" | "secondary" = "primary";
         let buttonAction = () => handleSendRequest(user.id);
 
-        if (isFriend || status?.status === "ACCEPTED") {
+        if (isFriend || status?.status === "accepted") {
             buttonText = "Đã là bạn bè";
             isDisabledState = true;
             buttonVariant = "secondary";
-        } else if (sentRequest || status?.status === "PENDING") {
+        } else if (sentRequest || status?.status === "pending") {
             buttonText = "Hủy lời mời";
             isDisabledState = false;
             buttonVariant = "secondary";

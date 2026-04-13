@@ -156,6 +156,24 @@ export class FriendSocketService {
             this.socket.off("friend_request:rejected");
         }
     }
+
+    static onFriendshipUnfriended(
+        callback: (notification: FriendshipNotification) => void | Promise<void>
+    ): void {
+        if (!this.socket) {
+            return;
+        }
+
+        this.socket.on("friendship:unfriended", (data: any) => {
+            callback(data);
+        });
+    }
+
+    static offFriendshipUnfriended(): void {
+        if (this.socket) {
+            this.socket.off("friendship:unfriended");
+        }
+    }
 }
 
 export interface FriendRequestNotification {
@@ -167,6 +185,16 @@ export interface FriendRequestNotification {
         canceledBy?: string;
         acceptedBy?: string;
         rejectedBy?: string;
+    };
+    timestamp: string;
+}
+
+export interface FriendshipNotification {
+    type: "FRIENDSHIP_UNFRIENDED";
+    data: {
+        friendId?: string;
+        userId?: string;
+        unfriendedBy?: string;
     };
     timestamp: string;
 }

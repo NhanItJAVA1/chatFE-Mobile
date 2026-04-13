@@ -88,7 +88,7 @@ export type UploadSession = {
 
 export type FriendshipStatus = {
     isFriend: boolean;
-    status: "ACCEPTED" | "PENDING" | "DECLINED" | "NONE";
+    status: "accepted" | "pending" | "rejected" | "canceled" | "none";
 };
 
 export type FriendRequest = {
@@ -107,7 +107,7 @@ export type FriendRequest = {
         avatar: string;
         status: "online" | "offline";
     };
-    status: "PENDING" | "ACCEPTED" | "DECLINED";
+    status: "pending" | "accepted" | "rejected" | "canceled";
     createdAt: string;
     acceptedAt?: string;
 };
@@ -121,7 +121,7 @@ export type Friend = {
         avatar: string;
         status: "online" | "offline";
     };
-    status: "ACCEPTED";
+    status: "accepted";
     createdAt: string;
 };
 

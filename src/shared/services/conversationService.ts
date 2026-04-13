@@ -28,13 +28,14 @@ export interface MessageResponse {
     status: "sent" | "delivered" | "seen";
     createdAt: string;
     updatedAt: string;
-    type?: "TEXT" | "MEDIA" | "FILE" | "SYSTEM";
+    id?: string;
+    type?: "text" | "image" | "file" | "link" | "system";
+    links?: string[];
 }
 
 export interface MessagePage {
     items: MessageResponse[];
-    total: number;
-    page: number;
+    nextCursor: string | null;
     limit: number;
     hasMore: boolean;
 }
@@ -109,50 +110,38 @@ export class ConversationService {
      */
     static async loadMessages(
         conversationId: string,
-        page: number = 1,
+        cursor: string | null = null,
         limit: number = 30
     ): Promise<MessagePage> {
         try {
             const response = await api.get(
                 `/conversations/${conversationId}/messages`,
                 {
-                    params: { page, limit },
+                    params: {
+                        ...(cursor ? { cursor } : {}),
+                        limit,
+                    },
                 }
             );
 
             const data = response.data || response;
 
-            // Handle different response formats
-            if (data?.data) {
-                return data.data;
-            }
+            // Current backend shape: { data: { messages, nextCursor, hasMore } }
+            const payload = data?.data || data;
+            const messages = payload?.messages || payload?.items || [];
 
-            // If response is already wrapped in items
-            if (data?.items) {
+            if (Array.isArray(messages)) {
                 return {
-                    items: data.items,
-                    total: data.total || data.items.length,
-                    page: data.page || page,
-                    limit: data.limit || limit,
-                    hasMore: data.hasMore || false,
-                };
-            }
-
-            // If response is an array
-            if (Array.isArray(data)) {
-                return {
-                    items: data,
-                    total: data.length,
-                    page,
-                    limit,
-                    hasMore: false,
+                    items: messages,
+                    nextCursor: payload?.nextCursor ?? null,
+                    limit: payload?.limit || limit,
+                    hasMore: !!payload?.hasMore,
                 };
             }
 
             return {
                 items: [],
-                total: 0,
-                page,
+                nextCursor: null,
                 limit,
                 hasMore: false,
             };
@@ -160,8 +149,7 @@ export class ConversationService {
             // Return empty page instead of throwing
             return {
                 items: [],
-                total: 0,
-                page,
+                nextCursor: null,
                 limit,
                 hasMore: false,
             };
@@ -213,22 +201,37 @@ export class ConversationService {
      */
     static async getUnreadCount(): Promise<number> {
         try {
-            const response = await api.get("/conversations/unread/count");
+            const response = await api.get("/conversations/unread-count");
             const data = response.data || response;
-            return data.data?.count || data.count || 0;
+            return data.data?.totalUnread || data.totalUnread || data.data?.count || data.count || 0;
         } catch (error: any) {
-            return 0;
+            try {
+                const fallbackResponse = await api.get("/conversations/unread/count");
+                const fallbackData = fallbackResponse.data || fallbackResponse;
+                return fallbackData.data?.count || fallbackData.count || 0;
+            } catch {
+                return 0;
+            }
         }
     }
 
     /**
      * Mark conversation as read
      */
-    static async markConversationAsRead(conversationId: string): Promise<void> {
+    static async markConversationAsRead(
+        conversationId: string,
+        lastSeenMessageId?: string
+    ): Promise<void> {
         try {
-            await api.post(`/conversations/${conversationId}/mark-read`);
+            await api.post(`/conversations/${conversationId}/seen`, {
+                ...(lastSeenMessageId && { lastSeenMessageId }),
+            });
         } catch (error: any) {
-            // Silently fail
+            try {
+                await api.post(`/conversations/${conversationId}/mark-read`);
+            } catch {
+                // Silently fail
+            }
         }
     }
 

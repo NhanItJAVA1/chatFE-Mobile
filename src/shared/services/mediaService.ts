@@ -83,6 +83,16 @@ const sanitizeMimeType = (mimeType: string, filename: string): { mimeType: strin
     //     newFilename = newFilename.replace(/\.webp$/i, '.jpg');
     // }
 
+    // Convert audio/m4a to audio/mpeg (expo-av HIGH_QUALITY preset records as m4a, but backend only accepts mpeg/wav/ogg/mp3)
+    if (mimeType === 'audio/m4a') {
+        console.log('[mediaService] Converting unsupported audio format m4a to mpeg');
+        sanitized = 'audio/mpeg';
+        // Update filename extension if needed
+        if (newFilename.toLowerCase().endsWith('.m4a')) {
+            newFilename = newFilename.replace(/\.m4a$/i, '.mp3');
+        }
+    }
+
     if (sanitized !== mimeType) {
         console.log('[mediaService] Sanitized MIME type:', mimeType, '->', sanitized);
     }
@@ -111,6 +121,7 @@ const getMimeTypeFromName = (filename: string): string => {
         'mp3': 'audio/mpeg',
         'wav': 'audio/wav',
         'ogg': 'audio/ogg',
+        'm4a': 'audio/mpeg',   // expo-av HIGH_QUALITY records as m4a, convert to mpeg
         'pdf': 'application/pdf',
         'doc': 'application/msword',
         'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

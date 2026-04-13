@@ -5,3 +5,4 @@ export { Avatar } from "./Avatar";
 export { SectionTitle } from "./SectionTitle";
 export { BottomTabBar } from "./BottomTabBar";
 export { default as MediaMessage } from "./MediaMessage";
+export { default as ForwardDialog } from "./ForwardDialog";

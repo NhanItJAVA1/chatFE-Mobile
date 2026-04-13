@@ -41,6 +41,7 @@ interface UseFriendRequestsReturn {
  */
 export const useFriendRequests = (): UseFriendRequestsReturn => {
     const { user, token } = useAuth();
+    const currentUserId = user?.id || (user as any)?._id;
 
     // State with proper TypeScript types
     const [requests, setRequests] = useState<FriendRequestTransformed[]>([]);
@@ -65,7 +66,16 @@ export const useFriendRequests = (): UseFriendRequestsReturn => {
                 const result =
                     await friendRequestService.getReceivedRequests(page, 20);
 
-                setRequests(result.items);
+                setRequests((prev) => {
+                    if (page <= 1) {
+                        return result.items;
+                    }
+
+                    const merged = new Map<string, FriendRequestTransformed>();
+                    prev.forEach((item) => merged.set(item._id, item));
+                    result.items.forEach((item) => merged.set(item._id, item));
+                    return Array.from(merged.values());
+                });
                 setPagination(result.pagination);
             } catch (err: unknown) {
                 const errorMessage =
@@ -154,7 +164,7 @@ export const useFriendRequests = (): UseFriendRequestsReturn => {
      * Setup Socket.IO real-time listeners
      */
     useEffect((): (() => void) | void => {
-        if (!user?.id || !token) {
+        if (!currentUserId || !token) {
             return;
         }
 
@@ -184,7 +194,7 @@ export const useFriendRequests = (): UseFriendRequestsReturn => {
                             avatar: "",
                             status: "offline",
                         },
-                        status: "PENDING",
+                        status: "pending",
                         createdAt: notification.timestamp,
                     };
 
@@ -251,16 +261,16 @@ export const useFriendRequests = (): UseFriendRequestsReturn => {
         } catch (err: unknown) {
             // Socket connection error - will retry automatically
         }
-    }, [user?.id, token]);
+    }, [currentUserId, token]);
 
     /**
      * Load requests on mount
      */
     useEffect((): void => {
-        if (user?.id) {
+        if (currentUserId) {
             loadReceivedRequests(1);
         }
-    }, [user?.id, loadReceivedRequests]);
+    }, [currentUserId, loadReceivedRequests]);
 
     // Return with explicit type annotation
     const returnValue: UseFriendRequestsReturn = {

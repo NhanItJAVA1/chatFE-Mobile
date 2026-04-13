@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ConversationService, Conversation, MessagePage, MessageResponse } from "../services/conversationService";
+import { ConversationService, Conversation } from "../services/conversationService";
 import { SocketService, MessagePayload, TypingData } from "../services/socketService";
 import { useAuth } from "./useAuth";
 import { saveMessagesToCache, loadMessagesFromCache, mergeMessages } from "../utils/cacheUtils";
@@ -12,17 +12,19 @@ export interface UseChatMessageState {
     error: string | null;
     typingUsers: Set<string>;
     hasMoreMessages: boolean;
-    currentPage: number;
+    nextCursor: string | null;
 }
 
 export interface UseChatMessageActions {
     sendMessage: (text: string, media?: any[]) => Promise<void>;
+    addMessages: (messages: MessagePayload[]) => void;
     markAsSeen: (messageIds: string[]) => Promise<void>;
     handleTyping: () => void;
     stopTyping: () => void;
-    loadMoreMessages: (page: number) => Promise<void>;
+    loadMoreMessages: () => Promise<void>;
     editMessage: (messageId: string, text: string) => Promise<void>;
     deleteMessage: (messageId: string) => Promise<void>;
+    revokeMessage: (messageId: string) => Promise<void>;
     addReaction: (messageId: string, emoji: string) => Promise<void>;
     removeReaction: (messageId: string, emoji: string) => Promise<void>;
     retryLoadConversation: () => Promise<void>;
@@ -38,14 +40,30 @@ const TYPING_DEBOUNCE_TIME = 3000;
 
 /**
  * Persistent cache for conversations to prevent message loss on exit/re-entry
- * Maps conversationId -> { conversation, messages, hasMoreMessages, currentPage }
+ * Maps conversationId -> { conversation, messages, hasMoreMessages, nextCursor }
  */
 const conversationCache = new Map<string, {
     conversation: Conversation;
     messages: MessagePayload[];
     hasMoreMessages: boolean;
-    currentPage: number;
+    nextCursor: string | null;
 }>();
+
+const getMessageId = (message: MessagePayload): string => {
+    return message._id || message.id || `${message.senderId}-${message.createdAt}`;
+};
+
+const mergeUniqueMessages = (
+    incoming: MessagePayload[],
+    existing: MessagePayload[]
+): MessagePayload[] => {
+    const merged = [...incoming, ...existing];
+    const unique = new Map<string, MessagePayload>();
+    merged.forEach((message) => {
+        unique.set(getMessageId(message), message);
+    });
+    return Array.from(unique.values());
+};
 
 /**
  * Custom hook for managing chat messages and real-time communication
@@ -65,12 +83,12 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         error: null,
         typingUsers: new Set(),
         hasMoreMessages: true,
-        currentPage: 1,
+        nextCursor: null,
     });
 
-    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const messageListenerActiveRef = useRef(false);
-    const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     /**
      * Initialize conversation and Socket.IO
@@ -104,7 +122,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
         try {
             // Step 1: Connect Socket.IO
-            const socket = SocketService.connect(token);
+            SocketService.connect(token);
 
             // Step 2: Create/get conversation
             const conversation = await ConversationService.getOrCreatePrivateConversation(
@@ -114,7 +132,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             // Step 3: Load initial messages
             const messagesResponse = await ConversationService.loadMessages(
                 conversation._id || conversation.id,
-                1,
+                null,
                 MESSAGE_LIMIT
             );
 
@@ -145,11 +163,12 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             }
 
             // Step 3b: Load from API
-            let loadedMessages = messagesResponse?.items || [];
+            const loadedMessages: MessagePayload[] = (messagesResponse?.items || []) as MessagePayload[];
             const hasMore = messagesResponse?.hasMore ?? (loadedMessages.length >= MESSAGE_LIMIT);
+            const nextCursor = messagesResponse?.nextCursor ?? null;
 
             // Step 3c: Merge messages intelligently
-            let finalMessages = loadedMessages;
+            let finalMessages: MessagePayload[] = loadedMessages;
             if (loadedMessages.length === 0 && cachedMessages.length > 0) {
                 // API returned nothing, use cache
                 console.log('[useChat] API empty, using', cachedMessages.length, 'cached messages');
@@ -171,7 +190,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     messages: finalMessages,
                     isLoading: false,
                     hasMoreMessages: hasMore,
-                    currentPage: 1,
+                    nextCursor,
                 };
                 console.log('[useChat] ====== STATE UPDATED ======');
                 console.log('[useChat] new messages count:', newState.messages.length);
@@ -190,7 +209,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 conversation,
                 messages: finalMessages,
                 hasMoreMessages: hasMore,
-                currentPage: 1,
+                nextCursor,
             });
             console.log('[useChat] Saved to in-memory cache. Size:', conversationCache.size);
 
@@ -236,6 +255,11 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
             // Incoming messages
             SocketService.onMessage((message: MessagePayload) => {
+                const incomingConversationId = message.conversationId || (message as any)?.conversationId;
+                if (incomingConversationId && incomingConversationId !== conversationId) {
+                    return;
+                }
+
                 console.log('[useChat] Received message:', {
                     text: message.text?.substring(0, 50),
                     hasMedia: !!message.media,
@@ -245,7 +269,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 setState((prev) => {
                     const newState = {
                         ...prev,
-                        messages: [message, ...prev.messages],
+                        messages: mergeUniqueMessages([message], prev.messages),
                     };
                     // Update cache with new message (both in-memory and device storage)
                     if (prev.conversation) {
@@ -254,7 +278,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                             conversation: prev.conversation,
                             messages: newState.messages,
                             hasMoreMessages: prev.hasMoreMessages,
-                            currentPage: prev.currentPage,
+                            nextCursor: prev.nextCursor,
                         });
 
                         // Also save to AsyncStorage
@@ -268,18 +292,44 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
             // Message seen events
             SocketService.onMessageSeen((data) => {
+                if (data.conversationId !== conversationId) {
+                    return;
+                }
+
                 setState((prev) => ({
                     ...prev,
-                    messages: prev.messages.map((msg) =>
-                        msg._id === data.lastSeenMessageId || msg.createdAt === data.lastSeenMessageId
-                            ? { ...msg, status: "seen" }
-                            : msg
-                    ),
+                    messages: prev.messages.map((msg) => {
+                        const msgId = getMessageId(msg);
+                        const seenMsgId = data.lastSeenMessageId;
+
+                        // Mark the specific message and all messages from the same sender before it as seen
+                        if (msgId === seenMsgId) {
+                            return { ...msg, status: "seen" };
+                        }
+
+                        // Also mark earlier messages from same sender as seen
+                        const msgIndex = prev.messages.findIndex((m) => getMessageId(m) === seenMsgId);
+                        const currentIndex = prev.messages.findIndex((m) => getMessageId(m) === msgId);
+
+                        if (
+                            msg.senderId === data.userId &&
+                            msgIndex !== -1 &&
+                            currentIndex < msgIndex
+                        ) {
+                            return { ...msg, status: "seen" };
+                        }
+
+                        return msg;
+                    }),
                 }));
             });
 
             // Typing indicators
             SocketService.onTyping((data: TypingData) => {
+                if (data.conversationId !== conversationId) {
+                    return;
+                }
+
                 setState((prev) => {
                     const newTypingUsers = new Set(prev.typingUsers);
                     if (data.isTyping) {
@@ -291,14 +341,43 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 });
             });
 
-            // Message updates (edit, delete)
+            // Message updates (edit, delete, revoke)
             SocketService.onMessageUpdated((message: any) => {
+                if (message.conversationId && message.conversationId !== conversationId) {
+                    return;
+                }
+
+                console.log('[useChat] Socket message:updated event:', {
+                    messageId: getMessageId(message),
+                    text: message.text?.substring(0, 50),
+                    conversationId: message.conversationId
+                });
+
                 setState((prev) => {
+                    const messageId = getMessageId(message);
+                    const currentUserId = user?.id || (user as any)?._id;
+                    const deletedForMe =
+                        Array.isArray((message as any).deletedForUserIds) &&
+                        !!currentUserId &&
+                        (message as any).deletedForUserIds.includes(currentUserId);
+
+                    const mergedMessages = prev.messages.map((msg) => {
+                        if (getMessageId(msg) !== messageId) {
+                            return msg;
+                        }
+
+                        // Keep original message fields if socket payload is minimal
+                        return {
+                            ...msg,
+                            ...message,
+                        };
+                    });
+
                     const newState = {
                         ...prev,
-                        messages: prev.messages.map((msg) =>
-                            msg._id === message._id ? message : msg
-                        ),
+                        messages: deletedForMe
+                            ? prev.messages.filter((msg) => getMessageId(msg) !== messageId)
+                            : mergedMessages,
                     };
                     // Update cache with updated message (both in-memory and device storage)
                     if (prev.conversation) {
@@ -307,7 +386,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                             conversation: prev.conversation,
                             messages: newState.messages,
                             hasMoreMessages: prev.hasMoreMessages,
-                            currentPage: prev.currentPage,
+                            nextCursor: prev.nextCursor,
                         });
 
                         // Also save to AsyncStorage
@@ -323,7 +402,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             messageListenerActiveRef.current = true;
             console.log('[useChat] messageListenerActiveRef set to true');
         },
-        []
+        [user]
     );
 
     /**
@@ -339,9 +418,39 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     conversation: newState.conversation,
                     messages: newState.messages,
                     hasMoreMessages: newState.hasMoreMessages,
-                    currentPage: newState.currentPage,
+                    nextCursor: newState.nextCursor,
                 });
             }
+            return newState;
+        });
+    }, []);
+
+    const addMessages = useCallback((messages: MessagePayload[]) => {
+        if (!messages.length) {
+            return;
+        }
+
+        setState((prev) => {
+            const newMessages = mergeUniqueMessages(messages, prev.messages);
+            const newState = {
+                ...prev,
+                messages: newMessages,
+            };
+
+            if (prev.conversation) {
+                const conversationId = prev.conversation._id || prev.conversation.id;
+                conversationCache.set(conversationId, {
+                    conversation: prev.conversation,
+                    messages: newMessages,
+                    hasMoreMessages: prev.hasMoreMessages,
+                    nextCursor: prev.nextCursor,
+                });
+
+                saveMessagesToCache(conversationId, newMessages).catch((error) => {
+                    console.error('[useChat] Failed to save messages after direct add:', error);
+                });
+            }
+
             return newState;
         });
     }, []);
@@ -362,16 +471,15 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 stopTyping();
 
                 // Send message via Socket.IO
-                const message = await SocketService.sendMessage(
+                const messages = await SocketService.sendMessage(
                     state.conversation._id || state.conversation.id,
                     text.trim(),
                     media
                 );
 
-                // Message will be added via onMessage listener
-                // But add it immediately for better UX
+                // Optimistically merge sent messages. If socket echo arrives, dedupe prevents duplicates.
                 updateStateAndCache({
-                    messages: [message, ...state.messages],
+                    messages: mergeUniqueMessages(messages, state.messages),
                     isSending: false,
                 });
             } catch (error: any) {
@@ -395,12 +503,16 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             }
 
             try {
+                const conversationId = state.conversation._id || state.conversation.id;
                 const lastId = messageIds[messageIds.length - 1];
-                await SocketService.markMessagesSeen(
-                    state.conversation._id || state.conversation.id,
-                    lastId
-                );
+
+                // Call API to mark as read
+                await ConversationService.markConversationAsRead(conversationId, lastId);
+
+                // Emit socket event
+                await SocketService.markMessagesSeen(conversationId, lastId);
             } catch (error: any) {
+                console.error('[useChat] Error marking messages as seen:', error);
                 // Silently fail
             }
         },
@@ -442,7 +554,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
      * Load more messages (pagination)
      */
     const loadMoreMessages = useCallback(
-        async (page: number) => {
+        async () => {
             if (!state.conversation || !state.hasMoreMessages) {
                 return;
             }
@@ -450,16 +562,16 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             try {
                 const response = await ConversationService.loadMessages(
                     state.conversation._id || state.conversation.id,
-                    page,
+                    state.nextCursor,
                     MESSAGE_LIMIT
                 );
 
                 setState((prev) => {
                     const newState = {
                         ...prev,
-                        messages: [...prev.messages, ...(response.items || [])],
+                        messages: mergeUniqueMessages(prev.messages, response.items || []),
                         hasMoreMessages: response.hasMore || false,
-                        currentPage: page,
+                        nextCursor: response.nextCursor || null,
                     };
 
                     // Save updated messages to cache
@@ -479,7 +591,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 }));
             }
         },
-        [state.conversation, state.hasMoreMessages]
+        [state.conversation, state.hasMoreMessages, state.nextCursor]
     );
 
     /**
@@ -497,7 +609,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 setState((prev) => ({
                     ...prev,
                     messages: prev.messages.map((msg) =>
-                        msg._id === messageId ? updated : msg
+                        getMessageId(msg) === messageId ? updated : msg
                     ),
                 }));
             } catch (error: any) {
@@ -517,14 +629,75 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         try {
             await SocketService.deleteMessage(messageId);
 
-            setState((prev) => ({
-                ...prev,
-                messages: prev.messages.filter((msg) => msg._id !== messageId),
-            }));
+            setState((prev) => {
+                const newMessages = prev.messages.filter((msg) => getMessageId(msg) !== messageId);
+
+                // Update cache to persist deletion
+                if (prev.conversation) {
+                    const conversationId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(conversationId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+
+                    saveMessagesToCache(conversationId, newMessages).catch((error) => {
+                        console.error('[useChat] Failed to save cache after delete:', error);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                };
+            });
         } catch (error: any) {
             setState((prev) => ({
                 ...prev,
                 error: error.message || "Failed to delete message",
+            }));
+        }
+    }, []);
+
+    /**
+     * Revoke message (delete for everyone)
+     */
+    const revokeMessage = useCallback(async (messageId: string) => {
+        try {
+            await SocketService.revokeMessage(messageId);
+
+            setState((prev) => {
+                const newMessages = prev.messages.map((msg) =>
+                    getMessageId(msg) === messageId
+                        ? { ...msg, text: "Đã thu hồi", media: null, type: "system" as const }
+                        : msg
+                );
+
+                // Update cache to persist revoke
+                if (prev.conversation) {
+                    const conversationId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(conversationId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+
+                    saveMessagesToCache(conversationId, newMessages).catch((error) => {
+                        console.error('[useChat] Failed to save cache after revoke:', error);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                };
+            });
+        } catch (error: any) {
+            setState((prev) => ({
+                ...prev,
+                error: error.message || "Failed to revoke message",
             }));
         }
     }, []);
@@ -539,7 +712,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             setState((prev) => ({
                 ...prev,
                 messages: prev.messages.map((msg) =>
-                    msg._id === messageId
+                    getMessageId(msg) === messageId
                         ? {
                             ...msg,
                             reactions: [...(msg.reactions || []), reaction],
@@ -562,7 +735,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             setState((prev) => ({
                 ...prev,
                 messages: prev.messages.map((msg) =>
-                    msg._id === messageId
+                    getMessageId(msg) === messageId
                         ? {
                             ...msg,
                             reactions: (msg.reactions || []).filter(
@@ -619,12 +792,14 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         state,
         actions: {
             sendMessage,
+            addMessages,
             markAsSeen,
             handleTyping,
             stopTyping,
             loadMoreMessages,
             editMessage,
             deleteMessage,
+            revokeMessage,
             addReaction,
             removeReaction,
             retryLoadConversation,

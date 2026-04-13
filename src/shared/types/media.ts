@@ -42,6 +42,8 @@ export interface PresignedUrlResponse {
 export interface MessageMedia {
     url: string;
     mediaType: 'image' | 'file' | 'video' | 'audio' | 'document';
+    filename?: string;
+    mimetype?: string;
     name?: string;
     size?: number;
     width?: number; // For images only

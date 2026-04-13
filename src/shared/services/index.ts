@@ -46,6 +46,7 @@ export {
     deleteMedia,
     mediaService,
 } from "./mediaService";
+export { forwardService } from "./forwardService";
 export {
     requestPresignedUrl,
     uploadToS3,

@@ -10,6 +10,10 @@ const CACHE_KEY_PREFIX = 'chat_messages_v2_';
 const CACHE_TIMESTAMP_KEY = (conversationId: string) => `${CACHE_KEY_PREFIX}ts_${conversationId}`;
 const CACHE_DATA_KEY = (conversationId: string) => `${CACHE_KEY_PREFIX}${conversationId}`;
 
+const getMessageCacheKey = (message: MessagePayload): string => {
+    return message._id || message.id || `${message.senderId}-${message.createdAt}`;
+};
+
 /**
  * Save messages to AsyncStorage with timestamp
  */
@@ -31,7 +35,7 @@ export async function saveMessagesToCache(
         const data = JSON.stringify({
             messages,
             count: messages.length,
-            lastMessageId: messages[0]?._id,
+            lastMessageId: getMessageCacheKey(messages[0]),
         });
 
         // Use AsyncStorage directly for guaranteed persistence
@@ -143,10 +147,10 @@ export function mergeMessages(
     }
 
     // Create a map of API message IDs for quick lookup
-    const apiIds = new Set(apiMessages.map(m => m._id));
+    const apiIds = new Set(apiMessages.map(getMessageCacheKey));
 
     // Add cached messages that aren't in API (newer messages)
-    const uniqueCached = cachedMessages.filter(m => !apiIds.has(m._id));
+    const uniqueCached = cachedMessages.filter(m => !apiIds.has(getMessageCacheKey(m)));
 
     // Combine: API messages first (they're more recent), then unique cached
     const merged = [...apiMessages, ...uniqueCached];

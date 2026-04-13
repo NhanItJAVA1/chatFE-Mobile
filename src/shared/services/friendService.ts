@@ -262,7 +262,9 @@ export const declineFriendRequest = rejectFriendRequest;
  */
 export const cancelFriendRequest = async (requestId: string): Promise<boolean> => {
     try {
-        const response = await api.delete(`/friend-requests/${requestId}`);
+        const response = await api.patch(`/friend-requests/${requestId}`, {
+            status: "canceled",
+        });
         console.log('[friendService] cancelFriendRequest response:', response);
 
         // Handle null/undefined response (204 No Content)
@@ -348,7 +350,7 @@ const enrichFriendship = async (friendship: any, currentUserId: string): Promise
                 avatar: friendUser.avatar || friendUser.avatarUrl || "",
                 status: (friendUser.status || "offline") as "online" | "offline",
             },
-            status: "ACCEPTED",
+            status: "accepted",
             createdAt: friendship.createdAt,
         };
     } catch (error: any) {
@@ -374,6 +376,8 @@ export const getFriendsWithEnrichment = async (currentUserId: string): Promise<F
         let friendships: any[] = [];
         if (Array.isArray(data)) {
             friendships = data;
+        } else if (data?.data?.items && Array.isArray(data.data.items)) {
+            friendships = data.data.items;
         } else if (data?.items && Array.isArray(data.items)) {
             friendships = data.items;
         } else if (data?.data && Array.isArray(data.data)) {
@@ -413,6 +417,8 @@ export const getFriends = async (): Promise<Friend[]> => {
         let friendships: any[] = [];
         if (Array.isArray(data)) {
             friendships = data;
+        } else if (data?.data?.items && Array.isArray(data.data.items)) {
+            friendships = data.data.items;
         } else if (data?.items && Array.isArray(data.items)) {
             friendships = data.items;
         }
@@ -430,7 +436,7 @@ export const getFriends = async (): Promise<Friend[]> => {
  */
 export const checkFriendshipStatus = async (friendId: string): Promise<FriendshipStatus> => {
     try {
-        const response = await api.get(`/friendships/${friendId}/check`);
+        const response = await api.get(`/friend-requests/check/${friendId}`);
 
         // Extract data from response
         let data = response.data || response;
@@ -438,10 +444,13 @@ export const checkFriendshipStatus = async (friendId: string): Promise<Friendshi
         // If data is an object (not already status), ensure it has the right structure
         // FriendshipStatus should have: status, isFriend, isPending, isBlocked fields
         if (data && typeof data === "object") {
-            return data as FriendshipStatus;
+            return {
+                ...data,
+                status: String(data.status || "none").toLowerCase(),
+            } as FriendshipStatus;
         }
 
-        return { status: "NONE" } as FriendshipStatus;
+        return { isFriend: false, status: "none" } as FriendshipStatus;
     } catch (error: any) {
         console.error("[friendService] Check status error:", error);
         throw new Error(error.message || "Failed to check friendship status");

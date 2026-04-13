@@ -12,7 +12,7 @@ export interface FriendRequestTransformed {
     _id: string;
     senderId: string;
     senderInfo: SenderInfo;
-    status: "PENDING" | "ACCEPTED" | "DECLINED";
+    status: "pending" | "accepted" | "rejected" | "canceled";
     createdAt: string;
 }
 
@@ -32,6 +32,16 @@ export interface ReceivedRequestsResponse {
  * Service để xử lý friend requests với transform API response
  */
 class FriendRequestService {
+    private normalizeRequestStatus(
+        status?: string
+    ): "pending" | "accepted" | "rejected" | "canceled" {
+        const normalized = (status || "pending").toLowerCase();
+        if (normalized === "accepted") return "accepted";
+        if (normalized === "rejected") return "rejected";
+        if (normalized === "canceled") return "canceled";
+        return "pending";
+    }
+
     /**
      * Get user info để lấy senderInfo
      * Calls: GET /v1/users/{userId}
@@ -66,7 +76,7 @@ class FriendRequestService {
                     avatar: sender.avatar || "",
                     status: (sender.status || "offline") as "online" | "offline",
                 },
-                status: (item.status?.toUpperCase() || "PENDING") as "PENDING" | "ACCEPTED" | "DECLINED",
+                status: this.normalizeRequestStatus(item.status),
                 createdAt: item.createdAt,
             };
         } catch (error) {
@@ -85,7 +95,7 @@ class FriendRequestService {
                     avatar: "",
                     status: "offline",
                 },
-                status: (item.status?.toUpperCase() || "PENDING") as "PENDING" | "ACCEPTED" | "DECLINED",
+                status: this.normalizeRequestStatus(item.status),
                 createdAt: item.createdAt,
             };
         }
