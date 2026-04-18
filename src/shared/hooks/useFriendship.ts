@@ -176,8 +176,6 @@ export const useFriendship = (
         setSentError(null);
         try {
             const data = await getSentFriendRequests();
-            console.log('[useFriendship] loadSentRequests result:', JSON.stringify(data, null, 2));
-            console.log('[useFriendship] Loaded sent requests:', data.map(r => ({ _id: r._id, receiverId: r.receiverId, senderId: r.senderId })));
             setSentRequests(data);
 
             // Refresh requestId -> receiverId map for robust socket reconciliation

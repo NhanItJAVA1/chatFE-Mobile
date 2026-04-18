@@ -69,6 +69,28 @@ export const requestPresignedUrl = async (
             response.data.fileId
         );
 
+        // Parse URL to check for signature parameters
+        let urlParams: Record<string, string> = {};
+        try {
+            const urlObj = new URL(response.data.presignedUrl);
+            urlObj.searchParams.forEach((value, key) => {
+                urlParams[key] = value.substring(0, 50); // Truncate long values
+            });
+        } catch (e) {
+            console.warn("[requestPresignedUrl] Could not parse URL");
+        }
+
+        console.log("[requestPresignedUrl] Presigned URL details:", {
+            fileId: response.data.fileId,
+            hasUrl: !!response.data.presignedUrl,
+            fullUrl: response.data.presignedUrl,
+            hasSignatureParams: Object.keys(urlParams).length > 0,
+            queryParamKeys: Object.keys(urlParams),
+            headerCount: response.data.headers ? Object.keys(response.data.headers).length : 0,
+            headerKeys: response.data.headers ? Object.keys(response.data.headers) : [],
+            allHeaders: response.data.headers,
+        });
+
         return response.data;
     } catch (error: any) {
         console.error("[requestPresignedUrl] Error:", error);
@@ -114,7 +136,9 @@ export const uploadToS3 = async (
     console.log("[uploadToS3] Starting upload to S3", {
         fileSize: fileBlob.size,
         mimeType,
+        headerKeys: Object.keys(finalHeaders),
         retries: config.maxRetries,
+        urlPreview: presignedUrl?.substring(0, 100),
     });
 
     await retryWithBackoff(

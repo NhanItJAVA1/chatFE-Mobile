@@ -32,6 +32,7 @@ type Colors = {
     mediaImageIcon: string;
     mediaAudioIcon: string;
     mediaDocumentIcon: string;
+    mediaVideoIcon: string;
     contrastBorder: string;
     contrastText: string;
     incoming: string;
@@ -78,6 +79,7 @@ export const colors: Colors = {
     mediaImageIcon: "#007AFF",
     mediaAudioIcon: "#FFA500",
     mediaDocumentIcon: "#6C5CE7",
+    mediaVideoIcon: "#FF3B30",
     contrastBorder: "#221919",
     contrastText: "#221919",
     incoming: "#2a2a2a",

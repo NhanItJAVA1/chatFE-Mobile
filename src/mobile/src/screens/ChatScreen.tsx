@@ -1825,6 +1825,17 @@ export const ChatScreen = ({
 
                         <Pressable
                             style={styles.mediaMenuButton}
+                            onPress={() => {
+                                console.log('[ChatScreen] Video button pressed');
+                                handlePickVideo();
+                            }}
+                        >
+                            <Ionicons name="videocam" size={24} color={colors.mediaVideoIcon} />
+                            <Text style={styles.mediaMenuButtonText}>Video</Text>
+                        </Pressable>
+
+                        <Pressable
+                            style={styles.mediaMenuButton}
                             onPress={handlePickAudioFile}
                         >
                             <Ionicons name="musical-note" size={24} color={colors.mediaAudioIcon} />

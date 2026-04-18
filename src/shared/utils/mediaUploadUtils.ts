@@ -291,6 +291,7 @@ export const uploadWithProgress = async (
 
         // Load complete
         xhr.addEventListener("load", () => {
+            console.log(`[uploadWithProgress] Response status: ${xhr.status}`);
             if (xhr.status >= 200 && xhr.status < 300) {
                 onProgress?.({
                     loaded: file.size,
@@ -298,9 +299,13 @@ export const uploadWithProgress = async (
                     percentage: 100,
                     status: "completed",
                 });
-
                 resolve();
             } else {
+                const responseText = xhr.responseText.substring(0, 500);
+                console.error(
+                    `[uploadWithProgress] Upload failed with status ${xhr.status}:`,
+                    responseText
+                );
                 reject(
                     new Error(
                         `Upload failed with status ${xhr.status}: ${xhr.statusText}`
@@ -335,13 +340,22 @@ export const uploadWithProgress = async (
             reject(error);
         });
 
-        // Set headers
+        // Open request first
+        xhr.open("PUT", url);
+        console.log("[uploadWithProgress] XMLHttpRequest opened");
+
+        // Set headers after opening
+        console.log(
+            "[uploadWithProgress] Setting headers:",
+            Object.keys(headers)
+        );
         Object.entries(headers).forEach(([key, value]) => {
+            console.log(`[uploadWithProgress] Header: ${key} = ${value?.substring(0, 50)}`);
             xhr.setRequestHeader(key, value);
         });
 
-        // Send
-        xhr.open("PUT", url);
+        console.log("[uploadWithProgress] Sending file with size:", file.size);
+        // Send file
         xhr.send(file);
     });
 };

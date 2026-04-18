@@ -158,40 +158,29 @@ export const getReceivedRequests = getReceivedFriendRequests;
 export const getSentFriendRequests = async (): Promise<FriendRequest[]> => {
     try {
         const response = await api.get("/friend-requests/sent");
-        console.log('[friendService] getSentFriendRequests full response:', response);
-        console.log('[friendService] getSentFriendRequests raw response:', JSON.stringify(response, null, 2));
 
         // Extract data from response
         let data = response.data || response;
-        console.log('[friendService] Extracted data:', JSON.stringify(data, null, 2));
 
         // Case 1: data is already an array
         if (Array.isArray(data)) {
-            console.log('[friendService] Data is array, items:', data.length);
-            if (data.length > 0) {
-                console.log('[friendService] First item keys:', Object.keys(data[0]));
-                console.log('[friendService] First item:', JSON.stringify(data[0], null, 2));
-            }
             return data;
         }
 
         // Case 2: data is paginated response with items field
         if (data && typeof data === "object") {
             if (Array.isArray(data.items)) {
-                console.log('[friendService] Found data.items, returning:', data.items.length, 'items');
                 return data.items;
             }
 
             // Case 3: data is an object with other array fields
             const arrayField = data.requests || data.list || data.data;
             if (Array.isArray(arrayField)) {
-                console.log('[friendService] Found array field, returning:', arrayField.length, 'items');
                 return arrayField;
             }
         }
 
         // Fallback to empty array
-        console.log('[friendService] No array found, returning empty array');
         return [];
     } catch (error: any) {
         console.error("[friendService] Load sent requests error:", error);

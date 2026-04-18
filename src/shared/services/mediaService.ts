@@ -153,6 +153,8 @@ const uploadToS3WithFetch = async (
     onProgress?: (progress: number) => void
 ): Promise<void> => {
     console.log('[mediaService] Uploading to S3 with fetch...');
+    console.log('[mediaService] Presigned URL full:', presignedUrl);
+    console.log('[mediaService] Headers provided:', headers);
 
     try {
         // Build headers - include all headers from presigned URL response
@@ -162,11 +164,13 @@ const uploadToS3WithFetch = async (
 
         // Merge in any additional headers from presigned URL (like authorization, x-amz-*, etc.)
         if (headers && Object.keys(headers).length > 0) {
-            console.log('[mediaService] Additional S3 headers:', Object.keys(headers));
+            console.log('[mediaService] Additional S3 headers:', headers);
             Object.assign(uploadHeaders, headers);
+        } else {
+            console.log('[mediaService] No additional headers from presigned URL response');
         }
 
-        console.log('[mediaService] Final upload headers:', Object.keys(uploadHeaders));
+        console.log('[mediaService] Final upload headers:', uploadHeaders);
 
         const response = await fetch(presignedUrl, {
             method: 'PUT',
@@ -175,11 +179,23 @@ const uploadToS3WithFetch = async (
         });
 
         console.log('[mediaService] S3 upload response status:', response.status);
+        console.log('[mediaService] S3 upload response headers:', {
+            contentType: response.headers.get('content-type'),
+            etag: response.headers.get('etag'),
+            server: response.headers.get('server'),
+        });
 
         if (!response.ok) {
             const text = await response.text();
-            console.error('[mediaService] S3 upload error (status ' + response.status + '):', text.substring(0, 500));
-            throw new Error(`S3 upload failed with status ${response.status}`);
+            console.error('[mediaService] S3 upload error (status ' + response.status + '):', text);
+
+            // Try to extract error details from XML
+            const errorMatch = text.match(/<Code>([^<]+)<\/Code>/);
+            const messageMatch = text.match(/<Message>([^<]+)<\/Message>/);
+            console.error('[mediaService] S3 Error Code:', errorMatch?.[1]);
+            console.error('[mediaService] S3 Error Message:', messageMatch?.[1]);
+
+            throw new Error(`S3 upload failed with status ${response.status}: ${errorMatch?.[1] || 'Unknown error'}`);
         }
 
         // Simulate 100% progress for fetch (no progress tracking available)
