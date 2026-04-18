@@ -18,9 +18,11 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useChatMessage } from "../../../shared/hooks/useChat";
+import { useGroupChatMessage } from "../../../shared/hooks/useGroupChatMessage";
 import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { useAuth } from "../../../shared/hooks";
 import { SocketService } from "../../../shared/services";
+import chatMediaService from "../../../shared/services/chatMediaService";
 import { Avatar, ForwardDialog, VoiceRecorder } from "../components";
 import { colors } from "../theme";
 
@@ -34,18 +36,24 @@ export const GroupChatScreen: React.FC<{
     navigation: any;
     onBackPress?: () => void;
 }> = ({ route, navigation, onBackPress }) => {
-    const { groupId } = route.params;
-    const { user } = useAuth();
-    const { state: chatState, actions: chatActions } = useChatMessage(
+    const { groupId } = route.params || {};
+    console.log("[GroupChatScreen] Route params:", {
+        hasParams: !!route.params,
         groupId,
-        user?.token || ""
+        allParams: route.params
+    });
+    const authContext = useAuth();
+    const token = authContext.token;
+    const { user } = authContext;
+    const { state: chatState, actions: chatActions } = useGroupChatMessage(
+        groupId,
+        token || ""
     );
     const { state: groupState, actions: groupActions } = useGroupChat();
 
     // Local state
     const [messageText, setMessageText] = useState("");
     const [isSending, setIsSending] = useState(false);
-    const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
     const [showMediaMenu, setShowMediaMenu] = useState(false);
     const [draftMedia, setDraftMedia] = useState<any[]>([]);
     const [uploading, setUploading] = useState(false);
@@ -58,7 +66,6 @@ export const GroupChatScreen: React.FC<{
     const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
 
     // Refs
-    const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const flatListRef = useRef<FlatList>(null);
     const actionsRef = useRef(chatActions);
 
@@ -66,36 +73,6 @@ export const GroupChatScreen: React.FC<{
     useEffect(() => {
         loadGroupData();
     }, [groupId]);
-
-    // Setup socket listeners
-    useEffect(() => {
-        groupActions.setupGroupListeners();
-        SocketService.onTyping((data) => {
-            if (data.conversationId === groupId && data.userId !== user?._id) {
-                setTypingUsers((prev) => {
-                    const next = new Set(prev);
-                    if (data.isTyping) {
-                        next.add(data.userId);
-                    } else {
-                        next.delete(data.userId);
-                    }
-                    return next;
-                });
-            }
-        });
-        SocketService.onMessage((message) => {
-            if (message.conversationId === groupId) {
-                chatActions.addMessages([message]);
-                flatListRef.current?.scrollToEnd({ animated: true });
-            }
-        });
-
-        return () => {
-            groupActions.cleanupGroupListeners();
-            SocketService.offTyping();
-            SocketService.offMessage();
-        };
-    }, [groupId, user?._id]);
 
     const loadGroupData = useCallback(async () => {
         try {
@@ -246,25 +223,97 @@ export const GroupChatScreen: React.FC<{
         setDraftMedia([]);
     }, []);
 
+    const sendDraftMedia = useCallback(
+        async (caption?: string) => {
+            if (!groupId || draftMedia.length === 0) {
+                return;
+            }
 
+            setUploading(true);
+            setUploadProgress(0);
+
+            try {
+                for (let index = 0; index < draftMedia.length; index += 1) {
+                    const item = draftMedia[index];
+                    const file = {
+                        uri: item.uri,
+                        name: item.name,
+                        type: item.type,
+                        mimeType: item.mimeType,
+                        size: item.size || 0,
+                        width: item.width,
+                        height: item.height,
+                        duration: item.duration,
+                    };
+
+                    let result = [];
+
+                    // Determine file type and call appropriate method
+                    if (item.mimeType?.startsWith("image/")) {
+                        result = await chatMediaService.sendImage(
+                            groupId,
+                            file,
+                            index === 0 ? caption : undefined
+                        );
+                    } else if (item.mimeType?.startsWith("video/")) {
+                        result = await chatMediaService.sendVideo(
+                            groupId,
+                            file,
+                            index === 0 ? caption : undefined
+                        );
+                    } else if (item.mimeType?.startsWith("audio/")) {
+                        result = await chatMediaService.sendAudio(
+                            groupId,
+                            file,
+                            index === 0 ? caption : undefined
+                        );
+                    } else {
+                        // Document or other file types
+                        result = await chatMediaService.sendDocument(
+                            groupId,
+                            file
+                        );
+                    }
+
+                    if (result.length > 0 && chatActions.addMessages) {
+                        chatActions.addMessages(result);
+                    }
+
+                    const progress = Math.round(((index + 1) / draftMedia.length) * 100);
+                    setUploadProgress(progress);
+                }
+            } catch (err: any) {
+                console.error("[GroupChat] Error sending media:", err);
+                Alert.alert("Lỗi", `Gửi media thất bại: ${err.message}`);
+            } finally {
+                setUploading(false);
+                setUploadProgress(0);
+                clearDraftMedia();
+            }
+        },
+        [groupId, draftMedia, chatActions, clearDraftMedia]
+    );
+
+    const hasSendableContent = draftMedia.length > 0 || messageText.trim().length > 0;
 
     const handleSendMessage = useCallback(async () => {
-        const hasSendableContent = messageText.trim() || draftMedia.length > 0;
+        const trimmedText = messageText.trim();
+
         if (!hasSendableContent) return;
 
         try {
             setIsSending(true);
 
             // Send text message
-            if (messageText.trim()) {
-                const result = await chatActions.sendMessage(messageText);
+            if (trimmedText) {
+                await chatActions.sendMessage(trimmedText);
                 setMessageText("");
             }
 
-            // TODO: Handle media sending for group chat
+            // Send media
             if (draftMedia.length > 0) {
-                console.log('[GroupChat] Media sending not yet implemented');
-                clearDraftMedia();
+                await sendDraftMedia(trimmedText || undefined);
+                setMessageText("");
             }
 
             flatListRef.current?.scrollToEnd({ animated: true });
@@ -273,21 +322,14 @@ export const GroupChatScreen: React.FC<{
         } finally {
             setIsSending(false);
         }
-    }, [messageText, draftMedia, chatActions, clearDraftMedia]);
+    }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia]);
 
     const handleInputChange = useCallback((text: string) => {
         setMessageText(text);
-
-        // Debounce typing indicator
-        if (typingTimeoutRef.current) {
-            clearTimeout(typingTimeoutRef.current);
+        if (text.trim()) {
+            chatActions.handleTyping();
         }
-
-        SocketService.startTyping(groupId);
-        typingTimeoutRef.current = setTimeout(() => {
-            SocketService.stopTyping(groupId);
-        }, 3000);
-    }, [groupId]);
+    }, [chatActions]);
 
     const handleMessageLongPress = useCallback((message: any) => {
         const messageId = message._id || message.id;
@@ -471,8 +513,6 @@ export const GroupChatScreen: React.FC<{
         [user?._id, handleMessageLongPress]
     );
 
-    const hasSendableContent = draftMedia.length > 0 || messageText.trim().length > 0;
-
     if (!groupState.group) {
         return (
             <View style={styles.loadingContainer}>
@@ -504,8 +544,8 @@ export const GroupChatScreen: React.FC<{
                         {groupState.group?.name || "Nhóm"}
                     </Text>
                     <Text style={styles.chatHeaderSubtitle}>
-                        {typingUsers.size > 0
-                            ? `${Array.from(typingUsers).length} đang gõ...`
+                        {chatState.typingUsers.size > 0
+                            ? `${Array.from(chatState.typingUsers).length} đang gõ...`
                             : `${groupState.members?.length || 0} thành viên`}
                     </Text>
                 </View>
@@ -559,7 +599,7 @@ export const GroupChatScreen: React.FC<{
                         </View>
                     }
                     ListFooterComponent={
-                        typingUsers.size > 0 && (
+                        chatState.typingUsers.size > 0 && (
                             <View style={styles.typingIndicator}>
                                 <View style={styles.typingDots}>
                                     <View style={styles.typingDot} />

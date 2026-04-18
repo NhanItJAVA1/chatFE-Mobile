@@ -23,16 +23,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
                 if (savedToken) {
                     setToken(savedToken);
-                    console.log("[AuthContext] Restoring session with saved token");
 
                     try {
                         const profileResponse = await authService.getProfile(savedToken);
                         let profile = profileResponse;
-                        console.log("[AuthContext] Restored profile:", profile);
-                        console.log(
-                            "[AuthContext] Restored avatarUrl:",
-                            profile?.avatarUrl
-                        );
 
                         if (!isActive) {
                             return;

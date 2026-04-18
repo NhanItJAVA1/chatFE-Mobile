@@ -81,7 +81,7 @@ export class ConversationService {
     }
 
     /**
-     * Get conversation details
+     * Get conversation details (private chat)
      */
     static async getConversationDetail(conversationId: string): Promise<Conversation> {
         try {
@@ -90,6 +90,42 @@ export class ConversationService {
             const data = response.data || response;
             return data.data || data;
         } catch (error: any) {
+            throw error;
+        }
+    }
+
+    /**
+     * Get group conversation details
+     * @param groupId - ID of group
+     */
+    static async getGroupDetail(groupId: string): Promise<Conversation> {
+        try {
+            const response = await api.get(`/groups/${groupId}/info`);
+
+            // Log comprehensive response structure
+            console.log('[ConversationService] getGroupDetail response:', {
+                type: typeof response,
+                isObject: typeof response === 'object',
+                keys: Array.isArray(response) ? 'array' : Object.keys(response || {}),
+                hasData: 'data' in response,
+                dataType: response?.data ? typeof response.data : 'missing',
+                dataKeys: response?.data ? Object.keys(response.data) : 'N/A',
+                fullResponse: JSON.stringify(response).substring(0, 2000),
+            });
+
+            // If response.data doesn't exist, check if entire response IS the data
+            if (!response?.data && response?.conversation) {
+                return response.conversation;
+            }
+
+            if (response?.data?.conversation) {
+                return response.data.conversation;
+            }
+
+            console.error('[ConversationService] Conversation not found. Response:', response);
+            throw new Error('Conversation not found in group detail response');
+        } catch (error: any) {
+            console.error('[ConversationService] getGroupDetail error:', error);
             throw error;
         }
     }

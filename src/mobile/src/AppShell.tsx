@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { ActivityIndicator, StyleSheet, View, Text } from "react-native";
 import { useAuth, useFriendRequests, useFriendship } from "../../shared/hooks";
 import { BottomTabBar } from "./components";
 import {
@@ -95,9 +95,21 @@ const MainShell = () => {
         if (activeTab === "chat") {
             // Check if it's a GROUP or PRIVATE chat
             if (selectedChat?.conversationType === 'GROUP') {
+                const groupId = selectedChat.conversationId;
+                // console.log('[AppShell] Rendering GroupChatScreen:', {
+                //     groupId,
+                //     selectedChat
+                // });
+                if (!groupId) {
+                    return (
+                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                            <Text>Error: Group ID not found. {JSON.stringify(selectedChat)}</Text>
+                        </View>
+                    );
+                }
                 return (
                     <GroupChatScreen
-                        route={{ params: { groupId: selectedChat.conversationId } }}
+                        route={{ params: { groupId } }}
                         navigation={{}}
                         onBackPress={() => {
                             setActiveTab("home");
@@ -146,10 +158,10 @@ const MainShell = () => {
                     setActiveTab("chat");
                 }}
                 onGroupPress={(conversation) => {
-                    console.log('[AppShell] Group conversation selected:', {
-                        conversationId: conversation._id || conversation.id,
-                        name: conversation.name,
-                    });
+                    // console.log('[AppShell] Group conversation selected:', {
+                    //     conversationId: conversation._id || conversation.id,
+                    //     name: conversation.name,
+                    // });
                     setSelectedChat({
                         conversationId: conversation._id || conversation.id,
                         conversationType: 'GROUP',

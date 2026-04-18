@@ -108,14 +108,10 @@ class FriendRequestService {
      */
     async getReceivedRequests(page: number = 1, limit: number = 20): Promise<ReceivedRequestsResponse> {
         try {
-            console.log("[friendRequestService] Getting received requests...");
-
             // Call API
             const response = await api.get("/friend-requests/received", {
                 params: { page, limit },
             });
-
-            console.log("[friendRequestService] Raw API response:", response);
 
             // Extract paginated data
             const resData = response.data || response;
@@ -125,14 +121,10 @@ class FriendRequestService {
             const total = resData.total || 0;
             const hasMore = resData.hasMore || false;
 
-            console.log("[friendRequestService] Extracted items:", items.length);
-
             // Transform each item (includes fetching senderInfo)
             const transformedItems = await Promise.all(
                 items.map((item: any) => this.transformRequestItem(item))
             );
-
-            console.log("[friendRequestService] Transformed items:", transformedItems.length);
 
             return {
                 items: transformedItems,

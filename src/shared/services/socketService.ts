@@ -79,9 +79,6 @@ export class SocketService {
             return this.socket;
         }
 
-        console.log('[SocketService] Connecting to socket:', SOCKET_URL + SOCKET_NAMESPACE);
-        console.log('[SocketService] Token provided:', token ? `${token.substring(0, 20)}...` : 'NO TOKEN!');
-
         this.socket = io(SOCKET_URL + SOCKET_NAMESPACE, {
             // Try Authorization header format first
             extraHeaders: {
@@ -100,7 +97,7 @@ export class SocketService {
 
         // Connection events
         this.socket.on("connect", () => {
-            console.log('[SocketService] ✓ Socket connected successfully');
+            // Connected
         });
         this.socket.on("disconnect", (reason: string) => {
             console.warn('[SocketService] Socket disconnected:', reason);

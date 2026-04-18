@@ -111,13 +111,6 @@ export const getReceivedFriendRequests = async (): Promise<FriendRequest[]> => {
     try {
         const response = await api.get("/friend-requests/received");
 
-        // Log full response structure
-        console.log("[API] GET /friend-requests/received response:", {
-            status: response.status,
-            data: response.data,
-            rawResponse: response
-        });
-
         // Extract data from response
         let data = response.data || response;
 
@@ -323,10 +316,6 @@ const enrichFriendship = async (friendship: any, currentUserId: string): Promise
         // Determine which user is the friend (not the current user)
         const friendId = friendship.userA === currentUserId ? friendship.userB : friendship.userA;
 
-        console.log(
-            `[friendService] Enriching friendship: current=${currentUserId}, friend=${friendId}`
-        );
-
         // Fetch friend's user info
         const friendUser = await getUserInfo(friendId);
 
@@ -355,7 +344,6 @@ const enrichFriendship = async (friendship: any, currentUserId: string): Promise
  */
 export const getFriendsWithEnrichment = async (currentUserId: string): Promise<Friend[]> => {
     try {
-        console.log("[friendService] Loading friends for user:", currentUserId);
         const response = await api.get("/friendships");
 
         // Extract data from response
@@ -372,8 +360,6 @@ export const getFriendsWithEnrichment = async (currentUserId: string): Promise<F
         } else if (data?.data && Array.isArray(data.data)) {
             friendships = data.data;
         }
-
-        console.log("[friendService] Loaded friendships:", friendships.length);
 
         if (friendships.length === 0) {
             return [];
