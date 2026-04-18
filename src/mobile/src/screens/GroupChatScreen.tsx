@@ -76,6 +76,11 @@ export const GroupChatScreen: React.FC<{
     const flatListRef = useRef<FlatList>(null);
     const actionsRef = useRef(chatActions);
 
+    const scrollToLatestMessage = useCallback((animated = true) => {
+        // For inverted FlatList, latest message is at offset 0.
+        flatListRef.current?.scrollToOffset({ offset: 0, animated });
+    }, []);
+
     // Update actionsRef when chatActions changes
     useEffect(() => {
         actionsRef.current = chatActions;
@@ -443,13 +448,13 @@ export const GroupChatScreen: React.FC<{
                 setMessageText("");
             }
 
-            flatListRef.current?.scrollToEnd({ animated: true });
+            scrollToLatestMessage(true);
         } catch (err: any) {
             Alert.alert("Lỗi", err.message || "Failed to send message");
         } finally {
             setIsSending(false);
         }
-    }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia]);
+    }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia, scrollToLatestMessage]);
 
     const handleInputChange = useCallback((text: string) => {
         setMessageText(text);
@@ -828,7 +833,7 @@ export const GroupChatScreen: React.FC<{
                     scrollEventThrottle={16}
                     onEndReachedThreshold={0.5}
                     onEndReached={() => {
-                        if (chatState.hasMoreMessages) {
+                        if (chatState.hasMoreMessages && !isSending && !chatState.isLoading) {
                             chatActions.loadMoreMessages?.();
                         }
                     }}
@@ -927,7 +932,7 @@ export const GroupChatScreen: React.FC<{
                     if (actionsRef.current?.addMessages) {
                         actionsRef.current.addMessages(messages);
                     }
-                    flatListRef.current?.scrollToEnd({ animated: true });
+                    scrollToLatestMessage(true);
                 }}
                 onUploadProgress={(progress) => {
                     setUploadProgress(progress);
