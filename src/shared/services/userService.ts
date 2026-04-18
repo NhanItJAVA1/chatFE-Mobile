@@ -11,6 +11,20 @@ export const getProfile = async (): Promise<User> => {
     }
 };
 
+export const getUserById = async (userId: string): Promise<any> => {
+    try {
+        const response = await api.get(`/users/${userId}`);
+        
+        // Response wrapped: { status, msg, data: { avatarUrl, displayName, ... } }
+        // response.data is the wrapper object, need response.data.data for actual user
+        const userData = response.data?.data || response.data || response;
+        return userData;
+    } catch (error: any) {
+        console.warn(`[userService] Failed to fetch user ${userId}:`, error.message);
+        return null;
+    }
+};
+
 export const updateProfile = async (profileData: any): Promise<User> => {
     try {
         const updateData: Record<string, any> = {};
@@ -132,6 +146,7 @@ export const updatePrivacy = async (privacy: any): Promise<User> => {
 
 export const userService = {
     getProfile,
+    getUserById,
     updateProfile,
     updateProfileFields,
     updateAvatar,

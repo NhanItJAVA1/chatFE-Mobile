@@ -12,6 +12,7 @@ export type AvatarProps = {
     size?: number;
     backgroundColor?: string;
     textSize?: number;
+    imageUrl?: string;
     style?: ViewStyle | ViewStyle[];
 };
 

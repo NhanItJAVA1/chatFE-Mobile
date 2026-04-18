@@ -66,16 +66,19 @@ export const GroupChatScreen: React.FC<{
 
     // Load group and messages on mount
     useEffect(() => {
+        console.log('[GroupChatScreen] Component mounted, loading group data');
         loadGroupData();
     }, [groupId]);
 
     const loadGroupData = useCallback(async () => {
         try {
+            console.log('[GroupChatScreen] loadGroupData started');
             await Promise.all([
                 groupActions.loadGroupInfo(groupId),
                 groupActions.loadMembers(groupId),
                 chatActions.retryLoadConversation?.(),
             ]);
+            console.log('[GroupChatScreen] loadGroupData completed');
 
             // Join group room
             try {
@@ -455,25 +458,34 @@ export const GroupChatScreen: React.FC<{
             // Use correct field: user.id (not user._id)
             const isOwn = item.senderId === user?.id;
 
-            // Debug logging for message alignment
-            if (!item.debugLogged) {
-                console.log('[GroupChatScreen] Message alignment check:', {
-                    messageId: item._id,
-                    senderId: item.senderId,
-                    userId: user?.id,
-                    isOwn,
-                    match: item.senderId === user?.id,
-                    senderIdType: typeof item.senderId,
-                    userIdType: typeof user?.id,
-                });
-                item.debugLogged = true;
-            }
-
             const senderInitials = (item.senderName || "?")
                 .split(" ")
                 .map((n: string) => n[0].toUpperCase())
                 .join("")
                 .slice(0, 2);
+
+            // Get sender's avatar from group members
+            const senderMember = groupState.members?.find(
+                (member) => member.userId === item.senderId
+            );
+            const senderAvatar = senderMember?.avatar;
+
+            // Debug avatar lookup
+            if (!item.avatarDebugLogged) {
+                const memberKeys = groupState.members?.[0] ? Object.keys(groupState.members[0]) : [];
+                console.log('[GroupChatScreen] Avatar lookup:', {
+                    senderId: item.senderId,
+                    senderName: item.senderName,
+                    membersCount: groupState.members?.length || 0,
+                    memberKeysFirst: memberKeys,
+                    firstMemberData: groupState.members?.[0],
+                    memberFound: !!senderMember,
+                    memberData: senderMember,
+                    senderAvatar,
+                    allMembers: groupState.members || [],
+                });
+                item.avatarDebugLogged = true;
+            }
 
             return (
                 <Pressable
@@ -491,6 +503,7 @@ export const GroupChatScreen: React.FC<{
                                 label={senderInitials}
                                 size={32}
                                 backgroundColor={colors.accentStrong}
+                                imageUrl={senderAvatar}
                             />
                         )}
                         <View
@@ -521,7 +534,7 @@ export const GroupChatScreen: React.FC<{
                 </Pressable>
             );
         },
-        [user?._id, handleMessageLongPress]
+        [user?.id, handleMessageLongPress, groupState.members]
     );
 
     if (!groupState.group) {

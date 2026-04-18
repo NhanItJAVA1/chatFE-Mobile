@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View, Image } from "react-native";
 import { colors } from "../theme";
 import type { AvatarProps } from "@/types";
 
@@ -8,10 +8,40 @@ export const Avatar = ({
     size = 56,
     backgroundColor = colors.surfaceElevated,
     textSize = 18,
+    imageUrl,
     style,
 }: AvatarProps) => {
     const bgColor = backgroundColor || colors.surfaceElevated;
 
+    // If imageUrl is provided, display the image
+    if (imageUrl) {
+        return (
+            <View
+                style={[
+                    styles.avatar,
+                    {
+                        width: size,
+                        height: size,
+                        borderRadius: size / 2,
+                        overflow: 'hidden',
+                    },
+                    style,
+                ]}
+            >
+                <Image
+                    source={{ uri: imageUrl }}
+                    style={{
+                        width: size,
+                        height: size,
+                        borderRadius: size / 2,
+                    }}
+                    resizeMode="cover"
+                />
+            </View>
+        );
+    }
+
+    // Fallback to initials
     return (
         <View
             style={[

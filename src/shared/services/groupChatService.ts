@@ -62,19 +62,87 @@ export class GroupChatService {
     /**
      * Get group members list
      * @param groupId - Group ID
+     * Response format: { data: [...members] } - array directly, not { members: [...] }
      */
     static async getGroupMembers(groupId: string): Promise<GroupMember[]> {
         try {
             const response = await api.get(`/groups/${groupId}/members`);
-            const data = response.data || response;
-            const members = data.data?.members || data.members || [];
-            return Array.isArray(members) ? members : [];
+
+            // BE returns: { data: [...] } where data is array directly
+            const membersData = Array.isArray(response.data)
+                ? response.data
+                : (Array.isArray(response.data?.data) ? response.data.data : []);
+
+            // Transform BE response to GroupMember type
+            // Note: BE doesn't return name/avatar - those come from separate user endpoint
+            const members: GroupMember[] = membersData.map((member: any) => ({
+                _id: member.id || member._id,
+                userId: member.userId,
+                name: member.name || "", // Will be empty until user profile loaded
+                avatar: member.avatar || "", // Will be empty until user profile loaded
+                role: member.role || "member",
+                status: member.status || "active",
+                joinedAt: member.joinedAt,
+            }));
+
+            return members;
         } catch (error: any) {
             throw new Error(
                 error.response?.data?.msg ||
                 error.message ||
                 "Failed to fetch group members"
             );
+        }
+    }
+
+    /**
+     * Get group members with user profile data (name, avatar)
+     * @param groupId - Group ID
+     * Fetches member list + user profiles for each member to get name/avatar
+     */
+    static async getGroupMembersWithProfiles(groupId: string): Promise<GroupMember[]> {
+        try {
+            // Import userService dynamically to avoid circular imports
+            const { userService } = await import("./userService");
+
+            // Get members from group endpoint
+            const response = await api.get(`/groups/${groupId}/members`);
+            const membersData = Array.isArray(response.data)
+                ? response.data
+                : (Array.isArray(response.data?.data) ? response.data.data : []);
+
+            console.log('[GroupChatService] getGroupMembersWithProfiles start:', {
+                groupId,
+                membersCount: membersData.length,
+            });
+
+            // Enrich members with user profile data (name, avatar)
+            const enrichedMembers: GroupMember[] = await Promise.all(
+                membersData.map(async (member: any) => {
+                    let userProfile: any = null;
+
+                    // Try to fetch user profile for name/avatar
+                    if (member.userId) {
+                        userProfile = await userService.getUserById(member.userId);
+                    }
+
+                    return {
+                        _id: member.id || member._id,
+                        userId: member.userId,
+                        name: userProfile?.displayName || userProfile?.name || "",
+                        avatar: userProfile?.avatarUrl || userProfile?.avatar || "",
+                        role: member.role || "member",
+                        status: member.status || "active",
+                        joinedAt: member.joinedAt,
+                    };
+                })
+            );
+
+            return enrichedMembers;
+        } catch (error: any) {
+            console.error('[GroupChatService] Error fetching members with profiles:', error);
+            // Fallback to basic getGroupMembers if enrichment fails
+            return this.getGroupMembers(groupId);
         }
     }
 
@@ -109,7 +177,7 @@ export class GroupChatService {
         payload: GroupUpdatePayload
     ): Promise<Group> {
         try {
-            const response = await api.put(`/groups/${groupId}`, payload);
+            const response = await api.patch(`/groups/${groupId}`, payload);
             const data = response.data || response;
             return data.data || data;
         } catch (error: any) {
