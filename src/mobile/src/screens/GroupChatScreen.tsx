@@ -64,10 +64,29 @@ export const GroupChatScreen: React.FC<{
     const flatListRef = useRef<FlatList>(null);
     const actionsRef = useRef(chatActions);
 
+    // Update actionsRef when chatActions changes
+    useEffect(() => {
+        actionsRef.current = chatActions;
+    }, [chatActions]);
+
     // Load group and messages on mount
     useEffect(() => {
         loadGroupData();
     }, [groupId]);
+
+    // Mark messages as seen when they come into view
+    useEffect(() => {
+        if (chatState.messages.length > 0) {
+            const messageIds = chatState.messages
+                .filter((msg) => msg.senderId !== user?.id)
+                .map((msg) => msg._id || msg.id)
+                .filter(Boolean);
+
+            if (messageIds.length > 0) {
+                chatActions.markAsSeen?.(messageIds);
+            }
+        }
+    }, [chatState.messages.length, user?.id, chatActions]);
 
     const loadGroupData = useCallback(async () => {
         try {
@@ -527,6 +546,28 @@ export const GroupChatScreen: React.FC<{
         [user?.id, handleMessageLongPress, groupState.members]
     );
 
+    const handleViewableItemsChanged = useCallback(
+        ({ viewableItems }: any) => {
+            if (!viewableItems || viewableItems.length === 0) return;
+
+            const visibleMessageIds = viewableItems
+                .map((item: any) => item.item)
+                .filter((msg: any) => msg.senderId !== user?.id)
+                .map((msg: any) => msg._id || msg.id)
+                .filter(Boolean);
+
+            if (visibleMessageIds.length > 0) {
+                actionsRef.current?.markAsSeen?.(visibleMessageIds);
+            }
+        },
+        [user?.id]
+    );
+
+    const viewabilityConfigRef = useRef({
+        itemVisiblePercentThreshold: 10,
+        minimumViewTime: 300,
+    });
+
     if (!groupState.group) {
         return (
             <View style={styles.loadingContainer}>
@@ -600,6 +641,8 @@ export const GroupChatScreen: React.FC<{
                             chatActions.loadMoreMessages?.();
                         }
                     }}
+                    onViewableItemsChanged={handleViewableItemsChanged}
+                    viewabilityConfig={viewabilityConfigRef.current}
                     ListEmptyComponent={
                         <View style={styles.emptyMessagesContainer}>
                             <Ionicons

@@ -261,16 +261,14 @@ export class ConversationService {
 
             return {
                 items: [],
-                total: 0,
-                page,
+                nextCursor: null,
                 limit: 20,
                 hasMore: false,
             };
         } catch (error: any) {
             return {
                 items: [],
-                total: 0,
-                page,
+                nextCursor: null,
                 limit: 20,
                 hasMore: false,
             };

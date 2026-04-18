@@ -197,7 +197,9 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         async (messageIds: string[]) => {
             if (!state.conversation || !messageIds.length) return;
 
+            const conversationId = state.conversation._id || state.conversation.id;
             const lastId = messageIds[messageIds.length - 1];
+
             if (lastMarkedMessageId.current === lastId) return;
 
             lastMarkedMessageId.current = lastId;
@@ -208,7 +210,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
 
             markAsSeenTimeout.current = setTimeout(async () => {
                 try {
-                    await SocketService.markMessageSeen(messageIds);
+                    await SocketService.markMessagesSeen(conversationId, lastId);
                 } catch (error) {
                     console.error("[useGroupChatMessage] Failed to mark as seen:", error);
                 }
