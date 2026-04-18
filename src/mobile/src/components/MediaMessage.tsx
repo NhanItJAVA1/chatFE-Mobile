@@ -14,18 +14,21 @@ import {
     Linking,
     Alert,
     Platform,
+    Modal,
+    Dimensions,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
-import { Audio, Video } from 'expo-av';
+import { Audio, Video, ResizeMode } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import type { MessageMedia } from '@/types';
 
 interface MediaMessageProps {
     media: MessageMedia;
     isSender: boolean;
+    layoutMode?: 'compact' | 'standalone';
 }
 
-const MediaMessage: React.FC<MediaMessageProps> = ({ media, isSender }) => {
+const MediaMessage: React.FC<MediaMessageProps> = ({ media, isSender, layoutMode = 'compact' }) => {
     const [imageLoading, setImageLoading] = useState(true);
     const [imageError, setImageError] = useState(false);
 
@@ -43,8 +46,11 @@ const MediaMessage: React.FC<MediaMessageProps> = ({ media, isSender }) => {
     const [videoCurrentTime, setVideoCurrentTime] = useState(0);
     const [videoLoading, setVideoLoading] = useState(false);
     const [videoAspectRatio, setVideoAspectRatio] = useState(16 / 9);
+    const [showVideoViewer, setShowVideoViewer] = useState(false);
     const videoRef = useRef<Video | null>(null);
     const videoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const screenWidth = Dimensions.get('window').width;
+    const horizontalSafePadding = isSender ? 112 : 156;
 
     useEffect(() => {
         console.log('[MediaMessage] Rendered with media:', {
@@ -103,6 +109,7 @@ const MediaMessage: React.FC<MediaMessageProps> = ({ media, isSender }) => {
     const isAudio = resolvedMediaType === 'audio';
     const isVideo = resolvedMediaType === 'video';
     const isDocument = resolvedMediaType === 'document' || resolvedMediaType === 'file';
+    const isStandaloneLayout = layoutMode === 'standalone';
 
     const handleDownload = async () => {
         try {
@@ -350,85 +357,130 @@ const MediaMessage: React.FC<MediaMessageProps> = ({ media, isSender }) => {
 
     // Video message
     if (isVideo) {
-        const videoHeight = Math.min(300, Math.max(200, 300 / videoAspectRatio));
+        const maxSafeWidth = Math.max(220, screenWidth - horizontalSafePadding);
+        const videoWidth = isStandaloneLayout
+            ? Math.min(maxSafeWidth, Math.max(220, screenWidth * 0.64))
+            : Math.min(maxSafeWidth, Math.max(180, screenWidth * 0.5));
+        const videoHeight = isStandaloneLayout
+            ? Math.min(260, Math.max(180, videoWidth / videoAspectRatio))
+            : Math.min(220, Math.max(160, videoWidth / videoAspectRatio));
 
         return (
-            <View
-                style={[
-                    styles.container,
-                    isSender && styles.senderContainer,
-                    styles.mediaItemContainer,
-                ]}
-            >
-                <View style={[styles.videoPlayerContainer, { height: videoHeight, aspectRatio: videoAspectRatio }]}>
-                    <Video
-                        ref={videoRef}
-                        source={{ uri: media.url }}
-                        style={styles.videoPlayer}
-                        onLoad={handleVideoLoad}
-                        onPlaybackStatusUpdate={(status) => {
-                            if (status.isLoaded && status.durationMillis) {
-                                setVideoDuration(status.durationMillis);
-                            }
-                        }}
-                        shouldPlay={isPlayingVideo}
-                        isLooping={false}
-                        useNativeControls={false}
-                    />
-                    {!isPlayingVideo && (
-                        <TouchableOpacity
-                            style={styles.videoPlayOverlay}
-                            onPress={handleVideoPlayPause}
-                            activeOpacity={0.7}
-                        >
-                            <Ionicons name="play-circle" size={60} color="rgba(255,255,255,0.9)" />
-                        </TouchableOpacity>
-                    )}
+            <>
+                <View
+                    style={[
+                        styles.container,
+                        styles.videoMessageContainer,
+                        isSender && styles.senderContainer,
+                        styles.mediaItemContainer,
+                    ]}
+                >
+                    <View style={[styles.videoCard, { width: videoWidth }]}>
+                        <View style={[styles.videoPlayerContainer, { height: videoHeight }]}>
+                            <Video
+                                ref={videoRef}
+                                source={{ uri: media.url }}
+                                style={styles.videoPlayer}
+                                resizeMode={ResizeMode.CONTAIN}
+                                onLoad={handleVideoLoad}
+                                onPlaybackStatusUpdate={(status) => {
+                                    if (status.isLoaded && status.durationMillis) {
+                                        setVideoDuration(status.durationMillis);
+                                    }
+                                }}
+                                shouldPlay={isPlayingVideo}
+                                isLooping={false}
+                                useNativeControls={false}
+                            />
+                            {!isPlayingVideo && (
+                                <TouchableOpacity
+                                    style={styles.videoPlayOverlay}
+                                    onPress={handleVideoPlayPause}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons name="play-circle" size={60} color="rgba(255,255,255,0.9)" />
+                                </TouchableOpacity>
+                            )}
+
+                            <TouchableOpacity
+                                style={styles.videoExpandButton}
+                                onPress={() => setShowVideoViewer(true)}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons name="expand-outline" size={18} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.videoControlsContainer}>
+                            <TouchableOpacity
+                                onPress={handleVideoPlayPause}
+                                disabled={videoLoading}
+                                style={styles.videoPlayButton}
+                                activeOpacity={0.7}
+                            >
+                                {videoLoading ? (
+                                    <ActivityIndicator size="small" color="#007AFF" />
+                                ) : (
+                                    <Ionicons
+                                        name={isPlayingVideo ? 'pause' : 'play'}
+                                        size={20}
+                                        color="#007AFF"
+                                    />
+                                )}
+                            </TouchableOpacity>
+
+                            <View style={styles.videoProgressContainer}>
+                                <Slider
+                                    style={styles.videoProgressSlider}
+                                    minimumValue={0}
+                                    maximumValue={Math.max(videoDuration, 1)}
+                                    value={videoCurrentTime}
+                                    onValueChange={handleVideoSeek}
+                                    disabled={!videoRef.current}
+                                    minimumTrackTintColor="#007AFF"
+                                    maximumTrackTintColor="#ddd"
+                                    thumbTintColor="#007AFF"
+                                />
+                            </View>
+
+                            <View style={styles.videoTimeContainer}>
+                                <Text style={styles.videoTime}>
+                                    {formatTime(videoCurrentTime)}
+                                </Text>
+                                <Text style={styles.videoTimeSeparator}>/</Text>
+                                <Text style={styles.videoTime}>
+                                    {formatTime(media.duration ? media.duration * 1000 : videoDuration)}
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
                 </View>
 
-                <View style={styles.videoControlsContainer}>
-                    <TouchableOpacity
-                        onPress={handleVideoPlayPause}
-                        disabled={videoLoading}
-                        style={styles.videoPlayButton}
-                        activeOpacity={0.7}
-                    >
-                        {videoLoading ? (
-                            <ActivityIndicator size="small" color="#007AFF" />
-                        ) : (
-                            <Ionicons
-                                name={isPlayingVideo ? 'pause' : 'play'}
-                                size={20}
-                                color="#007AFF"
-                            />
-                        )}
-                    </TouchableOpacity>
+                <Modal
+                    visible={showVideoViewer}
+                    transparent
+                    statusBarTranslucent
+                    onRequestClose={() => setShowVideoViewer(false)}
+                >
+                    <View style={styles.videoViewerContainer}>
+                        <TouchableOpacity
+                            style={styles.videoViewerClose}
+                            onPress={() => setShowVideoViewer(false)}
+                        >
+                            <Ionicons name="close" size={28} color="#fff" />
+                        </TouchableOpacity>
 
-                    <View style={styles.videoProgressContainer}>
-                        <Slider
-                            style={styles.videoProgressSlider}
-                            minimumValue={0}
-                            maximumValue={Math.max(videoDuration, 1)}
-                            value={videoCurrentTime}
-                            onValueChange={handleVideoSeek}
-                            disabled={!videoRef.current}
-                            minimumTrackTintColor="#007AFF"
-                            maximumTrackTintColor="#ddd"
-                            thumbTintColor="#007AFF"
+                        <Video
+                            source={{ uri: media.url }}
+                            style={styles.videoViewer}
+                            resizeMode={ResizeMode.CONTAIN}
+                            useNativeControls
+                            shouldPlay={false}
+                            isLooping={false}
                         />
                     </View>
-
-                    <View style={styles.videoTimeContainer}>
-                        <Text style={styles.videoTime}>
-                            {formatTime(videoCurrentTime)}
-                        </Text>
-                        <Text style={styles.videoTimeSeparator}>/</Text>
-                        <Text style={styles.videoTime}>
-                            {formatTime(media.duration ? media.duration * 1000 : videoDuration)}
-                        </Text>
-                    </View>
-                </View>
-            </View>
+                </Modal>
+            </>
         );
     }
 
@@ -541,7 +593,7 @@ const MediaMessage: React.FC<MediaMessageProps> = ({ media, isSender }) => {
 const styles = StyleSheet.create({
     container: {
         marginVertical: 4,
-        marginHorizontal: 8,
+        marginHorizontal: 0,
         maxWidth: '85%',
     },
     audioContainer: {
@@ -582,6 +634,8 @@ const styles = StyleSheet.create({
         backgroundColor: '#1c292e',
         borderTopLeftRadius: 12,
         borderTopRightRadius: 12,
+        borderBottomLeftRadius: 12,
+        borderBottomRightRadius: 12,
         overflow: 'hidden',
         position: 'relative',
         justifyContent: 'center',
@@ -599,7 +653,19 @@ const styles = StyleSheet.create({
         height: '100%',
         backgroundColor: 'rgba(0,0,0,0.3)',
     },
+    videoExpandButton: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     videoControlsContainer: {
+        width: '100%',
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: 8,
@@ -640,12 +706,40 @@ const styles = StyleSheet.create({
         color: '#000000',
         marginHorizontal: 2,
     },
+    videoCard: {
+        alignSelf: 'flex-start',
+    },
+    videoViewerContainer: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.96)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    videoViewerClose: {
+        position: 'absolute',
+        top: 54,
+        right: 20,
+        zIndex: 2,
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        backgroundColor: 'rgba(255,255,255,0.12)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    videoViewer: {
+        width: '100%',
+        height: '100%',
+    },
 
     // Audio/Document/File styles
     mediaItemContainer: {
         backgroundColor: '#1c292e',
         borderRadius: 12,
         overflow: 'hidden',
+    },
+    videoMessageContainer: {
+        maxWidth: '100%',
     },
     audioItemContainer: {
         flexDirection: 'row',

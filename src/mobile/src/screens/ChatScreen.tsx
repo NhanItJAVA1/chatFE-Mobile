@@ -86,6 +86,7 @@ const MessageBubble: React.FC<{
                             key={idx}
                             media={m as MessageMedia}
                             isSender={isOwn}
+                            layoutMode={message.text ? 'compact' : 'standalone'}
                         />
                     ))}
                 </View>

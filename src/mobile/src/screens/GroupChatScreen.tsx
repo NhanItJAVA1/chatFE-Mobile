@@ -841,6 +841,11 @@ export const GroupChatScreen: React.FC<{
                     {/* Message content container - handles alignment */}
                     <View style={[
                         styles.messageContentWrapper,
+                        hasMedia && !hasText && (
+                            isOwn
+                                ? styles.messageContentWrapperMediaOnlyOutgoing
+                                : styles.messageContentWrapperMediaOnlyIncoming
+                        ),
                         !isOwn && styles.messageContentWrapperIncoming,
                         isOwn && styles.messageContentWrapperOutgoing,
                     ]}>
@@ -875,6 +880,7 @@ export const GroupChatScreen: React.FC<{
                                             key={idx}
                                             media={m}
                                             isSender={isOwn}
+                                            layoutMode={hasText ? 'compact' : 'standalone'}
                                         />
                                     ))
                                 )}
@@ -1398,7 +1404,14 @@ const styles = StyleSheet.create({
     messageContentWrapper: {
         flexDirection: "column",
         gap: 0,
-        maxWidth: "50%",
+        maxWidth: "82%",
+    },
+    messageContentWrapperMediaOnlyOutgoing: {
+        maxWidth: "82%",
+    },
+    messageContentWrapperMediaOnlyIncoming: {
+        // Incoming rows include avatar + gap, so reserve horizontal space to avoid clipping media controls.
+        maxWidth: "74%",
     },
     messageContentWrapperIncoming: {
         // maxWidth applied to parent wrapper
