@@ -455,7 +455,17 @@ export const GroupChatScreen: React.FC<{
             // Use correct field: user.id (not user._id)
             const isOwn = item.senderId === user?.id;
 
-            const senderInitials = (item.senderName || "?")
+            // Get sender name from message or fallback to member data
+            let senderName = item.senderName;
+            if (!senderName) {
+                // Fallback: find member name from group members
+                const senderMember = groupState.members?.find(
+                    (member) => member.userId === item.senderId
+                );
+                senderName = senderMember?.name || "Unknown";
+            }
+
+            const senderInitials = (senderName || "?")
                 .split(" ")
                 .map((n: string) => n[0].toUpperCase())
                 .join("")
@@ -494,7 +504,7 @@ export const GroupChatScreen: React.FC<{
                         >
                             {!isOwn && (
                                 <Text style={styles.senderName}>
-                                    {item.senderName}
+                                    {senderName}
                                 </Text>
                             )}
                             <Text style={[
