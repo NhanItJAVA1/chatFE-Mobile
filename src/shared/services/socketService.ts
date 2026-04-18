@@ -75,10 +75,19 @@ export class SocketService {
      */
     static connect(token: string): Socket {
         if (this.socket?.connected) {
+            console.log('[SocketService] Socket already connected');
             return this.socket;
         }
 
+        console.log('[SocketService] Connecting to socket:', SOCKET_URL + SOCKET_NAMESPACE);
+        console.log('[SocketService] Token provided:', token ? `${token.substring(0, 20)}...` : 'NO TOKEN!');
+
         this.socket = io(SOCKET_URL + SOCKET_NAMESPACE, {
+            // Try Authorization header format first
+            extraHeaders: {
+                Authorization: `Bearer ${token}`,
+            },
+            // Also try auth object as fallback
             auth: {
                 token,
             },
@@ -90,9 +99,31 @@ export class SocketService {
         });
 
         // Connection events
-        this.socket.on("connect", () => { });
-        this.socket.on("disconnect", () => { });
-        this.socket.on("connect_error", () => { });
+        this.socket.on("connect", () => {
+            console.log('[SocketService] ✓ Socket connected successfully');
+        });
+        this.socket.on("disconnect", (reason: string) => {
+            console.warn('[SocketService] Socket disconnected:', reason);
+        });
+        this.socket.on("connect_error", (error: any) => {
+            console.error('[SocketService] Socket connection error:', error?.message || error);
+        });
+
+        // Debug: Log all events received
+        const originalEmit = this.socket.on;
+        const self = this;
+        this.socket.on = function (eventName: string, callback: any) {
+            const wrappedCallback = (...args: any[]) => {
+                if (eventName !== "receiveMessage" && eventName !== "messageSeen" && !eventName.includes("reconnect")) {
+                    console.log('[SocketService] EVENT RECEIVED:', eventName, {
+                        argsCount: args.length,
+                        firstArg: typeof args[0] === 'object' ? Object.keys(args[0]).slice(0, 3) : typeof args[0],
+                    });
+                }
+                callback(...args);
+            };
+            return originalEmit.call(this, eventName, wrappedCallback);
+        } as any;
 
         return this.socket;
     }
@@ -125,23 +156,72 @@ export class SocketService {
     }
 
     /**
-     * Join conversation room
+     * Wait for socket to be connected (with timeout)
      */
-    static joinConversation(conversationId: string): Promise<any> {
+    static async waitForConnection(timeoutMs: number = 5000): Promise<void> {
+        if (this.socket?.connected) {
+            return;
+        }
+
         return new Promise((resolve, reject) => {
             if (!this.socket) {
-                reject(new Error("Socket not connected"));
+                reject(new Error("Socket not initialized"));
                 return;
             }
 
-            this.socket.emit("joinGroup", { conversationId }, (response: any) => {
-                if (response?.success) {
-                    resolve(response);
-                } else {
-                    reject(new Error(response?.error || "Failed to join"));
-                }
+            const timeout = setTimeout(() => {
+                reject(new Error("Socket connection timeout"));
+            }, timeoutMs);
+
+            this.socket.once("connect", () => {
+                clearTimeout(timeout);
+                console.log('[SocketService] Resolved connection promise');
+                resolve();
             });
+
+            // Also reject on connection error
+            const onError = (error: any) => {
+                clearTimeout(timeout);
+                this.socket?.removeListener("connect_error", onError);
+                reject(new Error(`Socket connection error: ${error?.message || error}`));
+            };
+
+            this.socket.on("connect_error", onError);
         });
+    }
+
+    /**
+     * Join conversation room
+     */
+    static async joinConversation(conversationId: string): Promise<any> {
+        try {
+            // Wait for socket to be connected before joining
+            if (!this.socket?.connected) {
+                console.log('[SocketService] Socket not connected yet, waiting...');
+                await this.waitForConnection(5000);
+            }
+
+            return new Promise((resolve, reject) => {
+                if (!this.socket) {
+                    reject(new Error("Socket not connected"));
+                    return;
+                }
+
+                console.log('[SocketService] Emitting joinGroup for conversationId:', conversationId);
+                this.socket.emit("joinGroup", { conversationId }, (response: any) => {
+                    if (response?.success) {
+                        console.log('[SocketService] ✓ Joined conversation:', conversationId);
+                        resolve(response);
+                    } else {
+                        console.error('[SocketService] Failed to join conversation:', response?.error);
+                        reject(new Error(response?.error || "Failed to join"));
+                    }
+                });
+            });
+        } catch (error: any) {
+            console.error('[SocketService] joinConversation error:', error);
+            throw error;
+        }
     }
 
     /**
@@ -172,34 +252,69 @@ export class SocketService {
         text: string,
         media?: any[]
     ): Promise<MessagePayload[]> {
-        return new Promise((resolve, reject) => {
-            if (!this.socket) {
-                reject(new Error("Socket not connected"));
-                return;
-            }
-
-            const payload = {
-                conversationId,
-                text,
-                media: media || [],
-            };
-
-            this.socket.emit("sendMessage", payload, (response: any) => {
-                if (response?.success) {
-                    const messages = response?.messages || response?.data || response?.message;
-                    if (Array.isArray(messages)) {
-                        resolve(messages);
-                        return;
-                    }
-                    if (messages) {
-                        resolve([messages]);
-                        return;
-                    }
-                    resolve([]);
-                } else {
-                    reject(new Error(response?.error || "Failed to send message"));
+        return new Promise(async (resolve, reject) => {
+            try {
+                if (!this.socket) {
+                    throw new Error("Socket not connected");
                 }
-            });
+
+                // Wait for connection if not connected
+                if (!this.socket.connected) {
+                    console.log('[SocketService] Socket not connected, waiting before sending message...');
+                    await this.waitForConnection(5000);
+                }
+
+                const payload = {
+                    conversationId,
+                    text,
+                    media: media || [],
+                };
+
+                console.log('[SocketService] Emitting sendMessage:', {
+                    conversationId,
+                    textLength: text.length,
+                    mediaCount: media?.length || 0,
+                });
+
+                this.socket.emit("sendMessage", payload, (response: any) => {
+                    console.log('[SocketService] sendMessage callback received:', {
+                        success: response?.success,
+                        hasMessages: !!response?.messages,
+                        messagesCount: response?.messages?.length,
+                        responseKeys: Object.keys(response || {}),
+                        responseSample: {
+                            success: response?.success,
+                            error: response?.error,
+                            firstMsg: response?.messages?.[0] ? {
+                                _id: response.messages[0]._id || response.messages[0].id,
+                                text: response.messages[0].text?.substring(0, 30),
+                                senderId: response.messages[0].senderId,
+                            } : null,
+                        },
+                    });
+                    if (response?.success) {
+                        const messages = response?.messages || response?.data || response?.message;
+                        if (Array.isArray(messages)) {
+                            console.log('[SocketService] ✓ Message sent, received', messages.length, 'messages back');
+                            resolve(messages);
+                            return;
+                        }
+                        if (messages) {
+                            console.log('[SocketService] ✓ Message sent');
+                            resolve([messages]);
+                            return;
+                        }
+                        console.log('[SocketService] ✓ Message sent (empty response)');
+                        resolve([]);
+                    } else {
+                        console.error('[SocketService] Send message failed:', response?.error);
+                        reject(new Error(response?.error || "Failed to send message"));
+                    }
+                });
+            } catch (error: any) {
+                console.error('[SocketService] sendMessage error:', error);
+                reject(error);
+            }
         });
     }
 
@@ -208,10 +323,17 @@ export class SocketService {
      */
     static onMessage(callback: (message: MessagePayload) => void): void {
         if (!this.socket) {
+            console.warn('[SocketService] Cannot setup onMessage listener - socket not initialized');
             return;
         }
 
+        console.log('[SocketService] Setting up "receiveMessage" listener');
         this.socket.on("receiveMessage", (data: any) => {
+            console.log('[SocketService] EVENT FIRED: receiveMessage', {
+                hasMessage: !!data.message,
+                hasData: !!data,
+                dataKeys: Object.keys(data || {}),
+            });
             callback(data.message || data);
         });
     }
@@ -232,24 +354,32 @@ export class SocketService {
         conversationId: string,
         lastSeenMessageId: string
     ): Promise<any> {
-        return new Promise((resolve, reject) => {
-            if (!this.socket) {
-                reject(new Error("Socket not connected"));
-                return;
-            }
-
-            const payload = {
-                conversationId,
-                lastSeenMessageId,
-            };
-
-            this.socket.emit("messageSeen", payload, (response: any) => {
-                if (response?.success) {
-                    resolve(response);
-                } else {
-                    reject(new Error(response?.error || "Failed to mark as seen"));
+        return new Promise(async (resolve, reject) => {
+            try {
+                if (!this.socket) {
+                    throw new Error("Socket not connected");
                 }
-            });
+
+                // Wait for connection if not connected
+                if (!this.socket.connected) {
+                    await this.waitForConnection(5000);
+                }
+
+                const payload = {
+                    conversationId,
+                    lastSeenMessageId,
+                };
+
+                this.socket.emit("messageSeen", payload, (response: any) => {
+                    if (response?.success) {
+                        resolve(response);
+                    } else {
+                        reject(new Error(response?.error || "Failed to mark as seen"));
+                    }
+                });
+            } catch (error: any) {
+                reject(error);
+            }
         });
     }
 

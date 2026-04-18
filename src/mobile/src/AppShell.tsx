@@ -49,6 +49,7 @@ const MainShell = () => {
     const [activeTab, setActiveTab] = useState<TabKey>("home");
     const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
     const [createdGroupId, setCreatedGroupId] = useState<string | null>(null);
+    const [createdGroupData, setCreatedGroupData] = useState<any>(null);
     const { isAuthenticated } = useAuth();
     const {
         requests,
@@ -72,8 +73,9 @@ const MainShell = () => {
         if (activeTab === "createGroup") {
             return (
                 <CreateGroupScreen
-                    onGroupCreated={(groupId) => {
+                    onGroupCreated={(groupId, groupData) => {
                         setCreatedGroupId(groupId);
+                        setCreatedGroupData(groupData);
                         setActiveTab("home");
                     }}
                     onBackPress={() => {
@@ -124,6 +126,12 @@ const MainShell = () => {
                 }}
                 onCreateGroupPress={() => {
                     setActiveTab("createGroup");
+                }}
+                createdGroupId={createdGroupId}
+                createdGroupData={createdGroupData}
+                onGroupCreatedAck={() => {
+                    setCreatedGroupId(null);
+                    setCreatedGroupData(null);
                 }}
             />
         );

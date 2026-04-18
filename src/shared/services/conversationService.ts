@@ -129,6 +129,12 @@ export class ConversationService {
         limit: number = 30
     ): Promise<MessagePage> {
         try {
+            console.log('[ConversationService] loadMessages called:', {
+                conversationId,
+                cursor,
+                limit,
+            });
+
             const response = await api.get(
                 `/conversations/${conversationId}/messages`,
                 {
@@ -139,11 +145,27 @@ export class ConversationService {
                 }
             );
 
+            console.log('[ConversationService] loadMessages response:', {
+                status: response.status,
+                hasData: !!response.data,
+                dataKeys: Object.keys(response.data || {}),
+                dataDataKeys: Object.keys(response.data?.data || {}),
+            });
+
             const data = response.data || response;
 
             // Current backend shape: { data: { messages, nextCursor, hasMore } }
             const payload = data?.data || data;
             const messages = payload?.messages || payload?.items || [];
+
+            console.log('[ConversationService] Messages parsed:', {
+                count: messages.length,
+                messagePreview: messages.slice(0, 2).map((m: any) => ({
+                    id: m._id || m.id,
+                    text: m.text?.substring(0, 30),
+                    senderId: m.senderId,
+                })),
+            });
 
             if (Array.isArray(messages)) {
                 return {
@@ -154,6 +176,7 @@ export class ConversationService {
                 };
             }
 
+            console.warn('[ConversationService] Messages is not array:', typeof messages);
             return {
                 items: [],
                 nextCursor: null,
@@ -161,6 +184,13 @@ export class ConversationService {
                 hasMore: false,
             };
         } catch (error: any) {
+            // Log the error instead of silently failing
+            console.error('[ConversationService] loadMessages ERROR:', {
+                message: error.message,
+                response: error.response?.status,
+                data: error.response?.data,
+            });
+
             // Return empty page instead of throwing
             return {
                 items: [],

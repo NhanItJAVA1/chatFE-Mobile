@@ -378,6 +378,16 @@ export const ChatScreen = ({
     const friendId = chatUser?.id;
     const currentUserId = currentUser?.id || (currentUser as any)?._id || "";
 
+    // DEBUG: Track when chatUser changes
+    useEffect(() => {
+        console.log('[ChatScreen] ===== chatUser CHANGED =====');
+        console.log('[ChatScreen] New chatUser:', {
+            id: chatUser?.id,
+            displayName: (chatUser as any)?.displayName || chatUser?.name,
+        });
+        console.log('[ChatScreen] Token available:', token ? `${token.substring(0, 20)}...` : 'MISSING');
+    }, [chatUser?.id, token]);
+
     const { state, actions } = useChatMessage(
         friendId || "",
         token || ""

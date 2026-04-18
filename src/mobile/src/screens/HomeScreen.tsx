@@ -20,9 +20,18 @@ import type { Friend } from "@/types";
 interface HomeScreenProps {
     onFriendPress?: (friend: any) => void;
     onCreateGroupPress?: () => void;
+    createdGroupId?: string | null;
+    createdGroupData?: any;
+    onGroupCreatedAck?: () => void;
 }
 
-export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateGroupPress }) => {
+export const HomeScreen: React.FC<HomeScreenProps> = ({
+    onFriendPress,
+    onCreateGroupPress,
+    createdGroupId,
+    createdGroupData,
+    onGroupCreatedAck,
+}) => {
     const { user, token } = useAuth();
     const { state, actions } = useFriendship();
     const [query, setQuery] = useState("");
@@ -45,6 +54,49 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateG
 
         loadHomeData();
     }, []);
+
+    // Reload conversations when new group is created
+    useEffect(() => {
+        if (createdGroupId || createdGroupData) {
+            const reloadConversations = async () => {
+                try {
+                    // If we have the group data, add it directly
+                    if (createdGroupData) {
+                        setConversations((prev) => {
+                            // Ensure the group has required fields for Conversation type
+                            const groupAsConversation: any = {
+                                _id: createdGroupData._id || createdGroupData.id,
+                                id: createdGroupData._id || createdGroupData.id,
+                                type: "GROUP",
+                                name: createdGroupData.name,
+                                ownerId: createdGroupData.ownerId,
+                                adminIds: createdGroupData.admins || [],
+                                members: createdGroupData.members || [],
+                                avatarUrl: createdGroupData.avatarUrl || "",
+                                createdAt: createdGroupData.createdAt || new Date().toISOString(),
+                                updatedAt: createdGroupData.updatedAt || new Date().toISOString(),
+                            };
+                            return [groupAsConversation, ...prev];
+                        });
+                    } else {
+                        // Fallback: reload all conversations
+                        const updated = await ConversationService.getConversations(1, 50);
+                        setConversations(updated);
+                    }
+                } catch (err) {
+                    console.error("Failed to reload conversations:", err);
+                }
+            };
+
+            // Small delay to ensure backend has processed the group creation
+            const timeout = setTimeout(() => {
+                reloadConversations();
+                onGroupCreatedAck?.();
+            }, 300);
+
+            return () => clearTimeout(timeout);
+        }
+    }, [createdGroupId, createdGroupData, onGroupCreatedAck]);
 
     const truncateName = (name: string | undefined, maxLength = 20) => {
         if (!name || name.length <= maxLength) {
@@ -208,12 +260,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateG
             );
         };
 
+        const handleGroupCreated = (data: any) => {
+            // Reload conversations when a new group is created
+            ConversationService.getConversations(1, 50).then((updated) => {
+                setConversations(updated);
+            });
+        };
+
         socket.on("receiveMessage", handleReceiveMessage);
         socket.on("messageSeen", handleMessageSeen);
+        socket.on("conversation:created", handleGroupCreated);
 
         return () => {
             socket.off("receiveMessage", handleReceiveMessage);
             socket.off("messageSeen", handleMessageSeen);
+            socket.off("conversation:created", handleGroupCreated);
         };
     }, [token, user]);
 
@@ -243,34 +304,50 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateG
         return map;
     }, [conversations, user]);
 
-    const filteredFriends = useMemo(() => {
+    const filteredConversations = useMemo(() => {
         const needle = query.trim().toLowerCase();
-        const friendsList = [...(state?.friends || [])];
 
-        friendsList.sort((a: Friend, b: Friend) => {
-            const conversationA = conversationByFriendId.get(a.friendId);
-            const conversationB = conversationByFriendId.get(b.friendId);
-            const tsA = getLastMessageCreatedAt(conversationA);
-            const tsB = getLastMessageCreatedAt(conversationB);
-            return (new Date(tsB || 0).getTime() || 0) - (new Date(tsA || 0).getTime() || 0);
+        // Sort conversations by last message time (newest first)
+        const sorted = [...conversations].sort((a, b) => {
+            const tsA = new Date(getLastMessageCreatedAt(a) || 0).getTime() || 0;
+            const tsB = new Date(getLastMessageCreatedAt(b) || 0).getTime() || 0;
+            return tsB - tsA;
         });
 
         if (!needle) {
-            return friendsList;
+            return sorted;
         }
 
-        return friendsList.filter((item: Friend) =>
-            item?.friendInfo?.displayName?.toLowerCase().includes(needle) ||
-            item?.friendInfo?.phoneNumber?.toLowerCase().includes(needle)
-        );
-    }, [state?.friends, query, conversationByFriendId]);
+        // Filter by conversation name or member names
+        return sorted.filter((conv) => {
+            // For GROUP chats, search by name
+            if (conv.type === "GROUP") {
+                return conv.name?.toLowerCase().includes(needle);
+            }
+            // For PRIVATE chats, search by friend name
+            const friend = state?.friends?.find((f) =>
+                conversationByFriendId.get(f.friendId)?._id === conv._id
+            );
+            return (
+                friend?.friendInfo?.displayName?.toLowerCase().includes(needle) ||
+                friend?.friendInfo?.phoneNumber?.toLowerCase().includes(needle)
+            );
+        });
+    }, [conversations, query, state?.friends, conversationByFriendId]);
 
     /**
      * Handle friend press - navigate to chat
      */
     const handleFriendPress = (friend: Friend) => {
+        console.log('[HomeScreen] ===== handleFriendPress CALLED =====');
+        console.log('[HomeScreen] Friend object:', {
+            friendId: friend.friendId,
+            displayName: friend.friendInfo?.displayName,
+            _id: friend._id,
+        });
+
         if (onFriendPress) {
-            onFriendPress({
+            const chatUserData = {
                 id: friend.friendId,
                 displayName: friend.friendInfo?.displayName,
                 avatar: friend.friendInfo?.avatar,
@@ -278,7 +355,60 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateG
                 phone: friend.friendInfo?.phoneNumber,
                 status: friend.friendInfo?.status,
                 _id: friend._id,
+            };
+            console.log('[HomeScreen] Calling onFriendPress with data:', chatUserData);
+            onFriendPress(chatUserData);
+        }
+    };
+
+    const handleConversationPress = (conversation: Conversation) => {
+        console.log('[HomeScreen] ===== handleConversationPress CALLED =====');
+        console.log('[HomeScreen] Conversation:', {
+            id: conversation._id || conversation.id,
+            type: conversation.type,
+            name: conversation.name,
+            pairKey: conversation.pairKey,
+        });
+
+        if (conversation.type === "GROUP") {
+            console.log("Group chat clicked:", conversation._id);
+            // TODO: Navigate to group chat
+            return;
+        }
+
+        // For PRIVATE chats, extract friendId from pairKey directly
+        // Don't use conversationByFriendId map (it can be overwritten with multiple conversations)
+        let otherMemberId: string | undefined;
+        if (conversation.pairKey) {
+            const currentUserId = user?.id || (user as any)?._id;
+            const ids = conversation.pairKey.split("_");
+            otherMemberId = ids.find((id) => id && id !== currentUserId);
+        }
+
+        // Fallback to members array if pairKey not available
+        if (!otherMemberId && conversation.members) {
+            const currentUserId = user?.id || (user as any)?._id;
+            otherMemberId = conversation.members.find((m) => m !== currentUserId);
+        }
+
+        console.log('[HomeScreen] Extracted otherMemberId:', otherMemberId);
+
+        // Now find the friend with this ID
+        const friend = state?.friends?.find((f) => f.friendId === otherMemberId);
+
+        console.log('[HomeScreen] Found friend:', {
+            friendId: friend?.friendId,
+            displayName: friend?.friendInfo?.displayName,
+        });
+
+        if (friend) {
+            console.log('[HomeScreen] Calling onFriendPress with friend:', {
+                friendId: friend.friendId,
+                displayName: friend.friendInfo?.displayName,
             });
+            handleFriendPress(friend);
+        } else {
+            console.warn("[HomeScreen] Friend not found for otherMemberId:", otherMemberId);
         }
     };
 
@@ -346,7 +476,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateG
                             <ActivityIndicator size="large" color={colors.accent} />
                             <Text style={styles.loadingText}>Đang tải danh sách chat...</Text>
                         </View>
-                    ) : filteredFriends.length === 0 ? (
+                    ) : filteredConversations.length === 0 ? (
                         <View style={styles.emptyContainer}>
                             <Ionicons
                                 name="people-outline"
@@ -354,40 +484,56 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateG
                                 color={colors.textMuted}
                             />
                             <Text style={styles.emptyText}>
-                                {(state?.friends || []).length === 0
-                                    ? "Chưa có bạn bè"
+                                {conversations.length === 0
+                                    ? "Chưa có cuộc trò chuyện"
                                     : "Không tìm thấy kết quả"}
                             </Text>
                         </View>
                     ) : (
-                        filteredFriends.map((friend: Friend, index: number) => {
-                            if (!friend || !friend.friendInfo) return null;
+                        filteredConversations.map((conversation: Conversation, index: number) => {
+                            if (!conversation) return null;
 
-                            const conversation = conversationByFriendId.get(friend.friendId);
                             const unreadCount = conversation?.unreadCount || 0;
                             const timeText = formatChatTime(getLastMessageCreatedAt(conversation));
-                            const previewText = getLastMessagePreview(conversation, friend.friendInfo?.status);
+                            const previewText = getLastMessagePreview(conversation);
+
+                            // Get display info based on conversation type
+                            let displayName = conversation.name || "Unknown";
+                            let displayAvatar = conversation.avatarUrl;
+
+                            if (conversation.type === "PRIVATE") {
+                                // For private chats, get friend info
+                                const friendId = conversation.members?.find((m) => {
+                                    const currentUserId = user?.id || (user as any)?._id;
+                                    return m !== currentUserId;
+                                });
+                                const friend = state?.friends?.find((f) => f.friendId === friendId);
+                                if (friend) {
+                                    displayName = friend.friendInfo?.displayName || "Unknown";
+                                    displayAvatar = friend.friendInfo?.avatar;
+                                }
+                            }
 
                             return (
                                 <View
-                                    key={friend._id || friend.friendId}
+                                    key={conversation._id || conversation.id}
                                     style={[
                                         styles.chatRow,
-                                        index !== filteredFriends.length - 1 &&
+                                        index !== filteredConversations.length - 1 &&
                                         styles.rowDivider,
                                     ]}
                                 >
                                     <Pressable
-                                        onPress={() => handleFriendPress(friend)}
+                                        onPress={() => handleConversationPress(conversation)}
                                         style={({ pressed }) => [
                                             styles.chatRowContent,
                                             pressed && styles.chatRowPressed,
                                         ]}
                                     >
-                                        {friend.friendInfo?.avatar ? (
+                                        {displayAvatar ? (
                                             <Image
                                                 source={{
-                                                    uri: friend.friendInfo.avatar,
+                                                    uri: displayAvatar,
                                                 }}
                                                 style={[
                                                     styles.avatarImage,
@@ -396,7 +542,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateG
                                             />
                                         ) : (
                                             <Avatar
-                                                label={(friend.friendInfo?.displayName || "U").slice(0, 1).toUpperCase()}
+                                                label={(displayName || "U").slice(0, 1).toUpperCase()}
                                                 size={54}
                                                 backgroundColor="#3d6df2"
                                                 textSize={16}
@@ -408,16 +554,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateG
                                                     style={styles.chatName}
                                                     numberOfLines={1}
                                                 >
-                                                    {truncateName(friend.friendInfo?.displayName || "Unknown")}
+                                                    {truncateName(displayName)}
+                                                    {conversation.type === "GROUP" && " (Nhóm)"}
                                                 </Text>
                                                 <View
                                                     style={[
                                                         styles.statusDot,
                                                         {
-                                                            backgroundColor:
-                                                                friend.friendInfo?.status === "online"
-                                                                    ? "#22c55e"
-                                                                    : "#ef4444",
+                                                            backgroundColor: conversation.type === "GROUP" ? "#8b5cf6" : "#ef4444",
                                                         },
                                                     ]}
                                                 />
@@ -450,7 +594,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateG
 
                                     {/* Chat icon button on the right */}
                                     <Pressable
-                                        onPress={() => handleFriendPress(friend)}
+                                        onPress={() => handleConversationPress(conversation)}
                                         style={({ pressed }) => [
                                             styles.chatIconButton,
                                             pressed && styles.chatIconButtonPressed,

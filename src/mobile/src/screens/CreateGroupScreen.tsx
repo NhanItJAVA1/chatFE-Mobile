@@ -23,7 +23,7 @@ import type { Friend } from "@/types";
  * Requires: group name (1-100 chars) + at least 2 members to add
  */
 interface CreateGroupScreenProps {
-    onGroupCreated?: (groupId: string) => void;
+    onGroupCreated?: (groupId: string, groupData?: any) => void;
     onBackPress?: () => void;
 }
 
@@ -97,7 +97,7 @@ export const CreateGroupScreen: React.FC<CreateGroupScreenProps> = ({
                     text: "OK",
                     onPress: () => {
                         if (onGroupCreated) {
-                            onGroupCreated(group._id);
+                            onGroupCreated(group._id, group);
                         }
                     },
                 },
