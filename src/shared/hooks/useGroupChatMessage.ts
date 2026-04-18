@@ -8,16 +8,31 @@ const getMessageId = (message: MessagePayload): string => {
     return message._id || message.id || `${message.senderId}-${message.createdAt}`;
 };
 
+const getMessageTimestamp = (message: MessagePayload): number => {
+    const parsedTime = Date.parse(message.updatedAt || message.createdAt || "");
+    return Number.isFinite(parsedTime) ? parsedTime : 0;
+};
+
 const mergeUniqueMessages = (
     incoming: MessagePayload[],
     existing: MessagePayload[]
 ): MessagePayload[] => {
     const merged = [...incoming, ...existing];
-    const unique = new Map<string, MessagePayload>();
-    merged.forEach((message) => {
-        unique.set(getMessageId(message), message);
+    const unique = new Map<string, { message: MessagePayload; index: number }>();
+    merged.forEach((message, index) => {
+        unique.set(getMessageId(message), { message, index });
     });
-    return Array.from(unique.values());
+
+    return Array.from(unique.values())
+        .sort((left, right) => {
+            const timeDiff = getMessageTimestamp(right.message) - getMessageTimestamp(left.message);
+            if (timeDiff !== 0) {
+                return timeDiff;
+            }
+
+            return left.index - right.index;
+        })
+        .map((entry) => entry.message);
 };
 
 export interface UseChatMessageState {

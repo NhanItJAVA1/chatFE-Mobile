@@ -125,20 +125,14 @@ export const AddMembersScreen: React.FC<AddMembersScreenProps> = ({
                 const currentUserName = currentUserMember?.name || user?.displayName || user?.name || "Người dùng";
 
                 const memberNames = selectedFriendNames.join(", ");
+                // Hiện thị ai đã thêm ai vào nhóm
                 const systemMessage =
                     selectedFriendNames.length === 1
                         ? `${currentUserName} đã thêm ${memberNames} vào nhóm`
                         : `${currentUserName} đã thêm ${memberNames} vào nhóm`;
 
                 try {
-                    await SocketService.sendMessage({
-                        conversationId: groupId,
-                        conversationType: "GROUP",
-                        text: systemMessage,
-                        isSystemMessage: true,
-                        type: "system",
-                        media: [],
-                    });
+                    await SocketService.sendMessage(groupId, systemMessage, []);
                 } catch (messageError) {
                     console.error("[AddMembersScreen] Error sending system message:", messageError);
                     // Don't fail the operation if system message fails
@@ -254,13 +248,13 @@ export const AddMembersScreen: React.FC<AddMembersScreenProps> = ({
             {availableFriends.length > 0 && (
                 <View style={styles.footer}>
                     <PrimaryButton
-                        title={
+                        label={
                             isAdding
                                 ? "Đang thêm..."
                                 : `Thêm ${selectedMembers.size} thành viên`
                         }
                         onPress={handleAddMembers}
-                        disabled={selectedMembers.size === 0 || isAdding}
+                        loading={isAdding}
                     />
                 </View>
             )}

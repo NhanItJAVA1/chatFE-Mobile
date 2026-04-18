@@ -639,81 +639,84 @@ export const GroupChatScreen: React.FC<{
                 <Pressable
                     onLongPress={() => handleMessageLongPress(item)}
                     delayLongPress={300}
+                    style={[
+                        styles.messageBubbleRow,
+                        isOwn ? styles.outgoingRow : styles.incomingRow,
+                    ]}
                 >
-                    <View
-                        style={[
-                            styles.messageBubbleRow,
-                            isOwn ? styles.outgoingRow : styles.incomingRow,
-                        ]}
-                    >
-                        {!isOwn && (
-                            <Avatar
-                                label={senderInitials}
-                                size={32}
-                                backgroundColor={colors.accentStrong}
-                                imageUrl={senderAvatar}
-                            />
+                    {/* Avatar for incoming messages */}
+                    {!isOwn && (
+                        <Avatar
+                            label={senderInitials}
+                            size={32}
+                            backgroundColor={colors.accentStrong}
+                            imageUrl={senderAvatar}
+                        />
+                    )}
+
+                    {/* Message content container - handles alignment */}
+                    <View style={[
+                        styles.messageContentWrapper,
+                        !isOwn && styles.messageContentWrapperIncoming,
+                        isOwn && styles.messageContentWrapperOutgoing,
+                    ]}>
+                        {/* Render Media - Outside bubble for better sizing */}
+                        {hasMedia && (
+                            <View style={styles.mediaContainer}>
+                                {item.media.map((m: any, idx: number) => (
+                                    <MediaMessage
+                                        key={idx}
+                                        media={m}
+                                        isSender={isOwn}
+                                    />
+                                ))}
+                            </View>
                         )}
 
-                        <View style={styles.messageContentWrapper}>
-                            {/* Render Media - Outside bubble for better sizing */}
-                            {hasMedia && (
-                                <View style={styles.mediaContainer}>
-                                    {item.media.map((m: any, idx: number) => (
-                                        <MediaMessage
-                                            key={idx}
-                                            media={m}
-                                            isSender={isOwn}
-                                        />
-                                    ))}
-                                </View>
-                            )}
-
-                            {/* Text Message Bubble - Only if has text or is incoming without media */}
-                            {hasText && (
-                                <View
-                                    style={[
-                                        styles.messageBubble,
-                                        isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
-                                    ]}
-                                >
-                                    {!isOwn && (
-                                        <View style={styles.senderNameRow}>
-                                            <Text style={styles.senderName}>
-                                                {senderName}
-                                            </Text>
-                                            {roleIcon && (
-                                                <Text style={styles.roleIcon}>{roleIcon}</Text>
-                                            )}
-                                        </View>
-                                    )}
-                                    <Text style={[
-                                        styles.messageText,
-                                        isOwn ? styles.messageTextOwn : styles.messageTextOther,
-                                    ]}>
-                                        {item.text}
-                                    </Text>
-                                    <Text style={styles.messageTime}>
-                                        {new Date(item.createdAt).toLocaleTimeString(
-                                            "vi-VN",
-                                            { hour: "2-digit", minute: "2-digit" }
+                        {/* Text Message Bubble */}
+                        {hasText && (
+                            <View
+                                style={[
+                                    styles.messageBubble,
+                                    isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
+                                ]}
+                            >
+                                {!isOwn && (
+                                    <View style={styles.senderNameRow}>
+                                        <Text style={styles.senderName}>
+                                            {senderName}
+                                        </Text>
+                                        {roleIcon && (
+                                            <Text style={styles.roleIcon}>{roleIcon}</Text>
                                         )}
-                                    </Text>
-                                </View>
-                            )}
-
-                            {/* Show sender name for media-only messages */}
-                            {hasMedia && !hasText && !isOwn && (
-                                <View style={styles.senderNameRow}>
-                                    <Text style={styles.senderName}>
-                                        {senderName}
-                                    </Text>
-                                    {roleIcon && (
-                                        <Text style={styles.roleIcon}>{roleIcon}</Text>
+                                    </View>
+                                )}
+                                <Text style={[
+                                    styles.messageText,
+                                    isOwn ? styles.messageTextOwn : styles.messageTextOther,
+                                ]}>
+                                    {item.text}
+                                </Text>
+                                <Text style={styles.messageTime}>
+                                    {new Date(item.createdAt).toLocaleTimeString(
+                                        "vi-VN",
+                                        { hour: "2-digit", minute: "2-digit" }
                                     )}
-                                </View>
-                            )}
-                        </View>
+                                </Text>
+                            </View>
+                        )}
+
+                        {/* Show sender name for media-only messages */}
+                        {hasMedia && !hasText && !isOwn && (
+                            <View style={styles.senderNameRow}>
+                                <Text style={styles.senderName}>
+                                    {senderName}
+                                </Text>
+                                {roleIcon && (
+                                    <Text style={styles.roleIcon}>{roleIcon}</Text>
+                                )}
+                            </View>
+                        )}
                     </View>
                 </Pressable>
             );
@@ -1127,8 +1130,14 @@ const styles = StyleSheet.create({
     },
     messageContentWrapper: {
         flexDirection: "column",
-        gap: 6,
-        flex: 1,
+        gap: 0,
+        maxWidth: "50%",
+    },
+    messageContentWrapperIncoming: {
+        // maxWidth applied to parent wrapper
+    },
+    messageContentWrapperOutgoing: {
+        alignItems: "flex-end",
     },
     outgoingRow: {
         justifyContent: "flex-end",
@@ -1137,11 +1146,10 @@ const styles = StyleSheet.create({
         justifyContent: "flex-start",
     },
     messageBubble: {
-        maxWidth: "82%",
+        maxWidth: "100%",
         borderRadius: 18,
         paddingHorizontal: 14,
         paddingVertical: 10,
-        gap: 6,
     },
     messageBubbleOwn: {
         backgroundColor: colors.accent,
