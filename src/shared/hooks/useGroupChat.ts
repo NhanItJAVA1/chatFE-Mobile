@@ -165,13 +165,12 @@ export const useGroupChat = (): UseGroupChatReturn => {
         async (groupId: string, memberIds: string[]): Promise<void> => {
             try {
                 setState((prev) => ({ ...prev, isLoading: true, error: null }));
-                const newMembers = await GroupChatService.addMembers(
-                    groupId,
-                    memberIds
-                );
+                await GroupChatService.addMembers(groupId, memberIds);
+                // Reload members to get enriched data with user profiles (name, avatar)
+                const enrichedMembers = await GroupChatService.getGroupMembersWithProfiles(groupId);
                 setState((prev) => ({
                     ...prev,
-                    members: [...prev.members, ...newMembers],
+                    members: enrichedMembers,
                     isLoading: false,
                 }));
             } catch (err: any) {

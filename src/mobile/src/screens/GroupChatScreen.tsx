@@ -46,7 +46,8 @@ export const GroupChatScreen: React.FC<{
     navigation: any;
     onBackPress?: () => void;
     onSettingsPress?: () => void;
-}> = ({ route, navigation, onBackPress, onSettingsPress }) => {
+    onAddMembersPress?: () => void;
+}> = ({ route, navigation, onBackPress, onSettingsPress, onAddMembersPress }) => {
     const { groupId } = route.params || {};
     const authContext = useAuth();
     const token = authContext.token;
@@ -583,6 +584,15 @@ export const GroupChatScreen: React.FC<{
 
     const renderMessage = useCallback(
         ({ item }: any) => {
+            // Check if it's a system message
+            if (item.isSystemMessage || item.type === "system") {
+                return (
+                    <View style={styles.systemMessageContainer}>
+                        <Text style={styles.systemMessageText}>{item.text}</Text>
+                    </View>
+                );
+            }
+
             // Use correct field: user.id (not user._id)
             const isOwn = item.senderId === user?.id;
 
@@ -769,17 +779,30 @@ export const GroupChatScreen: React.FC<{
                             : `${groupState.members?.length || 0} thành viên`}
                     </Text>
                 </View>
-                <Pressable
-                    style={styles.headerIconButton}
-                    onPress={onSettingsPress}
-                    hitSlop={8}
-                >
-                    <Ionicons
-                        name="settings-outline"
-                        size={24}
-                        color={colors.text}
-                    />
-                </Pressable>
+                <View style={styles.headerIconGroup}>
+                    <Pressable
+                        style={styles.headerIconButton}
+                        onPress={onAddMembersPress}
+                        hitSlop={8}
+                    >
+                        <Ionicons
+                            name="person-add-outline"
+                            size={24}
+                            color={colors.text}
+                        />
+                    </Pressable>
+                    <Pressable
+                        style={styles.headerIconButton}
+                        onPress={onSettingsPress}
+                        hitSlop={8}
+                    >
+                        <Ionicons
+                            name="settings-outline"
+                            size={24}
+                            color={colors.text}
+                        />
+                    </Pressable>
+                </View>
             </View>
 
             {/* Loading state */}
@@ -1085,6 +1108,11 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         alignItems: "center",
     },
+    headerIconGroup: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
 
     // Messages
     messagesContainer: {
@@ -1154,6 +1182,19 @@ const styles = StyleSheet.create({
     },
     mediaContainer: {
         gap: 8,
+    },
+
+    // System message
+    systemMessageContainer: {
+        alignItems: "center",
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+    },
+    systemMessageText: {
+        fontSize: 13,
+        color: colors.textMuted,
+        fontStyle: "italic",
+        textAlign: "center",
     },
 
     // Empty state

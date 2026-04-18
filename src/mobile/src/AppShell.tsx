@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, View, Text } from "react-native";
+import { ActivityIndicator, StyleSheet, View, Text, Pressable } from "react-native";
 import { useAuth, useFriendRequests, useFriendship } from "../../shared/hooks";
 import { BottomTabBar } from "./components";
 import {
@@ -13,6 +13,7 @@ import {
     CreateGroupScreen,
     GroupChatScreen,
     GroupSettingsScreen,
+    AddMembersScreen,
 } from "./screens";
 import { colors } from "./theme";
 
@@ -38,7 +39,7 @@ const AuthGate = () => {
     );
 };
 
-type TabKey = "home" | "chat" | "addFriend" | "requests" | "profile" | "createGroup" | "groupSettings";
+type TabKey = "home" | "chat" | "addFriend" | "requests" | "profile" | "createGroup" | "groupSettings" | "addMembers";
 
 interface SelectedChat {
     // PRIVATE chat fields
@@ -113,6 +114,25 @@ const MainShell = () => {
             );
         }
 
+        if (activeTab === "addMembers") {
+            const groupId = selectedChat?.conversationId;
+            if (!groupId) {
+                return (
+                    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                        <Text>Error: Group ID not found</Text>
+                    </View>
+                );
+            }
+            return (
+                <AddMembersScreen
+                    route={{ params: { groupId } }}
+                    onBackPress={() => {
+                        setActiveTab("chat");
+                    }}
+                />
+            );
+        }
+
         if (activeTab === "chat") {
             // Check if it's a GROUP or PRIVATE chat
             if (selectedChat?.conversationType === 'GROUP') {
@@ -138,6 +158,9 @@ const MainShell = () => {
                         }}
                         onSettingsPress={() => {
                             setActiveTab("groupSettings");
+                        }}
+                        onAddMembersPress={() => {
+                            setActiveTab("addMembers");
                         }}
                     />
                 );
@@ -210,7 +233,7 @@ const MainShell = () => {
     return (
         <View style={styles.appShell}>
             <View style={styles.content}>{renderScreen()}</View>
-            {activeTab !== "chat" && activeTab !== "createGroup" && activeTab !== "groupSettings" && (
+            {activeTab !== "chat" && activeTab !== "createGroup" && activeTab !== "groupSettings" && activeTab !== "addMembers" && (
                 <BottomTabBar
                     activeTab={activeTab}
                     onChangeTab={(tab) => setActiveTab(tab as TabKey)}
