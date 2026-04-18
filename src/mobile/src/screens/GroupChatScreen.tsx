@@ -21,10 +21,20 @@ import { useChatMessage } from "../../../shared/hooks/useChat";
 import { useGroupChatMessage } from "../../../shared/hooks/useGroupChatMessage";
 import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { useAuth } from "../../../shared/hooks";
-import { SocketService } from "../../../shared/services";
+import { SocketService, ConversationService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
 import { Avatar, ForwardDialog, VoiceRecorder } from "../components";
+import MediaMessage from "../components/MediaMessage";
 import { colors } from "../theme";
+
+/**
+ * Helper function to generate unique asset ID - matches ChatScreen implementation
+ */
+const getDraftAssetId = (asset: any): string => {
+    return [asset?.uri, asset?.fileName || asset?.name, asset?.fileSize || asset?.size, asset?.width, asset?.height]
+        .filter(Boolean)
+        .join("::");
+};
 
 /**
  * GroupChatScreen - Real-time group chat interface
@@ -50,7 +60,7 @@ export const GroupChatScreen: React.FC<{
     const [messageText, setMessageText] = useState("");
     const [isSending, setIsSending] = useState(false);
     const [showMediaMenu, setShowMediaMenu] = useState(false);
-    const [draftMedia, setDraftMedia] = useState<any[]>([]);
+    const [draftMedia, setDraftMedia] = useState<DraftMediaAsset[]>([]);
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
@@ -107,93 +117,165 @@ export const GroupChatScreen: React.FC<{
         }
     }, [groupId]);
 
+    const appendDraftMedia = useCallback((assets: any[]) => {
+        setDraftMedia((prev) => {
+            const existingIds = new Set(prev.map((item) => item.id));
+            const nextItems: (DraftMediaAsset | null)[] = assets
+                .map((asset) => {
+                    const uri = asset?.uri;
+                    if (!uri) return null;
+
+                    const name = asset.fileName || uri.split("/").pop() || "media";
+                    const type = asset.mimeType || asset.type || "application/octet-stream";
+
+                    return {
+                        id: getDraftAssetId(asset),
+                        uri,
+                        name,
+                        type,
+                        mimeType: type,
+                        size: asset.fileSize || asset.size,
+                        width: asset.width,
+                        height: asset.height,
+                    } as DraftMediaAsset;
+                })
+                .filter((asset) => !!asset && !existingIds.has(asset!.id)) as DraftMediaAsset[];
+
+            return [...prev, ...nextItems];
+        });
+    }, []);
+
     const handlePickImage = useCallback(async () => {
         try {
+            console.log('[GroupChatScreen] Requesting media library permission...');
+            const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            console.log('[GroupChatScreen] Permission result:', permissionResult);
+
+            if (!permissionResult.granted) {
+                console.log('[GroupChatScreen] Permission denied');
+                Alert.alert(
+                    "Yêu cầu quyền",
+                    "Chúng tôi cần quyền truy cập thư viện ảnh. Vui lòng bật nó trong cài đặt."
+                );
+                return;
+            }
+
+            console.log('[GroupChatScreen] Launching image library...');
+            try {
+                const result = await ImagePicker.launchImageLibraryAsync({
+                    mediaTypes: ['images'],
+                    allowsMultipleSelection: true,
+                    selectionLimit: 0,
+                } as any);
+
+                console.log('[GroupChatScreen] Image library result:', result.canceled ? 'canceled' : `${result.assets?.length || 0} images`);
+
+                if (result.canceled) {
+                    console.log('[GroupChatScreen] User canceled image selection');
+                    return;
+                }
+
+                if (!result.assets || result.assets.length === 0) {
+                    console.log('[GroupChatScreen] No assets selected');
+                    Alert.alert("Lỗi", "Chưa chọn ảnh");
+                    return;
+                }
+
+                const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
+                if (validAssets.length === 0) {
+                    console.log('[GroupChatScreen] No valid image assets selected');
+                    Alert.alert("Lỗi", "File ảnh không hợp lệ");
+                    return;
+                }
+                appendDraftMedia(validAssets);
+                console.log('[GroupChatScreen] Added images to draft tray:', validAssets.length);
+            } catch (pickerError: any) {
+                console.error('[GroupChatScreen] Image picker error:', pickerError);
+                const errorMsg = pickerError.message || 'Lỗi không xác định';
+                Alert.alert("Lỗi gửi ảnh", errorMsg);
+            } finally {
+                setShowMediaMenu(false);
+            }
+        } catch (permissionError: any) {
+            console.error('[GroupChatScreen] Permission error:', permissionError);
+            Alert.alert("Lỗi", "Không thể yêu cầu quyền");
+        }
+    }, [appendDraftMedia]);
+
+    const handlePickVideo = useCallback(async () => {
+        try {
+            console.log('[GroupChatScreen] Launching video picker...');
             const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ["images"],
+                mediaTypes: ['videos'],
                 allowsMultipleSelection: true,
-                selectionLimit: 0,
             } as any);
 
-            if (!result.canceled && result.assets) {
-                const newMedia = result.assets.map((asset) => ({
-                    id: `${asset.uri}-${Date.now()}`,
-                    uri: asset.uri,
-                    name: asset.fileName || `image-${Date.now()}.jpg`,
-                    type: asset.type || "image/jpeg",
-                    mimeType: "image/jpeg",
-                    size: asset.fileSize,
-                    width: asset.width,
-                    height: asset.height,
-                }));
-                setDraftMedia((prev) => [...prev, ...newMedia]);
+            if (result.canceled) {
+                console.log('[GroupChatScreen] User canceled video selection');
+                return;
             }
-            setShowMediaMenu(false);
-        } catch (err: any) {
-            Alert.alert("Lỗi", err.message || "Failed to pick image");
-        }
-    }, []);
 
-    const handlePickAudio = useCallback(async () => {
-        setShowVoiceRecorder(true);
-        setShowMediaMenu(false);
-    }, []);
+            if (!result.assets || result.assets.length === 0) {
+                console.log('[GroupChatScreen] No videos selected');
+                Alert.alert("Lỗi", "Chưa chọn video");
+                return;
+            }
+
+            const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
+            if (validAssets.length === 0) {
+                console.log('[GroupChatScreen] No valid video assets selected');
+                Alert.alert("Lỗi", "File video không hợp lệ");
+                return;
+            }
+            appendDraftMedia(validAssets);
+            console.log('[GroupChatScreen] Added videos to draft tray:', validAssets.length);
+        } catch (pickerError: any) {
+            console.error('[GroupChatScreen] Video picker error:', pickerError);
+            const errorMsg = pickerError.message || 'Lỗi không xác định';
+            Alert.alert("Lỗi gửi video", errorMsg);
+        } finally {
+            setShowMediaMenu(false);
+        }
+    }, [appendDraftMedia]);
 
     const handlePickAudioFile = useCallback(async () => {
         try {
+            console.log('[GroupChatScreen] Launching audio picker...');
             const result = await DocumentPicker.getDocumentAsync({
                 type: ["audio/*"],
             });
 
-            if (!result.canceled && result.assets) {
-                const asset = result.assets[0];
-                setDraftMedia((prev) => [
-                    ...prev,
-                    {
-                        id: `${asset.uri}-${Date.now()}`,
-                        uri: asset.uri,
-                        name: asset.name || "audio.mp3",
-                        type: asset.mimeType || "audio/mpeg",
-                        mimeType: asset.mimeType || "audio/mpeg",
-                        size: asset.size,
-                    },
-                ]);
+            if (result.canceled) {
+                console.log('[GroupChatScreen] User canceled audio selection');
+                return;
             }
-            setShowMediaMenu(false);
-        } catch (err: any) {
-            Alert.alert("Lỗi", err.message);
-        }
-    }, []);
 
-    const handlePickVideo = useCallback(async () => {
-        try {
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ["videos"],
-            } as any);
-
-            if (!result.canceled && result.assets) {
-                const asset = result.assets[0];
-                const file = {
-                    id: `${asset.uri}-${Date.now()}`,
-                    uri: asset.uri,
-                    name: asset.fileName || "video.mp4",
-                    type: asset.mimeType || "video/mp4",
-                    mimeType: asset.mimeType || "video/mp4",
-                    size: asset.fileSize || 0,
-                    width: asset.width,
-                    height: asset.height,
-                    duration: asset.duration,
-                };
-                setDraftMedia((prev) => [...prev, file]);
+            if (!result.assets || result.assets.length === 0) {
+                console.log('[GroupChatScreen] No audio files selected');
+                Alert.alert("Lỗi", "Chưa chọn file audio");
+                return;
             }
+
+            const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
+            if (validAssets.length === 0) {
+                console.log('[GroupChatScreen] No valid audio assets selected');
+                Alert.alert("Lỗi", "File audio không hợp lệ");
+                return;
+            }
+            appendDraftMedia(validAssets);
+            console.log('[GroupChatScreen] Added audio files to draft tray:', validAssets.length);
+        } catch (pickerError: any) {
+            console.error('[GroupChatScreen] Audio picker error:', pickerError);
+            const errorMsg = pickerError.message || 'Lỗi không xác định';
+            Alert.alert("Lỗi gửi audio", errorMsg);
+        } finally {
             setShowMediaMenu(false);
-        } catch (err: any) {
-            Alert.alert("Lỗi", err.message || "Failed to pick video");
         }
-    }, []);
+    }, [appendDraftMedia]);
 
     const handlePickDocument = useCallback(async () => {
         try {
+            console.log('[GroupChatScreen] Launching document picker...');
             const result = await DocumentPicker.getDocumentAsync({
                 type: [
                     "application/pdf",
@@ -209,24 +291,37 @@ export const GroupChatScreen: React.FC<{
                 ],
             });
 
-            if (!result.canceled && result.assets) {
-                const asset = result.assets[0];
-                setDraftMedia((prev) => [
-                    ...prev,
-                    {
-                        id: `${asset.uri}-${Date.now()}`,
-                        uri: asset.uri,
-                        name: asset.name || "document",
-                        type: asset.mimeType || "application/octet-stream",
-                        mimeType: asset.mimeType || "application/octet-stream",
-                        size: asset.size || 0,
-                    },
-                ]);
+            if (result.canceled) {
+                console.log('[GroupChatScreen] User canceled document selection');
+                return;
             }
+
+            if (!result.assets || result.assets.length === 0) {
+                console.log('[GroupChatScreen] No documents selected');
+                Alert.alert("Lỗi", "Chưa chọn tài liệu");
+                return;
+            }
+
+            const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
+            if (validAssets.length === 0) {
+                console.log('[GroupChatScreen] No valid document assets selected');
+                Alert.alert("Lỗi", "File tài liệu không hợp lệ");
+                return;
+            }
+            appendDraftMedia(validAssets);
+            console.log('[GroupChatScreen] Added documents to draft tray:', validAssets.length);
+        } catch (pickerError: any) {
+            console.error('[GroupChatScreen] Document picker error:', pickerError);
+            const errorMsg = pickerError.message || 'Lỗi không xác định';
+            Alert.alert("Lỗi gửi tài liệu", errorMsg);
+        } finally {
             setShowMediaMenu(false);
-        } catch (err: any) {
-            Alert.alert("Lỗi", err.message);
         }
+    }, [appendDraftMedia]);
+
+    const handlePickAudio = useCallback(async () => {
+        setShowVoiceRecorder(true);
+        setShowMediaMenu(false);
     }, []);
 
     const removeDraftMedia = useCallback((assetId: string) => {
@@ -243,6 +338,7 @@ export const GroupChatScreen: React.FC<{
                 return;
             }
 
+            const sentMessages: any[] = [];
             setUploading(true);
             setUploadProgress(0);
 
@@ -257,7 +353,6 @@ export const GroupChatScreen: React.FC<{
                         size: item.size || 0,
                         width: item.width,
                         height: item.height,
-                        duration: item.duration,
                     };
 
                     let result = [];
@@ -289,12 +384,28 @@ export const GroupChatScreen: React.FC<{
                         );
                     }
 
-                    if (result.length > 0 && chatActions.addMessages) {
-                        chatActions.addMessages(result);
+                    if (result.length > 0) {
+                        sentMessages.push(...result);
                     }
 
                     const progress = Math.round(((index + 1) / draftMedia.length) * 100);
                     setUploadProgress(progress);
+                }
+
+                // Add all sent messages at once
+                if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
+                    actionsRef.current.addMessages(sentMessages);
+
+                    // Load latest messages from API to ensure media is populated
+                    // (socket response might not include media field)
+                    try {
+                        const latestMessages = await ConversationService.loadMessages(groupId, undefined, 10);
+                        if (latestMessages.items && latestMessages.items.length > 0) {
+                            actionsRef.current.addMessages(latestMessages.items);
+                        }
+                    } catch (err) {
+                        console.warn("[GroupChat] Failed to reload messages with media:", err);
+                    }
                 }
             } catch (err: any) {
                 console.error("[GroupChat] Error sending media:", err);
@@ -305,7 +416,7 @@ export const GroupChatScreen: React.FC<{
                 clearDraftMedia();
             }
         },
-        [groupId, draftMedia, chatActions, clearDraftMedia]
+        [groupId, draftMedia, clearDraftMedia]
     );
 
     const hasSendableContent = draftMedia.length > 0 || messageText.trim().length > 0;
@@ -526,12 +637,29 @@ export const GroupChatScreen: React.FC<{
                                     {senderName}
                                 </Text>
                             )}
-                            <Text style={[
-                                styles.messageText,
-                                isOwn ? styles.messageTextOwn : styles.messageTextOther,
-                            ]}>
-                                {item.text}
-                            </Text>
+
+                            {/* Render Media */}
+                            {item.media && item.media.length > 0 && (
+                                <View style={styles.mediaContainer}>
+                                    {item.media.map((m: any, idx: number) => (
+                                        <MediaMessage
+                                            key={idx}
+                                            media={m}
+                                            isSender={isOwn}
+                                        />
+                                    ))}
+                                </View>
+                            )}
+
+                            {/* Text Message */}
+                            {item.text && (
+                                <Text style={[
+                                    styles.messageText,
+                                    isOwn ? styles.messageTextOwn : styles.messageTextOther,
+                                ]}>
+                                    {item.text}
+                                </Text>
+                            )}
                             <Text style={styles.messageTime}>
                                 {new Date(item.createdAt).toLocaleTimeString(
                                     "vi-VN",
@@ -970,6 +1098,9 @@ const styles = StyleSheet.create({
         fontSize: 11,
         color: colors.textMuted,
         marginTop: 2,
+    },
+    mediaContainer: {
+        marginBottom: 8,
     },
 
     // Empty state
