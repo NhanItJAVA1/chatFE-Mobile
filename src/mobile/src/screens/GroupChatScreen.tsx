@@ -37,11 +37,6 @@ export const GroupChatScreen: React.FC<{
     onBackPress?: () => void;
 }> = ({ route, navigation, onBackPress }) => {
     const { groupId } = route.params || {};
-    console.log("[GroupChatScreen] Route params:", {
-        hasParams: !!route.params,
-        groupId,
-        allParams: route.params
-    });
     const authContext = useAuth();
     const token = authContext.token;
     const { user } = authContext;
@@ -457,7 +452,23 @@ export const GroupChatScreen: React.FC<{
 
     const renderMessage = useCallback(
         ({ item }: any) => {
-            const isOwn = item.senderId === user?._id;
+            // Use correct field: user.id (not user._id)
+            const isOwn = item.senderId === user?.id;
+
+            // Debug logging for message alignment
+            if (!item.debugLogged) {
+                console.log('[GroupChatScreen] Message alignment check:', {
+                    messageId: item._id,
+                    senderId: item.senderId,
+                    userId: user?.id,
+                    isOwn,
+                    match: item.senderId === user?.id,
+                    senderIdType: typeof item.senderId,
+                    userIdType: typeof user?.id,
+                });
+                item.debugLogged = true;
+            }
+
             const senderInitials = (item.senderName || "?")
                 .split(" ")
                 .map((n: string) => n[0].toUpperCase())

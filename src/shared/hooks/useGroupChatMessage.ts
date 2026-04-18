@@ -71,7 +71,6 @@ const conversationCache = new Map<string, {
  */
 export const useGroupChatMessage = (groupId: string, token: string): UseChatMessageReturn => {
     const { user } = useAuth();
-    console.log("[useGroupChatMessage] Hook initialized with:", { groupId, hasToken: !!token });
     const [state, setState] = useState<UseChatMessageState>({
         conversation: null,
         messages: [],
@@ -248,14 +247,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     }, [state.conversation, stopTyping]);
 
     const loadMoreMessages = useCallback(async () => {
-        console.log("[useGroupChatMessage] loadMoreMessages triggered:", {
-            hasConversation: !!state.conversation,
-            isLoading: state.isLoading,
-            hasMoreMessages: state.hasMoreMessages,
-            conversationId: state.conversation?._id || state.conversation?.id
-        });
         if (!state.conversation || state.isLoading || !state.hasMoreMessages) {
-            console.log("[useGroupChatMessage] loadMoreMessages returning early");
             return;
         }
 
@@ -409,7 +401,6 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
 
     // Load conversation on mount
     useEffect(() => {
-        console.log("[useGroupChatMessage] useEffect triggered:", { groupId, token: !!token });
         if (!groupId || !token) {
             const errorMsg = `Missing ${!groupId ? "groupId" : "token"}`;
             console.error("[useGroupChatMessage]", errorMsg);
@@ -439,14 +430,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 await SocketService.waitForConnection(5000);
 
                 // Load group conversation using group endpoint
-                console.log("[useGroupChatMessage] Loading group conversation:", groupId);
                 const conversation = await ConversationService.getGroupDetail(groupId);
-                console.log("[useGroupChatMessage] Conversation loaded:", {
-                    fullConversation: JSON.stringify(conversation),
-                    id: conversation._id || conversation.id,
-                    type: conversation.type,
-                    hasId: !!(conversation._id || conversation.id)
-                });
                 const conversationId = conversation._id || conversation.id;
 
                 if (!conversationId) {
