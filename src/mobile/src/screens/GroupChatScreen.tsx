@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
     View,
     Text,
@@ -13,6 +13,7 @@ import {
     Image,
     ScrollView,
     Modal,
+    Dimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -21,7 +22,7 @@ import { useChatMessage } from "../../../shared/hooks/useChat";
 import { useGroupChatMessage } from "../../../shared/hooks/useGroupChatMessage";
 import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { useAuth } from "../../../shared/hooks";
-import { SocketService, ConversationService } from "../../../shared/services";
+import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
 import { Avatar, ForwardDialog, VoiceRecorder } from "../components";
 import MediaMessage from "../components/MediaMessage";
@@ -34,6 +35,99 @@ const getDraftAssetId = (asset: any): string => {
     return [asset?.uri, asset?.fileName || asset?.name, asset?.fileSize || asset?.size, asset?.width, asset?.height]
         .filter(Boolean)
         .join("::");
+};
+
+const detectDraftMediaKind = (mimeType?: string, type?: string): "image" | "video" | "audio" | "other" => {
+    const rawType = (mimeType || type || "").toLowerCase();
+
+    if (!rawType) {
+        return "other";
+    }
+
+    if (rawType === "image" || rawType.startsWith("image/")) {
+        return "image";
+    }
+
+    if (rawType === "video" || rawType.startsWith("video/")) {
+        return "video";
+    }
+
+    if (rawType === "audio" || rawType.startsWith("audio/")) {
+        return "audio";
+    }
+
+    return "other";
+};
+
+const GALLERY_GROUP_WINDOW_MS = 5000;
+
+const getMessageCreatedAtMs = (message: any): number => {
+    const timestamp = new Date(message?.createdAt || "").getTime();
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const isImageMessage = (message: any): boolean => {
+    const firstMedia = message?.media?.[0];
+    if (!firstMedia) {
+        return false;
+    }
+
+    const mediaKind = detectDraftMediaKind(firstMedia?.mimetype, firstMedia?.mediaType);
+    return mediaKind === "image" || firstMedia?.mediaType === "image" || message?.type === "image";
+};
+
+const groupMessagesForGallery = (messages: any[]): any[] => {
+    const groupedMessages: any[] = [];
+    let index = 0;
+
+    while (index < messages.length) {
+        const currentMessage = messages[index];
+
+        if (!isImageMessage(currentMessage)) {
+            groupedMessages.push(currentMessage);
+            index += 1;
+            continue;
+        }
+
+        const consecutiveImages = [currentMessage];
+        let nextIndex = index + 1;
+
+        while (nextIndex < messages.length) {
+            const nextMessage = messages[nextIndex];
+            const previousMessage = messages[nextIndex - 1];
+
+            if (
+                !isImageMessage(nextMessage) ||
+                nextMessage.senderId !== currentMessage.senderId ||
+                Math.abs(getMessageCreatedAtMs(nextMessage) - getMessageCreatedAtMs(previousMessage)) > GALLERY_GROUP_WINDOW_MS
+            ) {
+                break;
+            }
+
+            consecutiveImages.push(nextMessage);
+            nextIndex += 1;
+        }
+
+        if (consecutiveImages.length >= 3) {
+            const firstMessage = consecutiveImages[0];
+            const captionSource = consecutiveImages.find((message) => message?.text?.trim());
+
+            groupedMessages.push({
+                ...firstMessage,
+                text: captionSource?.text || firstMessage?.text || "",
+                media: consecutiveImages.flatMap((message) => message?.media || []),
+                groupedMessageIds: consecutiveImages
+                    .map((message) => message?._id || message?.id)
+                    .filter(Boolean),
+            });
+        } else {
+            groupedMessages.push(...consecutiveImages);
+        }
+
+        index = nextIndex;
+    }
+
+    return groupedMessages;
 };
 
 /**
@@ -71,9 +165,12 @@ export const GroupChatScreen: React.FC<{
     const [showEditDialog, setShowEditDialog] = useState(false);
     const [editText, setEditText] = useState("");
     const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+    const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+    const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
 
     // Refs
     const flatListRef = useRef<FlatList>(null);
+    const imageViewerScrollRef = useRef<FlatList>(null);
     const actionsRef = useRef(chatActions);
 
     const scrollToLatestMessage = useCallback((animated = true) => {
@@ -90,6 +187,17 @@ export const GroupChatScreen: React.FC<{
     useEffect(() => {
         loadGroupData();
     }, [groupId]);
+
+    useEffect(() => {
+        if (allViewerImages.length > 0 && selectedImageIndex > 0 && imageViewerScrollRef.current) {
+            setTimeout(() => {
+                (imageViewerScrollRef.current as any)?.scrollToIndex({
+                    index: selectedImageIndex,
+                    animated: false,
+                });
+            }, 100);
+        }
+    }, [allViewerImages.length, selectedImageIndex]);
 
     // Mark messages as seen when they come into view
     useEffect(() => {
@@ -342,7 +450,7 @@ export const GroupChatScreen: React.FC<{
     const sendDraftMedia = useCallback(
         async (caption?: string) => {
             if (!groupId || draftMedia.length === 0) {
-                return;
+                return [];
             }
 
             const sentMessages: any[] = [];
@@ -350,73 +458,97 @@ export const GroupChatScreen: React.FC<{
             setUploadProgress(0);
 
             try {
-                for (let index = 0; index < draftMedia.length; index += 1) {
-                    const item = draftMedia[index];
-                    const file = {
-                        uri: item.uri,
-                        name: item.name,
-                        type: item.type,
-                        mimeType: item.mimeType,
-                        size: item.size || 0,
-                        width: item.width,
-                        height: item.height,
-                    };
+                const files = draftMedia.map((item) => ({
+                    uri: item.uri,
+                    name: item.name,
+                    type: item.type,
+                    mimeType: item.mimeType,
+                    size: item.size || 0,
+                    width: item.width,
+                    height: item.height,
+                }));
 
-                    let result = [];
+                const allImages =
+                    files.length > 1 &&
+                    files.every((file) =>
+                        detectDraftMediaKind(file.mimeType, file.type) === "image"
+                    );
 
-                    // Determine file type and call appropriate method
-                    if (item.mimeType?.startsWith("image/")) {
-                        result = await chatMediaService.sendImage(
-                            groupId,
-                            file,
-                            index === 0 ? caption : undefined
-                        );
-                    } else if (item.mimeType?.startsWith("video/")) {
-                        result = await chatMediaService.sendVideo(
-                            groupId,
-                            file,
-                            index === 0 ? caption : undefined
-                        );
-                    } else if (item.mimeType?.startsWith("audio/")) {
-                        result = await chatMediaService.sendAudio(
-                            groupId,
-                            file,
-                            index === 0 ? caption : undefined
-                        );
-                    } else {
-                        // Document or other file types
-                        result = await chatMediaService.sendDocument(
-                            groupId,
-                            file
-                        );
-                    }
+                // Send a single message containing multiple images when user selects many images at once.
+                if (allImages) {
+                    const result = await chatMediaService.sendMultipleMedia(
+                        groupId,
+                        files,
+                        caption
+                    );
 
                     if (result.length > 0) {
                         sentMessages.push(...result);
                     }
 
-                    const progress = Math.round(((index + 1) / draftMedia.length) * 100);
-                    setUploadProgress(progress);
+                    setUploadProgress(100);
+                } else {
+                    for (let index = 0; index < draftMedia.length; index += 1) {
+                        const item = draftMedia[index];
+                        const file = {
+                            uri: item.uri,
+                            name: item.name,
+                            type: item.type,
+                            mimeType: item.mimeType,
+                            size: item.size || 0,
+                            width: item.width,
+                            height: item.height,
+                        };
+
+                        let result = [];
+                        const mediaKind = detectDraftMediaKind(item.mimeType, item.type);
+
+                        // Determine file type and call appropriate method
+                        if (mediaKind === "image") {
+                            result = await chatMediaService.sendImage(
+                                groupId,
+                                file,
+                                index === 0 ? caption : undefined
+                            );
+                        } else if (mediaKind === "video") {
+                            result = await chatMediaService.sendVideo(
+                                groupId,
+                                file,
+                                index === 0 ? caption : undefined
+                            );
+                        } else if (mediaKind === "audio") {
+                            result = await chatMediaService.sendAudio(
+                                groupId,
+                                file,
+                                index === 0 ? caption : undefined
+                            );
+                        } else {
+                            // Document or other file types
+                            result = await chatMediaService.sendDocument(
+                                groupId,
+                                file
+                            );
+                        }
+
+                        if (result.length > 0) {
+                            sentMessages.push(...result);
+                        }
+
+                        const progress = Math.round(((index + 1) / draftMedia.length) * 100);
+                        setUploadProgress(progress);
+                    }
                 }
 
                 // Add all sent messages at once
                 if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
                     actionsRef.current.addMessages(sentMessages);
-
-                    // Load latest messages from API to ensure media is populated
-                    // (socket response might not include media field)
-                    try {
-                        const latestMessages = await ConversationService.loadMessages(groupId, undefined, 10);
-                        if (latestMessages.items && latestMessages.items.length > 0) {
-                            actionsRef.current.addMessages(latestMessages.items);
-                        }
-                    } catch (err) {
-                        console.warn("[GroupChat] Failed to reload messages with media:", err);
-                    }
                 }
+
+                return sentMessages;
             } catch (err: any) {
                 console.error("[GroupChat] Error sending media:", err);
                 Alert.alert("Lỗi", `Gửi media thất bại: ${err.message}`);
+                return [];
             } finally {
                 setUploading(false);
                 setUploadProgress(0);
@@ -587,6 +719,47 @@ export const GroupChatScreen: React.FC<{
         );
     }, [groupId]);
 
+    const getAllUserImages = useCallback((senderId: string, firstImageUri?: string) => {
+        const userMessagesWithImages = chatState.messages.filter(
+            (message) =>
+                message.senderId === senderId &&
+                Array.isArray(message.media) &&
+                message.media.some((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image")
+        );
+
+        const allImages = userMessagesWithImages
+            .flatMap((message) =>
+                (message.media || [])
+                    .filter((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image")
+                    .map((media: any, index: number) => ({
+                        uri: media?.url,
+                        key: `${message._id || message.id || message.createdAt}-${index}`,
+                    }))
+            )
+            .filter((image) => !!image.uri);
+
+        const startingIndex = firstImageUri
+            ? Math.max(0, allImages.findIndex((image) => image.uri === firstImageUri))
+            : 0;
+
+        return { allImages, startingIndex };
+    }, [chatState.messages]);
+
+    const openImageViewer = useCallback((senderId: string, firstImageUri?: string) => {
+        const { allImages, startingIndex } = getAllUserImages(senderId, firstImageUri);
+        if (allImages.length === 0) {
+            return;
+        }
+
+        setSelectedImageIndex(startingIndex);
+        setAllViewerImages(allImages);
+    }, [getAllUserImages]);
+
+    const closeImageViewer = useCallback(() => {
+        setAllViewerImages([]);
+        setSelectedImageIndex(0);
+    }, []);
+
     const renderMessage = useCallback(
         ({ item }: any) => {
             // Check if it's a system message
@@ -639,6 +812,12 @@ export const GroupChatScreen: React.FC<{
             const roleIcon = getRoleIcon();
             const hasMedia = item.media && item.media.length > 0;
             const hasText = item.text && item.text.trim().length > 0;
+            const hasGalleryMedia =
+                hasMedia &&
+                item.media.length >= 3 &&
+                item.media.every((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image");
+            const galleryPreviewMedia = hasGalleryMedia ? item.media.slice(0, 3) : [];
+            const galleryExtraCount = hasGalleryMedia ? Math.max(0, item.media.length - galleryPreviewMedia.length) : 0;
 
             return (
                 <Pressable
@@ -668,13 +847,37 @@ export const GroupChatScreen: React.FC<{
                         {/* Render Media - Outside bubble for better sizing */}
                         {hasMedia && (
                             <View style={styles.mediaContainer}>
-                                {item.media.map((m: any, idx: number) => (
-                                    <MediaMessage
-                                        key={idx}
-                                        media={m}
-                                        isSender={isOwn}
-                                    />
-                                ))}
+                                {hasGalleryMedia ? (
+                                    <View style={styles.galleryBubble}>
+                                        <View style={styles.galleryGrid}>
+                                            {galleryPreviewMedia.map((media: any, index: number) => (
+                                                <Pressable
+                                                    key={`${media?.url || "media"}-${index}`}
+                                                    style={styles.galleryTileWrap}
+                                                    onPress={() => openImageViewer(item.senderId, media?.url)}
+                                                >
+                                                    <Image
+                                                        source={{ uri: media?.url }}
+                                                        style={styles.galleryTileImage}
+                                                    />
+                                                    {index === galleryPreviewMedia.length - 1 && galleryExtraCount > 0 && (
+                                                        <View style={styles.galleryOverlay}>
+                                                            <Text style={styles.galleryOverlayText}>+{galleryExtraCount}</Text>
+                                                        </View>
+                                                    )}
+                                                </Pressable>
+                                            ))}
+                                        </View>
+                                    </View>
+                                ) : (
+                                    item.media.map((m: any, idx: number) => (
+                                        <MediaMessage
+                                            key={idx}
+                                            media={m}
+                                            isSender={isOwn}
+                                        />
+                                    ))
+                                )}
                             </View>
                         )}
 
@@ -726,7 +929,7 @@ export const GroupChatScreen: React.FC<{
                 </Pressable>
             );
         },
-        [user?.id, handleMessageLongPress, groupState.members]
+        [user?.id, handleMessageLongPress, groupState.members, openImageViewer]
     );
 
     const handleViewableItemsChanged = useCallback(
@@ -736,7 +939,12 @@ export const GroupChatScreen: React.FC<{
             const visibleMessageIds = viewableItems
                 .map((item: any) => item.item)
                 .filter((msg: any) => msg.senderId !== user?.id)
-                .map((msg: any) => msg._id || msg.id)
+                .flatMap((msg: any) => {
+                    if (Array.isArray(msg.groupedMessageIds) && msg.groupedMessageIds.length > 0) {
+                        return msg.groupedMessageIds;
+                    }
+                    return [msg._id || msg.id];
+                })
                 .filter(Boolean);
 
             if (visibleMessageIds.length > 0) {
@@ -750,6 +958,11 @@ export const GroupChatScreen: React.FC<{
         itemVisiblePercentThreshold: 10,
         minimumViewTime: 300,
     });
+
+    const renderableMessages = useMemo(
+        () => groupMessagesForGallery(chatState.messages),
+        [chatState.messages]
+    );
 
     if (!groupState.group) {
         return (
@@ -825,7 +1038,7 @@ export const GroupChatScreen: React.FC<{
             {!chatState.isLoading && (
                 <FlatList
                     ref={flatListRef}
-                    data={chatState.messages}
+                    data={renderableMessages}
                     keyExtractor={(item) => item._id || item.id || `${item.senderId}-${item.createdAt}`}
                     renderItem={renderMessage}
                     inverted
@@ -1042,6 +1255,55 @@ export const GroupChatScreen: React.FC<{
             {/* Forward Dialog Modal */}
             {/* TODO: Implement forward dialog */}
 
+            {allViewerImages.length > 0 && (
+                <Modal
+                    visible={allViewerImages.length > 0}
+                    transparent={true}
+                    statusBarTranslucent={true}
+                    onRequestClose={closeImageViewer}
+                >
+                    <View style={styles.imageViewerContainer}>
+                        <Pressable
+                            style={styles.imageViewerClose}
+                            onPress={closeImageViewer}
+                        >
+                            <Ionicons name="close" size={28} color={colors.textOnAccent} />
+                        </Pressable>
+
+                        <FlatList
+                            ref={imageViewerScrollRef as any}
+                            horizontal
+                            pagingEnabled
+                            scrollEventThrottle={16}
+                            showsHorizontalScrollIndicator={false}
+                            data={allViewerImages}
+                            keyExtractor={(item) => item.key}
+                            renderItem={({ item }) => (
+                                <View style={styles.imageViewerImageWrap}>
+                                    <Image
+                                        source={{ uri: item.uri }}
+                                        style={styles.imageViewerImage}
+                                        resizeMode="contain"
+                                    />
+                                </View>
+                            )}
+                            onMomentumScrollEnd={(event) => {
+                                const contentOffsetX = event.nativeEvent.contentOffset.x;
+                                const screenWidth = Dimensions.get("window").width;
+                                const currentIndex = Math.round(contentOffsetX / screenWidth);
+                                setSelectedImageIndex(currentIndex);
+                            }}
+                        />
+
+                        <View style={styles.imageViewerCounter}>
+                            <Text style={styles.imageViewerCounterText}>
+                                {selectedImageIndex + 1} / {allViewerImages.length}
+                            </Text>
+                        </View>
+                    </View>
+                </Modal>
+            )}
+
             {/* Edit Message Dialog Modal */}
             {/* TODO: Implement edit dialog */}
         </KeyboardAvoidingView>
@@ -1195,6 +1457,37 @@ const styles = StyleSheet.create({
     },
     mediaContainer: {
         gap: 8,
+    },
+    galleryBubble: {
+        borderRadius: 16,
+        overflow: "hidden",
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+    },
+    galleryGrid: {
+        flexDirection: "row",
+        width: 204,
+        height: 68,
+    },
+    galleryTileWrap: {
+        flex: 1,
+        position: "relative",
+    },
+    galleryTileImage: {
+        width: "100%",
+        height: "100%",
+    },
+    galleryOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(0,0,0,0.45)",
+    },
+    galleryOverlayText: {
+        color: colors.textOnAccent,
+        fontSize: 16,
+        fontWeight: "700",
     },
 
     // System message
@@ -1430,6 +1723,48 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: "600",
         color: colors.text,
+    },
+    imageViewerContainer: {
+        flex: 1,
+        backgroundColor: "rgba(0, 0, 0, 0.96)",
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    imageViewerClose: {
+        position: "absolute",
+        top: 54,
+        right: 20,
+        zIndex: 2,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: "rgba(0,0,0,0.4)",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    imageViewerImageWrap: {
+        width: Dimensions.get("window").width,
+        height: Dimensions.get("window").height,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    imageViewerImage: {
+        width: "100%",
+        height: "100%",
+    },
+    imageViewerCounter: {
+        position: "absolute",
+        bottom: 44,
+        alignSelf: "center",
+        backgroundColor: "rgba(0,0,0,0.5)",
+        borderRadius: 14,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+    },
+    imageViewerCounterText: {
+        color: colors.textOnAccent,
+        fontSize: 12,
+        fontWeight: "600",
     },
     forwardDialogMessage: {
         fontSize: 14,

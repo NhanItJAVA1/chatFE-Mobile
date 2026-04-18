@@ -218,12 +218,13 @@ class ChatMediaService {
                 const uploadResult = await uploadMedia(file);
 
                 if (uploadResult?.url) {
+                    const normalizedMimeType = file?.mimeType || file?.type || 'application/octet-stream';
                     const media: MessageMedia = {
                         url: uploadResult.url,
                         filename: file?.fileName || file?.name || 'file',
-                        mimetype: file?.mimeType || file?.type || 'application/octet-stream',
+                        mimetype: normalizedMimeType,
                         name: file.name,
-                        mediaType: this.detectMediaType(file.type),
+                        mediaType: this.detectMediaType(normalizedMimeType),
                         size: file.size,
                         width: file.width,
                         height: file.height,
@@ -248,11 +249,13 @@ class ChatMediaService {
      * Detect media type from MIME type
      */
     private detectMediaType(mimeType: string): MessageMedia['mediaType'] {
-        if (mimeType.startsWith('image/')) return 'image';
-        if (mimeType.startsWith('video/')) return 'video';
-        if (mimeType.startsWith('audio/')) return 'audio';
-        if (mimeType === 'application/pdf') return 'document';
-        if (mimeType.includes('word') || mimeType.includes('document')) return 'document';
+        const normalized = (mimeType || '').toLowerCase();
+
+        if (normalized === 'image' || normalized.startsWith('image/')) return 'image';
+        if (normalized === 'video' || normalized.startsWith('video/')) return 'video';
+        if (normalized === 'audio' || normalized.startsWith('audio/')) return 'audio';
+        if (normalized === 'application/pdf') return 'document';
+        if (normalized.includes('word') || normalized.includes('document')) return 'document';
         return 'file';
     }
 }
