@@ -12,6 +12,7 @@ import {
     FriendRequestsScreen,
     CreateGroupScreen,
     GroupChatScreen,
+    GroupSettingsScreen,
 } from "./screens";
 import { colors } from "./theme";
 
@@ -37,7 +38,7 @@ const AuthGate = () => {
     );
 };
 
-type TabKey = "home" | "chat" | "addFriend" | "requests" | "profile" | "createGroup";
+type TabKey = "home" | "chat" | "addFriend" | "requests" | "profile" | "createGroup" | "groupSettings";
 
 interface SelectedChat {
     // PRIVATE chat fields
@@ -92,6 +93,26 @@ const MainShell = () => {
             );
         }
 
+        if (activeTab === "groupSettings") {
+            const groupId = selectedChat?.conversationId;
+            if (!groupId) {
+                return (
+                    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                        <Text>Error: Group ID not found</Text>
+                    </View>
+                );
+            }
+            return (
+                <GroupSettingsScreen
+                    route={{ params: { groupId } }}
+                    navigation={{}}
+                    onBackPress={() => {
+                        setActiveTab("chat");
+                    }}
+                />
+            );
+        }
+
         if (activeTab === "chat") {
             // Check if it's a GROUP or PRIVATE chat
             if (selectedChat?.conversationType === 'GROUP') {
@@ -114,6 +135,9 @@ const MainShell = () => {
                         onBackPress={() => {
                             setActiveTab("home");
                             setSelectedChat(null);
+                        }}
+                        onSettingsPress={() => {
+                            setActiveTab("groupSettings");
                         }}
                     />
                 );
@@ -186,7 +210,7 @@ const MainShell = () => {
     return (
         <View style={styles.appShell}>
             <View style={styles.content}>{renderScreen()}</View>
-            {activeTab !== "chat" && activeTab !== "createGroup" && (
+            {activeTab !== "chat" && activeTab !== "createGroup" && activeTab !== "groupSettings" && (
                 <BottomTabBar
                     activeTab={activeTab}
                     onChangeTab={(tab) => setActiveTab(tab as TabKey)}

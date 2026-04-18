@@ -45,7 +45,8 @@ export const GroupChatScreen: React.FC<{
     route: any;
     navigation: any;
     onBackPress?: () => void;
-}> = ({ route, navigation, onBackPress }) => {
+    onSettingsPress?: () => void;
+}> = ({ route, navigation, onBackPress, onSettingsPress }) => {
     const { groupId } = route.params || {};
     const authContext = useAuth();
     const token = authContext.token;
@@ -621,7 +622,6 @@ export const GroupChatScreen: React.FC<{
             };
 
             const roleIcon = getRoleIcon();
-
             const hasMedia = item.media && item.media.length > 0;
             const hasText = item.text && item.text.trim().length > 0;
 
@@ -771,11 +771,11 @@ export const GroupChatScreen: React.FC<{
                 </View>
                 <Pressable
                     style={styles.headerIconButton}
-                    onPress={handleLeaveGroup}
+                    onPress={onSettingsPress}
                     hitSlop={8}
                 >
                     <Ionicons
-                        name="exit-outline"
+                        name="settings-outline"
                         size={24}
                         color={colors.text}
                     />

@@ -9,3 +9,4 @@ export { FriendRequestsScreen } from "./FriendRequestsScreen";
 export { CreateGroupScreen } from "./CreateGroupScreen";
 export { GroupChatScreen } from "./GroupChatScreen";
 export { GroupInfoScreen } from "./GroupInfoScreen";
+export { GroupSettingsScreen } from "./GroupSettingsScreen";
