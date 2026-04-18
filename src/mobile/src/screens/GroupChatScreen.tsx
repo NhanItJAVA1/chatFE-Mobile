@@ -607,6 +607,24 @@ export const GroupChatScreen: React.FC<{
             );
             const senderAvatar = senderMember?.avatar;
 
+            // Determine sender's role for badge
+            const isOwner = groupState.group?.ownerId === item.senderId;
+            const isAdmin = groupState.group?.admins?.includes(item.senderId);
+
+            const getRoleIcon = () => {
+                if (isOwner) {
+                    return "👑"; // Owner - Golden crown
+                } else if (isAdmin) {
+                    return "🔑"; // Admin - Silver key
+                }
+                return null;
+            };
+
+            const roleIcon = getRoleIcon();
+
+            const hasMedia = item.media && item.media.length > 0;
+            const hasText = item.text && item.text.trim().length > 0;
+
             return (
                 <Pressable
                     onLongPress={() => handleMessageLongPress(item)}
@@ -626,20 +644,10 @@ export const GroupChatScreen: React.FC<{
                                 imageUrl={senderAvatar}
                             />
                         )}
-                        <View
-                            style={[
-                                styles.messageBubble,
-                                isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
-                            ]}
-                        >
-                            {!isOwn && (
-                                <Text style={styles.senderName}>
-                                    {senderName}
-                                </Text>
-                            )}
 
-                            {/* Render Media */}
-                            {item.media && item.media.length > 0 && (
+                        <View style={styles.messageContentWrapper}>
+                            {/* Render Media - Outside bubble for better sizing */}
+                            {hasMedia && (
                                 <View style={styles.mediaContainer}>
                                     {item.media.map((m: any, idx: number) => (
                                         <MediaMessage
@@ -651,21 +659,50 @@ export const GroupChatScreen: React.FC<{
                                 </View>
                             )}
 
-                            {/* Text Message */}
-                            {item.text && (
-                                <Text style={[
-                                    styles.messageText,
-                                    isOwn ? styles.messageTextOwn : styles.messageTextOther,
-                                ]}>
-                                    {item.text}
-                                </Text>
+                            {/* Text Message Bubble - Only if has text or is incoming without media */}
+                            {hasText && (
+                                <View
+                                    style={[
+                                        styles.messageBubble,
+                                        isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
+                                    ]}
+                                >
+                                    {!isOwn && (
+                                        <View style={styles.senderNameRow}>
+                                            <Text style={styles.senderName}>
+                                                {senderName}
+                                            </Text>
+                                            {roleIcon && (
+                                                <Text style={styles.roleIcon}>{roleIcon}</Text>
+                                            )}
+                                        </View>
+                                    )}
+                                    <Text style={[
+                                        styles.messageText,
+                                        isOwn ? styles.messageTextOwn : styles.messageTextOther,
+                                    ]}>
+                                        {item.text}
+                                    </Text>
+                                    <Text style={styles.messageTime}>
+                                        {new Date(item.createdAt).toLocaleTimeString(
+                                            "vi-VN",
+                                            { hour: "2-digit", minute: "2-digit" }
+                                        )}
+                                    </Text>
+                                </View>
                             )}
-                            <Text style={styles.messageTime}>
-                                {new Date(item.createdAt).toLocaleTimeString(
-                                    "vi-VN",
-                                    { hour: "2-digit", minute: "2-digit" }
-                                )}
-                            </Text>
+
+                            {/* Show sender name for media-only messages */}
+                            {hasMedia && !hasText && !isOwn && (
+                                <View style={styles.senderNameRow}>
+                                    <Text style={styles.senderName}>
+                                        {senderName}
+                                    </Text>
+                                    {roleIcon && (
+                                        <Text style={styles.roleIcon}>{roleIcon}</Text>
+                                    )}
+                                </View>
+                            )}
                         </View>
                     </View>
                 </Pressable>
@@ -1051,14 +1088,19 @@ const styles = StyleSheet.create({
 
     // Messages
     messagesContainer: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
+        paddingHorizontal: 14,
+        paddingVertical: 16,
+        gap: 8,
     },
     messageBubbleRow: {
         flexDirection: "row",
         alignItems: "flex-end",
-        marginVertical: 4,
         gap: 8,
+    },
+    messageContentWrapper: {
+        flexDirection: "column",
+        gap: 6,
+        flex: 1,
     },
     outgoingRow: {
         justifyContent: "flex-end",
@@ -1067,26 +1109,37 @@ const styles = StyleSheet.create({
         justifyContent: "flex-start",
     },
     messageBubble: {
-        maxWidth: "75%",
-        borderRadius: 16,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        gap: 2,
+        maxWidth: "82%",
+        borderRadius: 18,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        gap: 6,
     },
     messageBubbleOwn: {
         backgroundColor: colors.accent,
+        borderTopRightRadius: 6,
     },
     messageBubbleOther: {
         backgroundColor: colors.surface,
+        borderTopLeftRadius: 6,
     },
     senderName: {
         fontSize: 11,
         fontWeight: "600",
         color: colors.textMuted,
     },
+    senderNameRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+    roleIcon: {
+        fontSize: 12,
+    },
     messageText: {
-        fontSize: 14,
+        fontSize: 15,
         lineHeight: 20,
+        fontWeight: "500",
     },
     messageTextOwn: {
         color: colors.textOnAccent,
@@ -1096,11 +1149,11 @@ const styles = StyleSheet.create({
     },
     messageTime: {
         fontSize: 11,
-        color: colors.textMuted,
-        marginTop: 2,
+        color: colors.overlayWhite75,
+        marginTop: 6,
     },
     mediaContainer: {
-        marginBottom: 8,
+        gap: 8,
     },
 
     // Empty state
