@@ -19,9 +19,10 @@ import type { Friend } from "@/types";
 
 interface HomeScreenProps {
     onFriendPress?: (friend: any) => void;
+    onCreateGroupPress?: () => void;
 }
 
-export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
+export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress, onCreateGroupPress }) => {
     const { user, token } = useAuth();
     const { state, actions } = useFriendship();
     const [query, setQuery] = useState("");
@@ -292,9 +293,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
                         <Ionicons name="paper-plane" size={14} color={colors.text} />
                         <Text style={styles.brandText}>ChatChit</Text>
                     </View>
-                    <View style={styles.actionCircle}>
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.actionCircle,
+                            pressed && { opacity: 0.7 }
+                        ]}
+                        onPress={onCreateGroupPress}
+                    >
                         <Ionicons name="create-outline" size={22} color={colors.text} />
-                    </View>
+                    </Pressable>
                 </View>
 
                 <SectionTitle
@@ -363,7 +370,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
 
                             return (
                                 <View
-                                    key={getConversationId(conversation || ({ _id: friend._id, id: friend._id } as Conversation))}
+                                    key={friend._id || friend.friendId}
                                     style={[
                                         styles.chatRow,
                                         index !== filteredFriends.length - 1 &&
@@ -401,7 +408,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onFriendPress }) => {
                                                     style={styles.chatName}
                                                     numberOfLines={1}
                                                 >
-                                                    {truncateName(friend.friendInfo?.displayName)}
+                                                    {truncateName(friend.friendInfo?.displayName || "Unknown")}
                                                 </Text>
                                                 <View
                                                     style={[

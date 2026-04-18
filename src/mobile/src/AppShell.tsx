@@ -10,6 +10,7 @@ import {
     RegisterScreen,
     AddFriendScreen,
     FriendRequestsScreen,
+    CreateGroupScreen,
 } from "./screens";
 import { colors } from "./theme";
 
@@ -35,7 +36,7 @@ const AuthGate = () => {
     );
 };
 
-type TabKey = "home" | "chat" | "addFriend" | "requests" | "profile";
+type TabKey = "home" | "chat" | "addFriend" | "requests" | "profile" | "createGroup";
 
 interface SelectedChat {
     friendId: string;
@@ -47,6 +48,7 @@ interface SelectedChat {
 const MainShell = () => {
     const [activeTab, setActiveTab] = useState<TabKey>("home");
     const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
+    const [createdGroupId, setCreatedGroupId] = useState<string | null>(null);
     const { isAuthenticated } = useAuth();
     const {
         requests,
@@ -67,6 +69,20 @@ const MainShell = () => {
     }, [isAuthenticated]);
 
     const renderScreen = () => {
+        if (activeTab === "createGroup") {
+            return (
+                <CreateGroupScreen
+                    onGroupCreated={(groupId) => {
+                        setCreatedGroupId(groupId);
+                        setActiveTab("home");
+                    }}
+                    onBackPress={() => {
+                        setActiveTab("home");
+                    }}
+                />
+            );
+        }
+
         if (activeTab === "chat") {
             return (
                 <ChatScreen
@@ -106,6 +122,9 @@ const MainShell = () => {
                     setSelectedChat(friend);
                     setActiveTab("chat");
                 }}
+                onCreateGroupPress={() => {
+                    setActiveTab("createGroup");
+                }}
             />
         );
     };
@@ -113,7 +132,7 @@ const MainShell = () => {
     return (
         <View style={styles.appShell}>
             <View style={styles.content}>{renderScreen()}</View>
-            {activeTab !== "chat" && (
+            {activeTab !== "chat" && activeTab !== "createGroup" && (
                 <BottomTabBar
                     activeTab={activeTab}
                     onChangeTab={(tab) => setActiveTab(tab as TabKey)}

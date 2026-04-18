@@ -37,6 +37,32 @@ export interface SeenData {
     lastSeenMessageId: string;
 }
 
+// ============================================================================
+// GROUP CHAT EVENT TYPES
+// ============================================================================
+
+export interface GroupEventData {
+    conversationId: string;
+    [key: string]: any;
+}
+
+export interface GroupMemberEvent extends GroupEventData {
+    userId: string;
+    member?: any;
+    newMembers?: any[];
+    removedUserId?: string;
+}
+
+export interface GroupAdminEvent extends GroupEventData {
+    targetUserId: string;
+    isAdmin: boolean;
+}
+
+export interface GroupOwnerTransferEvent extends GroupEventData {
+    oldOwnerId: string;
+    newOwnerId: string;
+}
+
 /**
  * Socket Service - Manages Socket.IO real-time communication
  */
@@ -468,6 +494,257 @@ export class SocketService {
             this.socket.off("message:revoked");
         }
     }
+
+    // ========================================================================
+    // GROUP CHAT EVENT HANDLERS
+    // ========================================================================
+
+    /**
+     * Listen for group creation event
+     */
+    static onGroupCreated(
+        callback: (data: { conversation: any; systemMessage: any }) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("conversation:created", (data: any) => {
+            console.log("[SocketService] Group created:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove group created listener
+     */
+    static offGroupCreated(): void {
+        if (this.socket) {
+            this.socket.off("conversation:created");
+        }
+    }
+
+    /**
+     * Listen for members added to group
+     */
+    static onGroupMembersAdded(
+        callback: (data: GroupMemberEvent) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("conversation:members_added", (data: any) => {
+            console.log("[SocketService] Members added to group:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove members added listener
+     */
+    static offGroupMembersAdded(): void {
+        if (this.socket) {
+            this.socket.off("conversation:members_added");
+        }
+    }
+
+    /**
+     * Listen for member removed from group
+     */
+    static onGroupMemberRemoved(
+        callback: (data: GroupMemberEvent) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("conversation:member_removed", (data: any) => {
+            console.log("[SocketService] Member removed from group:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove member removed listener
+     */
+    static offGroupMemberRemoved(): void {
+        if (this.socket) {
+            this.socket.off("conversation:member_removed");
+        }
+    }
+
+    /**
+     * Listen for group info updated
+     */
+    static onGroupUpdated(
+        callback: (data: GroupEventData) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("conversation:updated", (data: any) => {
+            console.log("[SocketService] Group updated:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove group updated listener
+     */
+    static offGroupUpdated(): void {
+        if (this.socket) {
+            this.socket.off("conversation:updated");
+        }
+    }
+
+    /**
+     * Listen for admin status changed
+     */
+    static onGroupAdminChanged(
+        callback: (data: GroupAdminEvent) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("group:admin_changed", (data: any) => {
+            console.log("[SocketService] Admin status changed:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove admin changed listener
+     */
+    static offGroupAdminChanged(): void {
+        if (this.socket) {
+            this.socket.off("group:admin_changed");
+        }
+    }
+
+    /**
+     * Listen for owner transferred
+     */
+    static onGroupOwnerTransferred(
+        callback: (data: GroupOwnerTransferEvent) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("group:owner_transferred", (data: any) => {
+            console.log("[SocketService] Owner transferred:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove owner transferred listener
+     */
+    static offGroupOwnerTransferred(): void {
+        if (this.socket) {
+            this.socket.off("group:owner_transferred");
+        }
+    }
+
+    /**
+     * Listen for pending member approved
+     */
+    static onGroupMemberApproved(
+        callback: (data: GroupMemberEvent) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("group:member_approved", (data: any) => {
+            console.log("[SocketService] Member approved:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove member approved listener
+     */
+    static offGroupMemberApproved(): void {
+        if (this.socket) {
+            this.socket.off("group:member_approved");
+        }
+    }
+
+    /**
+     * Listen for pending member rejected
+     */
+    static onGroupMemberRejected(
+        callback: (data: GroupMemberEvent) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("group:member_rejected", (data: any) => {
+            console.log("[SocketService] Member rejected:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove member rejected listener
+     */
+    static offGroupMemberRejected(): void {
+        if (this.socket) {
+            this.socket.off("group:member_rejected");
+        }
+    }
+
+    /**
+     * Listen for group settings updated
+     */
+    static onGroupSettingsUpdated(
+        callback: (data: GroupEventData) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("group:settings_updated", (data: any) => {
+            console.log("[SocketService] Settings updated:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove settings updated listener
+     */
+    static offGroupSettingsUpdated(): void {
+        if (this.socket) {
+            this.socket.off("group:settings_updated");
+        }
+    }
+
+    /**
+     * Listen for group dissolved
+     */
+    static onGroupDissolved(
+        callback: (data: GroupEventData) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("group:dissolved", (data: any) => {
+            console.log("[SocketService] Group dissolved:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove group dissolved listener
+     */
+    static offGroupDissolved(): void {
+        if (this.socket) {
+            this.socket.off("group:dissolved");
+        }
+    }
+
+    /**
+     * Clean up all group event listeners
+     */
+    static offAllGroupEvents(): void {
+        this.offGroupCreated();
+        this.offGroupMembersAdded();
+        this.offGroupMemberRemoved();
+        this.offGroupUpdated();
+        this.offGroupAdminChanged();
+        this.offGroupOwnerTransferred();
+        this.offGroupMemberApproved();
+        this.offGroupMemberRejected();
+        this.offGroupSettingsUpdated();
+        this.offGroupDissolved();
+    }
+
 }
 
 export default SocketService;

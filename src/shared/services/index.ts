@@ -26,6 +26,7 @@ export {
 export { SocketService } from "./socketService";
 export { FriendSocketService } from "./friendSocket";
 export { ConversationService } from "./conversationService";
+export { GroupChatService } from "./groupChatService";
 export type { Conversation, MessageResponse, MessagePage } from "./conversationService";
 export type { MessagePayload, TypingData, SeenData } from "./socketService";
 export {

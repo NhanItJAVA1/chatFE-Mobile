@@ -6,3 +6,6 @@ export { ProfileScreen } from "./ProfileScreen";
 export { AuthShell } from "./AuthShell";
 export { AddFriendScreen } from "./AddFriendScreen";
 export { FriendRequestsScreen } from "./FriendRequestsScreen";
+export { CreateGroupScreen } from "./CreateGroupScreen";
+export { GroupChatScreen } from "./GroupChatScreen";
+export { GroupInfoScreen } from "./GroupInfoScreen";

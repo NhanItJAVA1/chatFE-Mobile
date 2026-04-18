@@ -5,3 +5,5 @@ export { useFriendship } from "./useFriendship";
 export { useFriendRequests } from "./useFriendRequests";
 export { useChatMessage } from "./useChat";
 export type { UseChatMessageState, UseChatMessageActions, UseChatMessageReturn } from "./useChat";
+export { useGroupChat } from "./useGroupChat";
+export type { UseGroupChatState, UseGroupChatActions, UseGroupChatReturn } from "./useGroupChat";

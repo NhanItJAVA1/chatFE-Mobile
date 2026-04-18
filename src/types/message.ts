@@ -125,3 +125,62 @@ export type Friend = {
     createdAt: string;
 };
 
+// =====================================================
+// GROUP CHAT TYPES
+// =====================================================
+
+export type GroupMemberRole = "owner" | "admin" | "member";
+export type GroupMemberStatus = "pending" | "active" | "rejected";
+
+export type GroupMember = {
+    _id: string;
+    userId: string;
+    name?: string;
+    avatar?: string;
+    role: GroupMemberRole;
+    status: GroupMemberStatus;
+    joinedAt: string;
+};
+
+export type GroupSettings = {
+    allowSendLink: boolean;
+    requireApproval: boolean;
+    allowMemberInvite: boolean;
+};
+
+export type Group = {
+    _id: string;
+    name: string;
+    type: "group";
+    avatarUrl?: string;
+    ownerId: string;
+    admins: string[];
+    members?: GroupMember[];
+    membersCount: number;
+    settings: GroupSettings;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type GroupCreatePayload = {
+    name: string;
+    memberIds: string[]; // min 2 members
+    avatarUrl?: string;
+};
+
+export type GroupUpdatePayload = {
+    name?: string;
+    avatarUrl?: string;
+};
+
+export type GroupResponse = {
+    status: "success";
+    msg: string;
+    data: {
+        conversation?: Group;
+        group?: Group;
+        members?: GroupMember[];
+        systemMessage?: any;
+    };
+};
+

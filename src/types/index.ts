@@ -46,6 +46,14 @@ export type {
     FriendshipStatus,
     FriendRequest,
     Friend,
+    GroupMember,
+    GroupMemberRole,
+    GroupMemberStatus,
+    GroupSettings,
+    Group,
+    GroupCreatePayload,
+    GroupUpdatePayload,
+    GroupResponse,
 } from "./message";
 
 // Media types
