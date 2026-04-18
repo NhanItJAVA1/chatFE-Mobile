@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import {
     ActivityIndicator,
+    AppState,
     Image,
     Pressable,
     ScrollView,
@@ -195,7 +196,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             return;
         }
 
-        const currentUserId = user?.id || (user as any)?._id;
+        const userCandidateIds = [user?.id, (user as any)?._id, (user as any)?.userId]
+            .filter(Boolean)
+            .map((id) => String(id));
+        const currentUserId = userCandidateIds[0] || "";
 
         const handleReceiveMessage = (data: any) => {
             const message = data?.message || data;
@@ -269,16 +273,106 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             });
         };
 
+        const handleGroupMemberRemoved = (data: any) => {
+            const conversationId = String(
+                data?.conversationId ||
+                data?.groupId ||
+                data?.conversation?._id ||
+                data?.conversation?.id ||
+                ""
+            );
+            const removedUserId = String(
+                data?.removedUserId ||
+                data?.userId ||
+                data?.member?.userId ||
+                ""
+            );
+
+            if (!conversationId || !removedUserId || userCandidateIds.length === 0) {
+                return;
+            }
+
+            if (!userCandidateIds.includes(removedUserId)) {
+                return;
+            }
+
+            setConversations((prev) =>
+                prev.filter((conversation) => {
+                    const id = conversation.id || conversation._id;
+                    return id !== conversationId;
+                })
+            );
+        };
+
+        const handleConversationUpdated = (data: any) => {
+            const conversationId = String(
+                data?.conversationId || data?.conversation?._id || data?.conversation?.id || ""
+            );
+            if (!conversationId || userCandidateIds.length === 0) {
+                return;
+            }
+
+            const members: string[] = (data?.data?.members || data?.conversation?.members || [])
+                .filter(Boolean)
+                .map((id: any) => String(id));
+
+            if (members.length > 0 && !userCandidateIds.some((id) => members.includes(id))) {
+                setConversations((prev) =>
+                    prev.filter((conversation) => {
+                        const id = conversation.id || conversation._id;
+                        return id !== conversationId;
+                    })
+                );
+            }
+        };
+
         socket.on("receiveMessage", handleReceiveMessage);
         socket.on("messageSeen", handleMessageSeen);
         socket.on("conversation:created", handleGroupCreated);
+        socket.on("conversation:member_removed", handleGroupMemberRemoved);
+        socket.on("conversation:updated", handleConversationUpdated);
 
         return () => {
             socket.off("receiveMessage", handleReceiveMessage);
             socket.off("messageSeen", handleMessageSeen);
             socket.off("conversation:created", handleGroupCreated);
+            socket.off("conversation:member_removed", handleGroupMemberRemoved);
+            socket.off("conversation:updated", handleConversationUpdated);
         };
-    }, [token, user]);
+    }, [token, user?.id, (user as any)?._id]);
+
+    // Fallback refresh when backend does not emit socket events.
+    useEffect(() => {
+        if (!token) {
+            return;
+        }
+
+        let isMounted = true;
+
+        const refreshConversations = async () => {
+            try {
+                const updated = await ConversationService.getConversations(1, 50);
+                if (isMounted) {
+                    setConversations(updated);
+                }
+            } catch {
+                // Silent fallback; socket path is still primary source.
+            }
+        };
+
+        const interval = setInterval(refreshConversations, 8000);
+        const appStateSub = AppState.addEventListener("change", (nextState) => {
+            if (nextState === "active") {
+                refreshConversations();
+            }
+        });
+
+        return () => {
+            isMounted = false;
+            clearInterval(interval);
+            appStateSub.remove();
+        };
+    }, [token]);
 
     const conversationByFriendId = useMemo(() => {
         const map = new Map<string, Conversation>();

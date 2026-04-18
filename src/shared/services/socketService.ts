@@ -688,6 +688,29 @@ export class SocketService {
     }
 
     /**
+     * Subscribe to member removed event with callback-scoped cleanup.
+     * This avoids removing unrelated listeners that may be registered elsewhere.
+     */
+    static subscribeGroupMemberRemoved(
+        callback: (data: GroupMemberEvent) => void
+    ): () => void {
+        if (!this.socket) {
+            return () => { };
+        }
+
+        const handler = (data: any) => {
+            console.log("[SocketService] Member removed from group:", data);
+            callback(data);
+        };
+
+        this.socket.on("conversation:member_removed", handler);
+
+        return () => {
+            this.socket?.off("conversation:member_removed", handler);
+        };
+    }
+
+    /**
      * Remove member removed listener
      */
     static offGroupMemberRemoved(): void {

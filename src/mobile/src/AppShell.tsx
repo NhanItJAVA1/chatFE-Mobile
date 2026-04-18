@@ -106,7 +106,12 @@ const MainShell = () => {
             return (
                 <GroupSettingsScreen
                     route={{ params: { groupId } }}
-                    navigation={{}}
+                    navigation={{
+                        goHome: () => {
+                            setActiveTab("home");
+                            setSelectedChat(null);
+                        },
+                    }}
                     onBackPress={() => {
                         setActiveTab("chat");
                     }}

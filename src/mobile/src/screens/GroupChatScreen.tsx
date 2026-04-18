@@ -22,6 +22,7 @@ import { useChatMessage } from "../../../shared/hooks/useChat";
 import { useGroupChatMessage } from "../../../shared/hooks/useGroupChatMessage";
 import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { useAuth } from "../../../shared/hooks";
+import { GroupChatService } from "../../../shared/services/groupChatService";
 import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
 import { Avatar, ForwardDialog, VoiceRecorder } from "../components";
@@ -130,6 +131,21 @@ const groupMessagesForGallery = (messages: any[]): any[] => {
     return groupedMessages;
 };
 
+const extractMemberIds = (groupInfo: any): string[] => {
+    const rawMembers = groupInfo?.members || [];
+
+    return rawMembers
+        .map((member: any) => {
+            if (typeof member === "string") {
+                return member;
+            }
+
+            return member?.userId || member?._id || member?.id || "";
+        })
+        .filter(Boolean)
+        .map((id: string) => String(id));
+};
+
 /**
  * GroupChatScreen - Real-time group chat interface
  * Displays group messages, handles sending/editing/deleting messages
@@ -172,6 +188,7 @@ export const GroupChatScreen: React.FC<{
     const flatListRef = useRef<FlatList>(null);
     const imageViewerScrollRef = useRef<FlatList>(null);
     const actionsRef = useRef(chatActions);
+    const kickedOutRef = useRef(false);
 
     const scrollToLatestMessage = useCallback((animated = true) => {
         // For inverted FlatList, latest message is at offset 0.
@@ -212,6 +229,172 @@ export const GroupChatScreen: React.FC<{
             }
         }
     }, [chatState.messages.length, user?.id, chatActions]);
+
+    // If current user is removed from this group, exit chat immediately without waiting for reload.
+    useEffect(() => {
+        const normalizedGroupId = String(groupId || "");
+        const userCandidateIds = [user?.id, (user as any)?._id, (user as any)?.userId]
+            .filter(Boolean)
+            .map((id) => String(id));
+
+        if (!normalizedGroupId || userCandidateIds.length === 0 || !token) {
+            return;
+        }
+
+        if (!SocketService.isConnected()) {
+            SocketService.connect(token);
+        }
+
+        const socket = SocketService.getSocket();
+
+        const unsubscribe = SocketService.subscribeGroupMemberRemoved((data: any) => {
+            const conversationId = String(
+                data?.conversationId ||
+                data?.groupId ||
+                data?.conversation?._id ||
+                data?.conversation?.id ||
+                ""
+            );
+            const removedUserId = String(
+                data?.removedUserId ||
+                data?.userId ||
+                data?.member?.userId ||
+                ""
+            );
+
+            const isCurrentUserRemoved = userCandidateIds.includes(removedUserId);
+
+            if (conversationId !== normalizedGroupId || !isCurrentUserRemoved) {
+                return;
+            }
+
+            if (kickedOutRef.current) {
+                return;
+            }
+
+            kickedOutRef.current = true;
+
+            SocketService.leaveConversation(groupId).catch(() => { });
+
+            Alert.alert(
+                "Bạn đã bị xóa khỏi nhóm",
+                "Bạn không còn quyền truy cập cuộc trò chuyện này.",
+                [
+                    {
+                        text: "OK",
+                        onPress: () => {
+                            onBackPress?.();
+                        },
+                    },
+                ]
+            );
+        });
+
+        const handleConversationUpdated = (data: any) => {
+            const conversationId = String(
+                data?.conversationId || data?.conversation?._id || data?.conversation?.id || ""
+            );
+
+            if (conversationId !== normalizedGroupId || kickedOutRef.current) {
+                return;
+            }
+
+            const members: string[] = (data?.data?.members || data?.conversation?.members || [])
+                .filter(Boolean)
+                .map((id: any) => String(id));
+
+            if (members.length > 0 && !userCandidateIds.some((id) => members.includes(id))) {
+                kickedOutRef.current = true;
+                SocketService.leaveConversation(groupId).catch(() => { });
+                Alert.alert(
+                    "Bạn đã bị xóa khỏi nhóm",
+                    "Bạn không còn quyền truy cập cuộc trò chuyện này.",
+                    [
+                        {
+                            text: "OK",
+                            onPress: () => {
+                                onBackPress?.();
+                            },
+                        },
+                    ]
+                );
+            }
+        };
+
+        socket?.on("conversation:updated", handleConversationUpdated);
+
+        return () => {
+            unsubscribe();
+            socket?.off("conversation:updated", handleConversationUpdated);
+        };
+    }, [groupId, user?.id, (user as any)?._id, token, onBackPress]);
+
+    // Fallback for environments where backend does not emit socket kick events.
+    useEffect(() => {
+        const normalizedGroupId = String(groupId || "");
+        const userCandidateIds = [user?.id, (user as any)?._id, (user as any)?.userId]
+            .filter(Boolean)
+            .map((id) => String(id));
+
+        if (!normalizedGroupId || userCandidateIds.length === 0 || !token) {
+            return;
+        }
+
+        let isMounted = true;
+
+        const verifyMembership = async () => {
+            if (!isMounted || kickedOutRef.current) {
+                return;
+            }
+
+            try {
+                const groupInfo = await GroupChatService.getGroupInfo(normalizedGroupId);
+                const memberIds = extractMemberIds(groupInfo);
+                const ownerId = String(groupInfo?.ownerId || "");
+                const adminIds: string[] = (groupInfo?.admins || (groupInfo as any)?.adminIds || [])
+                    .filter(Boolean)
+                    .map((id: any) => String(id));
+
+                const hasReliableMembershipData = memberIds.length > 0;
+                const isOwner = !!ownerId && userCandidateIds.includes(ownerId);
+                const isAdmin = adminIds.some((id) => userCandidateIds.includes(id));
+                const isMemberFromList = userCandidateIds.some((id) => memberIds.includes(id));
+                const isStillMember = isOwner || isAdmin || isMemberFromList;
+
+                // Avoid false kick when backend group info does not include members array.
+                if (!hasReliableMembershipData && !isOwner && !isAdmin) {
+                    return;
+                }
+
+                if (!isStillMember) {
+                    kickedOutRef.current = true;
+                    SocketService.leaveConversation(groupId).catch(() => { });
+                    Alert.alert(
+                        "Bạn đã bị xóa khỏi nhóm",
+                        "Bạn không còn quyền truy cập cuộc trò chuyện này.",
+                        [
+                            {
+                                text: "OK",
+                                onPress: () => {
+                                    onBackPress?.();
+                                },
+                            },
+                        ]
+                    );
+                }
+            } catch {
+                // Keep UI responsive; retry by interval.
+            }
+        };
+
+        verifyMembership();
+        const interval = setInterval(verifyMembership, 5000);
+
+        return () => {
+            isMounted = false;
+            clearInterval(interval);
+        };
+    }, [groupId, user?.id, (user as any)?._id, token, onBackPress]);
 
     const loadGroupData = useCallback(async () => {
         try {

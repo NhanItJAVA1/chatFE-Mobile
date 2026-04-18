@@ -39,6 +39,7 @@ export const GroupSettingsScreen: React.FC<{
     const [members, setMembers] = useState<GroupMemberWithRole[]>([]);
     const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
     const [showMemberActions, setShowMemberActions] = useState(false);
+    const [processingDangerAction, setProcessingDangerAction] = useState(false);
 
     // Collapse state
     const [adminCollapsed, setAdminCollapsed] = useState(false);
@@ -96,9 +97,13 @@ export const GroupSettingsScreen: React.FC<{
         }
     }, [groupId]);
 
-    const currentUserRole = user?.id === groupState.group?.ownerId
+    const currentUserIds = [user?.id, (user as any)?._id, (user as any)?.userId]
+        .filter(Boolean)
+        .map((id) => String(id));
+
+    const currentUserRole = currentUserIds.includes(String(groupState.group?.ownerId || ""))
         ? "owner"
-        : groupState.group?.admins?.includes(user?.id || "")
+        : (groupState.group?.admins || []).some((adminId) => currentUserIds.includes(String(adminId)))
             ? "admin"
             : "member";
 
@@ -188,6 +193,96 @@ export const GroupSettingsScreen: React.FC<{
             ]
         );
     };
+
+    const navigateToHomeAfterAction = useCallback(() => {
+        if (typeof navigation?.goHome === "function") {
+            navigation.goHome();
+            return;
+        }
+
+        if (typeof navigation?.navigate === "function") {
+            navigation.navigate("home");
+            return;
+        }
+
+        onBackPress?.();
+    }, [navigation, onBackPress]);
+
+    const handleLeaveGroup = useCallback(() => {
+        if (processingDangerAction) {
+            return;
+        }
+
+        if (currentUserRole === "owner") {
+            Alert.alert(
+                "Không thể rời nhóm",
+                "Bạn đang là chủ nhóm. Vui lòng chuyển quyền chủ nhóm cho thành viên khác trước khi rời nhóm."
+            );
+            return;
+        }
+
+        Alert.alert("Xác nhận", "Bạn có chắc muốn rời nhóm này?", [
+            { text: "Hủy", style: "cancel" },
+            {
+                text: "Rời nhóm",
+                style: "destructive",
+                onPress: async () => {
+                    try {
+                        setProcessingDangerAction(true);
+                        await groupActions.leaveGroup(groupId);
+                        Alert.alert("Thành công", "Bạn đã rời nhóm.", [
+                            {
+                                text: "OK",
+                                onPress: () => {
+                                    navigateToHomeAfterAction();
+                                },
+                            },
+                        ]);
+                    } catch (err: any) {
+                        Alert.alert("Lỗi", err.message || "Không thể rời nhóm");
+                    } finally {
+                        setProcessingDangerAction(false);
+                    }
+                },
+            },
+        ]);
+    }, [processingDangerAction, currentUserRole, groupActions, groupId, navigateToHomeAfterAction]);
+
+    const handleDissolveGroup = useCallback(() => {
+        if (processingDangerAction) {
+            return;
+        }
+
+        Alert.alert(
+            "Xác nhận giải tán nhóm",
+            "Giải tán nhóm sẽ xóa vĩnh viễn nhóm và toàn bộ thành viên sẽ bị xóa khỏi cuộc trò chuyện. Bạn có chắc muốn tiếp tục?",
+            [
+                { text: "Hủy", style: "cancel" },
+                {
+                    text: "Giải tán",
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            setProcessingDangerAction(true);
+                            await groupActions.dissolveGroup(groupId);
+                            Alert.alert("Đã giải tán", "Nhóm đã được giải tán thành công.", [
+                                {
+                                    text: "OK",
+                                    onPress: () => {
+                                        navigateToHomeAfterAction();
+                                    },
+                                },
+                            ]);
+                        } catch (err: any) {
+                            Alert.alert("Lỗi", err.message || "Không thể giải tán nhóm");
+                        } finally {
+                            setProcessingDangerAction(false);
+                        }
+                    },
+                },
+            ]
+        );
+    }, [processingDangerAction, groupActions, groupId, navigateToHomeAfterAction]);
 
     const MemberItem: React.FC<{ member: GroupMemberWithRole }> = ({ member }) => {
         const memberInitials = (member.name || "?")
@@ -299,7 +394,7 @@ export const GroupSettingsScreen: React.FC<{
                             style={styles.actionButton}
                             onPress={handleTransferOwner}
                         >
-                            <Ionicons name="crown-outline" size={20} color={colors.accentAlt} />
+                            <Ionicons name="ribbon-outline" size={20} color={colors.accentAlt} />
                             <Text style={[styles.actionButtonText, { color: colors.accentAlt }]}>
                                 Chuyển quyền chủ nhóm
                             </Text>
@@ -430,6 +525,31 @@ export const GroupSettingsScreen: React.FC<{
                         )}
                     </View>
                 )}
+
+                {/* Group actions */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Hành động nhóm</Text>
+
+                    <Pressable
+                        style={[styles.leaveGroupButton, processingDangerAction && styles.actionDisabled]}
+                        disabled={processingDangerAction}
+                        onPress={handleLeaveGroup}
+                    >
+                        <Ionicons name="log-out-outline" size={18} color={colors.danger} />
+                        <Text style={styles.leaveGroupText}>Rời nhóm</Text>
+                    </Pressable>
+
+                    {currentUserRole === "owner" && (
+                        <Pressable
+                            style={[styles.dissolveGroupButton, processingDangerAction && styles.actionDisabled]}
+                            disabled={processingDangerAction}
+                            onPress={handleDissolveGroup}
+                        >
+                            <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                            <Text style={styles.dissolveGroupText}>Giải tán nhóm</Text>
+                        </Pressable>
+                    )}
+                </View>
             </ScrollView>
 
             {/* Member Actions Overlay */}
@@ -611,7 +731,41 @@ const styles = StyleSheet.create({
         flex: 1,
     },
 
-    warning: {
-        color: colors.warning,
+    leaveGroupButton: {
+        marginTop: 10,
+        borderWidth: 1,
+        borderColor: colors.danger,
+        borderRadius: 10,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        backgroundColor: colors.surface,
+    },
+    leaveGroupText: {
+        fontSize: 14,
+        fontWeight: "600",
+        color: colors.danger,
+    },
+    dissolveGroupButton: {
+        marginTop: 10,
+        borderWidth: 1,
+        borderColor: colors.danger,
+        borderRadius: 10,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        backgroundColor: colors.surface,
+    },
+    dissolveGroupText: {
+        fontSize: 14,
+        fontWeight: "600",
+        color: colors.danger,
+    },
+    actionDisabled: {
+        opacity: 0.5,
     },
 });
