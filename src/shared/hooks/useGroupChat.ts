@@ -153,19 +153,9 @@ export const useGroupChat = (): UseGroupChatReturn => {
             setState((prev) => ({ ...prev, isLoading: true, error: null }));
             // Use getGroupMembersWithProfiles to enrich members with name/avatar from user profiles
             const members = await GroupChatService.getGroupMembersWithProfiles(groupId);
-            console.log('[useGroupChat] loadMembers completed:', {
-                groupId,
-                membersLoaded: members.length,
-                members: members.map((m) => ({
-                    userId: m.userId,
-                    name: m.name,
-                    avatar: m.avatar,
-                })),
-            });
             setState((prev) => ({ ...prev, members, isLoading: false }));
         } catch (err: any) {
             const error = err.message || "Failed to load members";
-            console.error('[useGroupChat] loadMembers error:', error);
             setState((prev) => ({ ...prev, error, isLoading: false }));
             throw err;
         }

@@ -1,5 +1,4 @@
-const DEFAULT_API_BASE_URL = "http://192.168.1.6:3000/v1";
-//192.168.1.6
+const DEFAULT_API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "http://192.168.1.6:3000/v1";
 
 let runtimeConfig = {
   apiUrl: DEFAULT_API_BASE_URL,

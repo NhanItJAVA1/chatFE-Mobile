@@ -1,7 +1,8 @@
 import { io, Socket } from "socket.io-client";
 import { getApiBaseUrl } from "../runtime";
 
-const SOCKET_URL = getApiBaseUrl().replace("/v1", "") || "http://192.168.1.6:3000";
+// Remove /v1 suffix from API URL to get base socket URL
+const SOCKET_URL = getApiBaseUrl().replace("/v1", "");
 const SOCKET_NAMESPACE = "/messages";
 
 export interface MessagePayload {

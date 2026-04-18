@@ -66,19 +66,16 @@ export const GroupChatScreen: React.FC<{
 
     // Load group and messages on mount
     useEffect(() => {
-        console.log('[GroupChatScreen] Component mounted, loading group data');
         loadGroupData();
     }, [groupId]);
 
     const loadGroupData = useCallback(async () => {
         try {
-            console.log('[GroupChatScreen] loadGroupData started');
             await Promise.all([
                 groupActions.loadGroupInfo(groupId),
                 groupActions.loadMembers(groupId),
                 chatActions.retryLoadConversation?.(),
             ]);
-            console.log('[GroupChatScreen] loadGroupData completed');
 
             // Join group room
             try {
@@ -469,23 +466,6 @@ export const GroupChatScreen: React.FC<{
                 (member) => member.userId === item.senderId
             );
             const senderAvatar = senderMember?.avatar;
-
-            // Debug avatar lookup
-            if (!item.avatarDebugLogged) {
-                const memberKeys = groupState.members?.[0] ? Object.keys(groupState.members[0]) : [];
-                console.log('[GroupChatScreen] Avatar lookup:', {
-                    senderId: item.senderId,
-                    senderName: item.senderName,
-                    membersCount: groupState.members?.length || 0,
-                    memberKeysFirst: memberKeys,
-                    firstMemberData: groupState.members?.[0],
-                    memberFound: !!senderMember,
-                    memberData: senderMember,
-                    senderAvatar,
-                    allMembers: groupState.members || [],
-                });
-                item.avatarDebugLogged = true;
-            }
 
             return (
                 <Pressable

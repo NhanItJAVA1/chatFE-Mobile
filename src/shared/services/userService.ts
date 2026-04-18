@@ -14,7 +14,7 @@ export const getProfile = async (): Promise<User> => {
 export const getUserById = async (userId: string): Promise<any> => {
     try {
         const response = await api.get(`/users/${userId}`);
-        
+
         // Response wrapped: { status, msg, data: { avatarUrl, displayName, ... } }
         // response.data is the wrapper object, need response.data.data for actual user
         const userData = response.data?.data || response.data || response;
