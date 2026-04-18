@@ -11,6 +11,7 @@ import {
     AddFriendScreen,
     FriendRequestsScreen,
     CreateGroupScreen,
+    GroupChatScreen,
 } from "./screens";
 import { colors } from "./theme";
 
@@ -39,9 +40,15 @@ const AuthGate = () => {
 type TabKey = "home" | "chat" | "addFriend" | "requests" | "profile" | "createGroup";
 
 interface SelectedChat {
-    friendId: string;
-    friendName: string;
+    // PRIVATE chat fields
+    friendId?: string;
+    friendName?: string;
     friendAvatar?: string;
+    // GROUP chat fields
+    conversationId?: string;
+    conversationType?: 'PRIVATE' | 'GROUP';
+    conversationName?: string;
+    // General fields
     [key: string]: any;
 }
 
@@ -86,6 +93,20 @@ const MainShell = () => {
         }
 
         if (activeTab === "chat") {
+            // Check if it's a GROUP or PRIVATE chat
+            if (selectedChat?.conversationType === 'GROUP') {
+                return (
+                    <GroupChatScreen
+                        route={{ params: { groupId: selectedChat.conversationId } }}
+                        navigation={{}}
+                        onBackPress={() => {
+                            setActiveTab("home");
+                            setSelectedChat(null);
+                        }}
+                    />
+                );
+            }
+
             return (
                 <ChatScreen
                     chatUser={selectedChat}
@@ -122,6 +143,19 @@ const MainShell = () => {
             <HomeScreen
                 onFriendPress={(friend) => {
                     setSelectedChat(friend);
+                    setActiveTab("chat");
+                }}
+                onGroupPress={(conversation) => {
+                    console.log('[AppShell] Group conversation selected:', {
+                        conversationId: conversation._id || conversation.id,
+                        name: conversation.name,
+                    });
+                    setSelectedChat({
+                        conversationId: conversation._id || conversation.id,
+                        conversationType: 'GROUP',
+                        conversationName: conversation.name,
+                        ...conversation,
+                    });
                     setActiveTab("chat");
                 }}
                 onCreateGroupPress={() => {

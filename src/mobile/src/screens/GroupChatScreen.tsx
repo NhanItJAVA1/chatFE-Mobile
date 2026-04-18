@@ -24,7 +24,11 @@ import { colors } from "../theme";
  * Displays group messages, handles sending/editing/deleting messages
  * Manages group-specific features (member list, typing indicators)
  */
-export const GroupChatScreen: React.FC<{ route: any; navigation: any }> = ({ route, navigation }) => {
+export const GroupChatScreen: React.FC<{
+    route: any;
+    navigation: any;
+    onBackPress?: () => void;
+}> = ({ route, navigation, onBackPress }) => {
     const { groupId } = route.params;
     const { user } = useAuth();
     const { state: chatState, actions: chatActions } = useChatMessage(
@@ -134,7 +138,7 @@ export const GroupChatScreen: React.FC<{ route: any; navigation: any }> = ({ rou
                     onPress: async () => {
                         try {
                             await groupActions.leaveGroup(groupId);
-                            navigation.goBack();
+                            onBackPress?.();
                         } catch (err: any) {
                             Alert.alert("Lỗi", err.message);
                         }
@@ -208,7 +212,7 @@ export const GroupChatScreen: React.FC<{ route: any; navigation: any }> = ({ rou
             {/* Header */}
             <View style={styles.header}>
                 <Pressable
-                    onPress={() => navigation.goBack()}
+                    onPress={() => onBackPress?.()}
                     hitSlop={8}
                 >
                     <Ionicons

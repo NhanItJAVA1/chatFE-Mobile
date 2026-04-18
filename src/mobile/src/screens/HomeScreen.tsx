@@ -19,6 +19,7 @@ import type { Friend } from "@/types";
 
 interface HomeScreenProps {
     onFriendPress?: (friend: any) => void;
+    onGroupPress?: (conversation: Conversation) => void;
     onCreateGroupPress?: () => void;
     createdGroupId?: string | null;
     createdGroupData?: any;
@@ -27,6 +28,7 @@ interface HomeScreenProps {
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
     onFriendPress,
+    onGroupPress,
     onCreateGroupPress,
     createdGroupId,
     createdGroupData,
@@ -370,9 +372,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             pairKey: conversation.pairKey,
         });
 
-        if (conversation.type === "GROUP") {
-            console.log("Group chat clicked:", conversation._id);
-            // TODO: Navigate to group chat
+        const conversationType = String(conversation.type || "").toUpperCase();
+        if (conversationType === "GROUP") {
+            console.log('[HomeScreen] Group chat clicked:', conversation._id);
+            if (onGroupPress) {
+                console.log('[HomeScreen] Calling onGroupPress with conversation:', {
+                    conversationId: conversation._id || conversation.id,
+                    name: conversation.name,
+                    type: conversation.type,
+                });
+                onGroupPress(conversation);
+            }
             return;
         }
 
