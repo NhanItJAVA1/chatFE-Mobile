@@ -35,6 +35,89 @@ const mergeUniqueMessages = (
         .map((entry) => entry.message);
 };
 
+/**
+ * Build user map from messages for lookup by senderId
+ */
+const buildUserMap = (messages: MessagePayload[]): Record<string, string> => {
+    const userMap: Record<string, string> = {};
+    messages.forEach(msg => {
+        if (msg.senderId && msg.senderName && !userMap[msg.senderId]) {
+            userMap[msg.senderId] = msg.senderName;
+        }
+    });
+    return userMap;
+};
+
+/**
+ * Enrich messages by populating quotedMessage with BE data or user map lookup
+ * Priority: quotedMessageSenderName (BE) → userMap lookup by quotedMessageSenderId → message lookup
+ */
+const enrichMessagesWithQuotedData = (messages: MessagePayload[]): MessagePayload[] => {
+    // Build user map from all messages for quick lookup by senderId
+    const userMap = buildUserMap(messages);
+
+    return messages.map(msg => {
+        // If message has quotedMessageId, ensure quotedMessage object exists and has proper data
+        if (msg.quotedMessageId) {
+            // Try multiple sources for sender name, in priority order
+            let quotedSenderName = msg.quotedMessageSenderName;  // 1. From BE response
+            let quotedText = msg.quotedMessagePreview;
+
+            // 2. Lookup by quotedMessageSenderId in user map
+            if (!quotedSenderName && msg.quotedMessageSenderId) {
+                quotedSenderName = userMap[msg.quotedMessageSenderId];
+                console.log('[enrichMessagesWithQuotedData] Lookup user by senderId:', {
+                    quotedMessageSenderId: msg.quotedMessageSenderId,
+                    foundName: quotedSenderName,
+                });
+            }
+
+            // 3. Fallback to lookup original message by ID
+            if (!quotedSenderName) {
+                const quotedMsg = messages.find(m => (m._id || m.id) === msg.quotedMessageId);
+                if (quotedMsg) {
+                    quotedSenderName = quotedMsg.senderName;
+                    quotedText = quotedText || quotedMsg.text;
+                }
+            }
+
+            if (!msg.quotedMessage) {
+                // Build quotedMessage from available data
+                msg.quotedMessage = {
+                    text: quotedText || "",
+                    senderName: quotedSenderName || "Unknown",
+                    senderId: msg.quotedMessageSenderId,
+                    media: [],
+                } as any;
+            } else {
+                // Update existing quotedMessage with resolved data
+                if (quotedSenderName && !msg.quotedMessage.senderName) {
+                    msg.quotedMessage.senderName = quotedSenderName;
+                } else if (!msg.quotedMessage.senderName) {
+                    msg.quotedMessage.senderName = "Unknown";
+                }
+
+                if (msg.quotedMessageSenderId && !msg.quotedMessage.senderId) {
+                    msg.quotedMessage.senderId = msg.quotedMessageSenderId;
+                }
+
+                if (quotedText && !msg.quotedMessage.text) {
+                    msg.quotedMessage.text = quotedText;
+                }
+            }
+
+            console.log('[enrichMessagesWithQuotedData] Enriched quoted message:', {
+                quotedMessageId: msg.quotedMessageId,
+                senderName: msg.quotedMessage.senderName,
+                fromBE: msg.quotedMessageSenderName,
+                fromUserMap: msg.quotedMessageSenderId ? userMap[msg.quotedMessageSenderId] : 'N/A',
+                senderId: msg.quotedMessageSenderId,
+            });
+        }
+        return msg;
+    });
+};
+
 export interface UseChatMessageState {
     conversation: Conversation | null;
     messages: MessagePayload[];
@@ -158,7 +241,8 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         }
 
         setState((prev) => {
-            const newMessages = mergeUniqueMessages(messages, prev.messages);
+            const merged = mergeUniqueMessages(messages, prev.messages);
+            const newMessages = enrichMessagesWithQuotedData(merged);
             const newState = {
                 ...prev,
                 messages: newMessages,
@@ -498,25 +582,22 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             const conversationId = state.conversation._id || state.conversation.id;
             setState((prev) => ({ ...prev, isSending: true }));
 
-            // Lookup quoted message to get senderName
-            const quotedMsg = state.messages.find(m => (m._id || m.id) === quotedMessageId);
-            console.log('[useGroupChatMessage] sendQuotedMessage - quoted message lookup:', {
+            console.log('[useGroupChatMessage] sendQuotedMessage:', {
+                conversationId,
                 quotedMessageId,
-                found: !!quotedMsg,
-                senderName: quotedMsg?.senderName,
+                textLength: text.length,
             });
 
             const messages = await SocketService.sendQuotedMessage(
                 conversationId,
                 quotedMessageId,
                 text.trim(),
-                media,
-                quotedMsg?.senderName,
-                quotedMsg?.senderAvatar
+                media
             );
 
             setState((prev) => {
-                const newMessages = mergeUniqueMessages(messages || [], prev.messages);
+                const merged = mergeUniqueMessages(messages || [], prev.messages);
+                const newMessages = enrichMessagesWithQuotedData(merged);
 
                 // Save to cache
                 if (prev.conversation) {
@@ -540,7 +621,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 error: error.message || "Failed to send quoted message",
             }));
         }
-    }, [state.conversation, state.messages]);
+    }, [state.conversation]);
 
     /**
      * Set message to reply to
@@ -650,7 +731,12 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 SocketService.onMessage((message: MessagePayload) => {
                     if ((message.conversationId === conversationId || message.conversationId === groupId) && messagesStateRef.current) {
                         const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
-                        updateStateAndCache({ messages: merged });
+                        const enriched = enrichMessagesWithQuotedData(merged);
+                        console.log('[useGroupChatMessage] onMessage - enriched quoted fields:', {
+                            quotedMessageId: message.quotedMessageId,
+                            quotedMessageSenderName: message.quotedMessageSenderName,
+                        });
+                        updateStateAndCache({ messages: enriched });
                     }
                 });
 

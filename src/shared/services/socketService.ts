@@ -40,6 +40,8 @@ export interface MessagePayload {
     quotedMessageId?: string;
     quotedMessage?: QuotedMessage;
     quotedMessagePreview?: string;
+    quotedMessageSenderId?: string; // NEW - ID of user who sent original message
+    quotedMessageSenderName?: string; // NEW - Cache-resolved sender name
 
     // Pin fields
     pinned?: boolean;
@@ -341,14 +343,13 @@ export class SocketService {
     /**
      * Send quoted message (reply) via Socket.IO
      * Emits "quoteMessage" event which backend converts to receiveMessage
+     * BE handles quotedMessageSenderId and quotedMessagePreview lookup
      */
     static sendQuotedMessage(
         conversationId: string,
         quotedMessageId: string,
         text: string,
-        media?: any[],
-        quotedSenderName?: string,
-        quotedSenderAvatar?: string
+        media?: any[]
     ): Promise<MessagePayload[]> {
         return new Promise(async (resolve, reject) => {
             try {
@@ -367,9 +368,6 @@ export class SocketService {
                     quotedMessageId,
                     text,
                     media: media || [],
-                    // Include quoted sender info for client-side rendering
-                    quotedSenderName,
-                    quotedSenderAvatar,
                 };
 
                 console.log('[SocketService] Emitting sendQuotedMessage (quoteMessage event):', {
@@ -377,7 +375,6 @@ export class SocketService {
                     quotedMessageId,
                     textLength: text.length,
                     mediaCount: media?.length || 0,
-                    quotedSenderName,
                 });
 
                 this.socket.emit("quoteMessage", payload, (response: any) => {
@@ -389,6 +386,16 @@ export class SocketService {
                     if (response?.success) {
                         const messages = response?.messages || response?.data || response?.message;
                         if (Array.isArray(messages)) {
+                            // Debug: log first message to check fields
+                            if (messages.length > 0) {
+                                console.log('[SocketService] First quoted message from BE:', {
+                                    text: messages[0].text?.substring(0, 30),
+                                    quotedMessageId: messages[0].quotedMessageId,
+                                    quotedMessageSenderId: messages[0].quotedMessageSenderId,
+                                    quotedMessageSenderName: messages[0].quotedMessageSenderName,
+                                    quotedMessagePreview: messages[0].quotedMessagePreview?.substring(0, 30),
+                                });
+                            }
                             console.log('[SocketService] ✓ Quoted message sent, received', messages.length, 'messages back');
                             resolve(messages);
                             return;
@@ -423,12 +430,22 @@ export class SocketService {
 
         console.log('[SocketService] Setting up "receiveMessage" listener');
         this.socket.on("receiveMessage", (data: any) => {
+            const message = data.message || data;
             console.log('[SocketService] EVENT FIRED: receiveMessage', {
                 hasMessage: !!data.message,
                 hasData: !!data,
                 dataKeys: Object.keys(data || {}),
             });
-            callback(data.message || data);
+            // Debug: check if quoted message fields present
+            if (message?.quotedMessageId) {
+                console.log('[SocketService] Received quoted message:', {
+                    quotedMessageId: message.quotedMessageId,
+                    quotedMessageSenderId: message.quotedMessageSenderId,
+                    quotedMessageSenderName: message.quotedMessageSenderName,
+                    quotedMessagePreview: message.quotedMessagePreview?.substring(0, 30),
+                });
+            }
+            callback(message);
         });
     }
 
