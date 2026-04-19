@@ -12,6 +12,8 @@ export interface BuildMessageActionSheetOptions {
     onEdit?: () => void;
     onRevoke?: () => void;
     onForward?: () => void;
+    onPin?: () => void;
+    onReply?: () => void;
 }
 
 export const buildMessageActionSheetOptions = ({
@@ -20,11 +22,21 @@ export const buildMessageActionSheetOptions = ({
     onEdit,
     onRevoke,
     onForward,
+    onPin,
+    onReply,
 }: BuildMessageActionSheetOptions): MessageActionButton[] => {
     const buttons: MessageActionButton[] = [
         { text: "Hủy", style: "cancel", onPress: () => { } },
         { text: "Xóa phía tôi", style: "destructive", onPress: onDeleteForMe },
     ];
+
+    if (onReply) {
+        buttons.push({ text: "Trả lời", style: "default", onPress: onReply });
+    }
+
+    if (onPin) {
+        buttons.push({ text: "Ghim", style: "default", onPress: onPin });
+    }
 
     if (isOwn && onEdit) {
         buttons.push({ text: "Sửa", style: "default", onPress: onEdit });

@@ -44,10 +44,14 @@ export interface UseChatMessageState {
     typingUsers: Set<string>;
     hasMoreMessages: boolean;
     nextCursor: string | null;
+    pinnedMessages: MessagePayload[];
+    pinnedMessageIndex: number;
+    replyingTo: MessagePayload | null;
 }
 
 export interface UseChatMessageActions {
     sendMessage: (text: string, media?: any[]) => Promise<void>;
+    sendQuotedMessage: (quotedMessageId: string, text: string, media?: any[]) => Promise<void>;
     addMessages: (messages: MessagePayload[]) => void;
     markAsSeen: (messageIds: string[]) => Promise<void>;
     handleTyping: () => void;
@@ -58,6 +62,10 @@ export interface UseChatMessageActions {
     revokeMessage: (messageId: string) => Promise<void>;
     addReaction: (messageId: string, emoji: string) => Promise<void>;
     removeReaction: (messageId: string, emoji: string) => Promise<void>;
+    pinMessage: (messageId: string) => Promise<void>;
+    unpinMessage: (messageId: string) => Promise<void>;
+    navigatePinnedMessages: (direction: "prev" | "next") => void;
+    setReplyingTo: (message: MessagePayload | null) => void;
     retryLoadConversation: () => Promise<void>;
 }
 
@@ -95,6 +103,9 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         typingUsers: new Set(),
         hasMoreMessages: false,
         nextCursor: null,
+        pinnedMessages: [],
+        pinnedMessageIndex: 0,
+        replyingTo: null,
     });
 
     const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -378,6 +389,169 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         [state.conversation]
     );
 
+    /**
+     * Pin message (admin only for groups)
+     */
+    const pinMessage = useCallback(async (messageId: string) => {
+        try {
+            if (!state.conversation) {
+                throw new Error("No conversation loaded");
+            }
+            const conversationId = state.conversation._id || state.conversation.id;
+
+            await SocketService.pinMessage(conversationId, messageId);
+            console.log('[useGroupChatMessage] Pin message action completed');
+        } catch (error: any) {
+            setState((prev) => ({
+                ...prev,
+                error: error.message || "Failed to pin message",
+            }));
+        }
+    }, [state.conversation]);
+
+    /**
+     * Unpin message (admin only for groups)
+     */
+    const unpinMessage = useCallback(async (messageId: string) => {
+        let previousPinnedMessages = [...state.pinnedMessages];
+        let previousIndex = state.pinnedMessageIndex;
+
+        try {
+            if (!state.conversation) {
+                throw new Error("No conversation loaded");
+            }
+            const conversationId = state.conversation._id || state.conversation.id;
+
+            // Optimistically remove from pinned messages
+            setState((prev) => {
+                const filtered = prev.pinnedMessages.filter(
+                    (m) => (m._id || m.id) !== messageId
+                );
+                return {
+                    ...prev,
+                    pinnedMessages: filtered,
+                    pinnedMessageIndex: Math.min(
+                        prev.pinnedMessageIndex,
+                        Math.max(0, filtered.length - 1)
+                    ),
+                };
+            });
+
+            await SocketService.unpinMessage(conversationId, messageId);
+            console.log('[useGroupChatMessage] Unpin message action completed');
+        } catch (error: any) {
+            const errorMsg = error?.message || "Failed to unpin message";
+            const isNotPinnedError = errorMsg.includes("not pinned") || error?.status === 400;
+
+            // If "not pinned" error, it's fine - message was already unpinned elsewhere
+            if (!isNotPinnedError) {
+                // Rollback optimistic update for other errors
+                setState((prev) => ({
+                    ...prev,
+                    pinnedMessages: previousPinnedMessages,
+                    pinnedMessageIndex: previousIndex,
+                    error: errorMsg,
+                }));
+                throw new Error(errorMsg);
+            }
+
+            // For "not pinned" error, keep the removal (message wasn't pinned anyway)
+            console.log('[useGroupChatMessage] Message was not pinned on backend, but removal succeeded');
+        }
+    }, [state.conversation, state.pinnedMessages, state.pinnedMessageIndex]);
+
+    /**
+     * Navigate between pinned messages
+     */
+    const navigatePinnedMessages = useCallback((direction: "prev" | "next") => {
+        setState((prev) => {
+            const pinnedCount = prev.pinnedMessages.length;
+            if (pinnedCount <= 1) return prev;
+
+            let newIndex = prev.pinnedMessageIndex;
+            if (direction === "next") {
+                newIndex = (newIndex + 1) % pinnedCount;
+            } else {
+                newIndex = newIndex === 0 ? pinnedCount - 1 : newIndex - 1;
+            }
+
+            return {
+                ...prev,
+                pinnedMessageIndex: newIndex,
+            };
+        });
+    }, []);
+
+    /**
+     * Send quoted/reply message
+     */
+    const sendQuotedMessage = useCallback(async (quotedMessageId: string, text: string, media?: any[]) => {
+        try {
+            if (!state.conversation) {
+                throw new Error("No conversation loaded");
+            }
+
+            if (!text.trim() && (!media || media.length === 0)) {
+                throw new Error("Message cannot be empty");
+            }
+
+            const conversationId = state.conversation._id || state.conversation.id;
+            setState((prev) => ({ ...prev, isSending: true }));
+
+            // Lookup quoted message to get senderName
+            const quotedMsg = state.messages.find(m => (m._id || m.id) === quotedMessageId);
+            console.log('[useGroupChatMessage] sendQuotedMessage - quoted message lookup:', {
+                quotedMessageId,
+                found: !!quotedMsg,
+                senderName: quotedMsg?.senderName,
+            });
+
+            const messages = await SocketService.sendQuotedMessage(
+                conversationId,
+                quotedMessageId,
+                text.trim(),
+                media,
+                quotedMsg?.senderName,
+                quotedMsg?.senderAvatar
+            );
+
+            setState((prev) => {
+                const newMessages = mergeUniqueMessages(messages || [], prev.messages);
+
+                // Save to cache
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    saveMessagesToCache(convId, newMessages).catch((error) => {
+                        console.error('[useGroupChatMessage] Failed to save quoted message to cache:', error);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    replyingTo: null,
+                };
+            });
+        } catch (error: any) {
+            setState((prev) => ({
+                ...prev,
+                isSending: false,
+                error: error.message || "Failed to send quoted message",
+            }));
+        }
+    }, [state.conversation, state.messages]);
+
+    /**
+     * Set message to reply to
+     */
+    const setReplyingTo = useCallback((message: MessagePayload | null) => {
+        setState((prev) => ({
+            ...prev,
+            replyingTo: message,
+        }));
+    }, []);
+
     const retryLoadConversation = useCallback(async () => {
         setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
@@ -514,6 +688,55 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                         });
                     }
                 });
+
+                // Pinned message listener
+                SocketService.onPinnedMessage((data: any) => {
+                    console.log('[useGroupChatMessage] Pinned message event:', data);
+
+                    setState((prev) => {
+                        if (data.type === "pinned") {
+                            const pinnedMsg = data.pinnedMessage?.message || data.pinnedMessage;
+                            // Add to pinned messages if not already there
+                            const exists = prev.pinnedMessages.some(
+                                (m) => getMessageId(m) === getMessageId(pinnedMsg)
+                            );
+                            if (!exists) {
+                                return {
+                                    ...prev,
+                                    pinnedMessages: [pinnedMsg, ...prev.pinnedMessages],
+                                    pinnedMessageIndex: 0,
+                                };
+                            }
+                        } else if (data.type === "unpinned") {
+                            const unpinnedMsgId = data.pinnedMessage?.id || data.pinnedMessage?._id;
+                            const filtered = prev.pinnedMessages.filter(
+                                (m) => (m._id || m.id) !== unpinnedMsgId
+                            );
+                            return {
+                                ...prev,
+                                pinnedMessages: filtered,
+                                pinnedMessageIndex: Math.min(
+                                    prev.pinnedMessageIndex,
+                                    Math.max(0, filtered.length - 1)
+                                ),
+                            };
+                        }
+                        return prev;
+                    });
+                });
+
+                // Load pinned messages
+                try {
+                    const pinnedMsgs = await SocketService.getPinnedMessages(conversationId);
+                    setState((prev) => ({
+                        ...prev,
+                        pinnedMessages: pinnedMsgs || [],
+                        pinnedMessageIndex: 0,
+                    }));
+                    console.log('[useGroupChatMessage] Loaded', pinnedMsgs?.length || 0, 'pinned messages');
+                } catch (error: any) {
+                    console.warn('[useGroupChatMessage] Failed to load pinned messages:', error.message);
+                }
             } catch (error: any) {
                 console.error("[useGroupChatMessage] Error loading conversation:", error);
                 clearTimeout(timeoutId);
@@ -533,6 +756,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             SocketService.offMessage();
             SocketService.offMessageUpdated();
             SocketService.offTyping();
+            SocketService.offPinnedMessage();
         };
     }, [groupId, token, user?._id, updateStateAndCache]);
 
@@ -540,6 +764,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         state,
         actions: {
             sendMessage,
+            sendQuotedMessage,
             addMessages,
             markAsSeen,
             handleTyping,
@@ -550,6 +775,10 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             revokeMessage,
             addReaction,
             removeReaction,
+            pinMessage,
+            unpinMessage,
+            navigatePinnedMessages,
+            setReplyingTo,
             retryLoadConversation,
         },
     };

@@ -7,3 +7,6 @@ export { BottomTabBar } from "./BottomTabBar";
 export { default as MediaMessage } from "./MediaMessage";
 export { default as ForwardDialog } from "./ForwardDialog";
 export { VoiceRecorder } from "./VoiceRecorder";
+export { PinnedMessageHeader } from "./PinnedMessageHeader";
+export { ReplyPreview } from "./ReplyPreview";
+export { QuotedMessageBlock } from "./QuotedMessageBlock";

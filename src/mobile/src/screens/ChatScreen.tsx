@@ -22,7 +22,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useChatMessage } from "../../../shared/hooks/useChat";
 import { useAuth } from "../../../shared/hooks";
-import { Avatar, ForwardDialog } from "../components";
+import { Avatar, ForwardDialog, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock } from "../components";
 import { colors } from "../theme";
 import { buildMessageActionSheetOptions } from "../../../shared/utils";
 import MediaMessage from "../components/MediaMessage";
@@ -39,7 +39,8 @@ const MessageBubble: React.FC<{
     message: MessagePayload;
     isOwn: boolean;
     onLongPress?: () => void;
-}> = ({ message, isOwn, onLongPress }) => {
+    messageMap?: Record<string, MessagePayload | undefined>;
+}> = ({ message, isOwn, onLongPress, messageMap = {} }) => {
     const formatTime = (date: string) => {
         const d = new Date(date);
         return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
@@ -57,6 +58,11 @@ const MessageBubble: React.FC<{
                 return "";
         }
     };
+
+    // Resolve quoted message: use existing quotedMessage OR lookup by quotedMessageId
+    const resolvedQuotedMessage = message.quotedMessage ||
+        (message.quotedMessageId && messageMap[message.quotedMessageId]) ||
+        null;
 
     // Check if message has media
     const hasMedia = message.media && message.media.length > 0;
@@ -101,6 +107,23 @@ const MessageBubble: React.FC<{
                         isOwn ? styles.outgoingBubble : styles.incomingBubble,
                     ]}
                 >
+                    {/* Quoted message block if this is a reply */}
+                    {(() => {
+                        const hasQuoted = resolvedQuotedMessage || message.quotedMessageId;
+                        if (hasQuoted) {
+                            console.log('[MessageBubble] Message has quoted content:', {
+                                hasResolvedQuotedMessage: !!resolvedQuotedMessage,
+                                hasQuotedMessageId: !!message.quotedMessageId,
+                                quotedMessageData: resolvedQuotedMessage,
+                            });
+                        }
+                        return resolvedQuotedMessage ? (
+                            <QuotedMessageBlock
+                                quotedMessage={resolvedQuotedMessage}
+                                isOwn={isOwn}
+                            />
+                        ) : null;
+                    })()}
                     <Text
                         style={[
                             styles.bubbleText,
@@ -477,6 +500,19 @@ export const ChatScreen = ({
         () => groupMessagesForGallery(messages, currentUser?.id || currentUserId),
         [messages, currentUser?.id, currentUserId]
     );
+
+    // Create lookup map for quoted messages
+    const messageMap = useMemo(() => {
+        const map: Record<string, MessagePayload | undefined> = {};
+        messages.forEach(msg => {
+            const msgId = msg._id || msg.id;
+            if (msgId) {
+                map[msgId] = msg;
+            }
+        });
+        console.log('[ChatScreen] messageMap created with', Object.keys(map).length, 'messages');
+        return map;
+    }, [messages]);
 
     // Auto-mark messages as seen when new messages arrive
     // Auto mark as seen handled by handleViewableItemsChanged callback
@@ -1110,6 +1146,16 @@ export const ChatScreen = ({
         if (!hasSendableContent || !actionsRef.current) return;
 
         if (draftMedia.length > 0) {
+            // If replying to a message, send as quoted message
+            if (state.replyingTo) {
+                const quotedMessageId = state.replyingTo._id || state.replyingTo.id;
+                if (quotedMessageId && actionsRef.current.sendQuotedMessage) {
+                    await actionsRef.current.sendQuotedMessage(quotedMessageId, trimmedText || "", draftMedia);
+                    setMessageText("");
+                    return;
+                }
+            }
+
             await sendDraftMedia(trimmedText || undefined);
             setMessageText("");
             return;
@@ -1117,9 +1163,21 @@ export const ChatScreen = ({
 
         if (trimmedText) {
             setMessageText("");
-            await actionsRef.current.sendMessage(trimmedText);
+
+            // If replying to a message, send as quoted message
+            if (state.replyingTo) {
+                const quotedMessageId = state.replyingTo._id || state.replyingTo.id;
+                if (quotedMessageId && actionsRef.current.sendQuotedMessage) {
+                    await actionsRef.current.sendQuotedMessage(quotedMessageId, trimmedText);
+                } else {
+                    // Fallback to regular send if sendQuotedMessage is not available
+                    await actionsRef.current.sendMessage(trimmedText);
+                }
+            } else {
+                await actionsRef.current.sendMessage(trimmedText);
+            }
         }
-    }, [draftMedia.length, hasSendableContent, messageText, sendDraftMedia]);
+    }, [draftMedia.length, hasSendableContent, messageText, sendDraftMedia, state.replyingTo]);
 
     /**
      * Handle text input (typing indicator)
@@ -1283,6 +1341,20 @@ export const ChatScreen = ({
                     setForwardMessageIds([messageId]);
                     setShowForwardDialog(true);
                 },
+                onPin: async () => {
+                    try {
+                        if (actionsRef.current?.pinMessage) {
+                            await actionsRef.current.pinMessage(messageId);
+                        }
+                    } catch (error: any) {
+                        Alert.alert("Lỗi", error.message || "Không thể ghim tin nhắn");
+                    }
+                },
+                onReply: () => {
+                    if (actionsRef.current?.setReplyingTo) {
+                        actionsRef.current.setReplyingTo(message);
+                    }
+                },
             })
         );
     }, [currentUser?.id]);
@@ -1345,11 +1417,12 @@ export const ChatScreen = ({
                 <MessageBubble
                     message={item.message}
                     isOwn={isOwn}
+                    messageMap={messageMap}
                     onLongPress={() => handleMessageLongPress(item.message)}
                 />
             );
         },
-        [currentUser?.id, handleMessageLongPress, getAllUserImages]
+        [currentUser?.id, handleMessageLongPress, getAllUserImages, messageMap]
     );
 
     /**
@@ -1440,44 +1513,85 @@ export const ChatScreen = ({
 
             {/* Messages List or Empty State - always show when not loading OR when messages exist */}
             {!isLoading && (
-                <FlatList
-                    ref={flatListRef}
-                    data={renderableMessages}
-                    renderItem={renderMessage}
-                    keyExtractor={(item) => item.key}
-                    inverted
-                    contentContainerStyle={styles.messagesContainer}
-                    scrollEventThrottle={16}
-                    onViewableItemsChanged={handleViewableItemsChanged}
-                    viewabilityConfig={viewabilityConfig}
-                    onEndReached={handleLoadMore}
-                    onEndReachedThreshold={0.5}
-                    ListHeaderComponent={
-                        hasMoreMessages && messages.length > 0 ? (
-                            <View style={styles.loadingMoreContainer}>
-                                <ActivityIndicator
-                                    size="small"
+                <>
+                    {/* Pinned Message Header */}
+                    {state.pinnedMessages.length > 0 && (
+                        <PinnedMessageHeader
+                            pinnedMessage={state.pinnedMessages[state.pinnedMessageIndex] || null}
+                            pinnedIndex={state.pinnedMessageIndex}
+                            pinnedTotal={state.pinnedMessages.length}
+                            onNavigate={(direction) => {
+                                if (actionsRef.current?.navigatePinnedMessages) {
+                                    actionsRef.current.navigatePinnedMessages(direction);
+                                }
+                            }}
+                            onUnpin={async () => {
+                                const msgId = state.pinnedMessages[state.pinnedMessageIndex]?._id
+                                    || state.pinnedMessages[state.pinnedMessageIndex]?.id;
+                                if (msgId && actionsRef.current?.unpinMessage) {
+                                    try {
+                                        await actionsRef.current.unpinMessage(msgId);
+                                    } catch (error: any) {
+                                        Alert.alert("Lỗi", error.message || "Không thể bỏ ghim tin nhắn");
+                                    }
+                                }
+                            }}
+                            onPress={() => {
+                                // Scroll to pinned message
+                                const pinnedMsg = state.pinnedMessages[state.pinnedMessageIndex];
+                                if (pinnedMsg && flatListRef.current) {
+                                    const index = renderableMessages.findIndex(
+                                        (item) =>
+                                            item.kind === "message" &&
+                                            (item.message._id === pinnedMsg._id || item.message.id === pinnedMsg.id)
+                                    );
+                                    if (index >= 0) {
+                                        flatListRef.current.scrollToIndex({ index, animated: true });
+                                    }
+                                }
+                            }}
+                            isAdmin={true}
+                        />
+                    )}
+                    <FlatList
+                        ref={flatListRef}
+                        data={renderableMessages}
+                        renderItem={renderMessage}
+                        keyExtractor={(item) => item.key}
+                        inverted
+                        contentContainerStyle={styles.messagesContainer}
+                        scrollEventThrottle={16}
+                        onViewableItemsChanged={handleViewableItemsChanged}
+                        viewabilityConfig={viewabilityConfig}
+                        onEndReached={handleLoadMore}
+                        onEndReachedThreshold={0.5}
+                        ListHeaderComponent={
+                            hasMoreMessages && messages.length > 0 ? (
+                                <View style={styles.loadingMoreContainer}>
+                                    <ActivityIndicator
+                                        size="small"
+                                        color={colors.textMuted}
+                                    />
+                                </View>
+                            ) : null
+                        }
+                        ListEmptyComponent={
+                            <View style={styles.emptyMessagesContainer}>
+                                <Ionicons
+                                    name="chatbubble-outline"
+                                    size={56}
                                     color={colors.textMuted}
                                 />
+                                <Text style={styles.emptyMessagesText}>
+                                    Hãy gửi lời chào đầu tiên
+                                </Text>
                             </View>
-                        ) : null
-                    }
-                    ListEmptyComponent={
-                        <View style={styles.emptyMessagesContainer}>
-                            <Ionicons
-                                name="chatbubble-outline"
-                                size={56}
-                                color={colors.textMuted}
-                            />
-                            <Text style={styles.emptyMessagesText}>
-                                Hãy gửi lời chào đầu tiên
-                            </Text>
-                        </View>
-                    }
-                    ListFooterComponent={
-                        <TypingIndicator typingUsers={typingUsers} />
-                    }
-                />
+                        }
+                        ListFooterComponent={
+                            <TypingIndicator typingUsers={typingUsers} />
+                        }
+                    />
+                </>
             )}
 
             {/* Upload progress bar */}
@@ -1531,6 +1645,17 @@ export const ChatScreen = ({
             )}
 
             {/* Message Composer */}
+            {/* Reply Preview (if replying to a message) */}
+            {state.replyingTo && (
+                <ReplyPreview
+                    message={state.replyingTo}
+                    onCancel={() => {
+                        if (actionsRef.current?.setReplyingTo) {
+                            actionsRef.current.setReplyingTo(null);
+                        }
+                    }}
+                />
+            )}
             <View style={styles.messageComposer}>
                 <Pressable
                     style={styles.composerIconButton}

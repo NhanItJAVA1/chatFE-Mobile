@@ -6,6 +6,16 @@ import { apiCall } from "./api";
 const SOCKET_URL = getApiBaseUrl().replace("/v1", "");
 const SOCKET_NAMESPACE = "/messages";
 
+export interface QuotedMessage {
+    _id?: string;
+    id?: string;
+    text?: string;
+    senderId: string;
+    senderName?: string;
+    type?: string;
+    media?: any[];
+}
+
 export interface MessagePayload {
     _id?: string;
     id?: string;
@@ -25,6 +35,17 @@ export interface MessagePayload {
     deletedForUserIds?: string[];
     deletedBy?: string;
     deletedAt?: string;
+
+    // Reply/Quote fields
+    quotedMessageId?: string;
+    quotedMessage?: QuotedMessage;
+    quotedMessagePreview?: string;
+
+    // Pin fields
+    pinned?: boolean;
+    pinnedAt?: Date;
+    pinnedBy?: string;
+    pinnedByName?: string;
 }
 
 export interface TypingData {
@@ -312,6 +333,80 @@ export class SocketService {
                 });
             } catch (error: any) {
                 console.error('[SocketService] sendMessage error:', error);
+                reject(error);
+            }
+        });
+    }
+
+    /**
+     * Send quoted message (reply) via Socket.IO
+     * Emits "quoteMessage" event which backend converts to receiveMessage
+     */
+    static sendQuotedMessage(
+        conversationId: string,
+        quotedMessageId: string,
+        text: string,
+        media?: any[],
+        quotedSenderName?: string,
+        quotedSenderAvatar?: string
+    ): Promise<MessagePayload[]> {
+        return new Promise(async (resolve, reject) => {
+            try {
+                if (!this.socket) {
+                    throw new Error("Socket not connected");
+                }
+
+                // Wait for connection if not connected
+                if (!this.socket.connected) {
+                    console.log('[SocketService] Socket not connected, waiting before sending quoted message...');
+                    await this.waitForConnection(5000);
+                }
+
+                const payload = {
+                    conversationId,
+                    quotedMessageId,
+                    text,
+                    media: media || [],
+                    // Include quoted sender info for client-side rendering
+                    quotedSenderName,
+                    quotedSenderAvatar,
+                };
+
+                console.log('[SocketService] Emitting sendQuotedMessage (quoteMessage event):', {
+                    conversationId,
+                    quotedMessageId,
+                    textLength: text.length,
+                    mediaCount: media?.length || 0,
+                    quotedSenderName,
+                });
+
+                this.socket.emit("quoteMessage", payload, (response: any) => {
+                    console.log('[SocketService] quoteMessage callback received:', {
+                        success: response?.success,
+                        hasMessages: !!response?.messages,
+                        messagesCount: response?.messages?.length,
+                    });
+                    if (response?.success) {
+                        const messages = response?.messages || response?.data || response?.message;
+                        if (Array.isArray(messages)) {
+                            console.log('[SocketService] ✓ Quoted message sent, received', messages.length, 'messages back');
+                            resolve(messages);
+                            return;
+                        }
+                        if (messages) {
+                            console.log('[SocketService] ✓ Quoted message sent');
+                            resolve([messages]);
+                            return;
+                        }
+                        console.log('[SocketService] ✓ Quoted message sent (empty response)');
+                        resolve([]);
+                    } else {
+                        console.error('[SocketService] Send quoted message failed:', response?.error);
+                        reject(new Error(response?.error || "Failed to send quoted message"));
+                    }
+                });
+            } catch (error: any) {
+                console.error('[SocketService] sendQuotedMessage error:', error);
                 reject(error);
             }
         });

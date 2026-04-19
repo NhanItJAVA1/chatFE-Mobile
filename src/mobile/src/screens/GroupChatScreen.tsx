@@ -25,7 +25,7 @@ import { useAuth } from "../../../shared/hooks";
 import { GroupChatService } from "../../../shared/services/groupChatService";
 import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
-import { Avatar, ForwardDialog, VoiceRecorder } from "../components";
+import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock } from "../components";
 import MediaMessage from "../components/MediaMessage";
 import { colors } from "../theme";
 import { buildMessageActionSheetOptions } from "../../../shared/utils";
@@ -753,16 +753,30 @@ export const GroupChatScreen: React.FC<{
         try {
             setIsSending(true);
 
-            // Send text message
-            if (trimmedText) {
-                await chatActions.sendMessage(trimmedText);
-                setMessageText("");
-            }
+            // If replying to a message, send as quoted message
+            if (chatState.replyingTo) {
+                const quotedMessageId = chatState.replyingTo._id || chatState.replyingTo.id;
+                if (quotedMessageId && chatActions.sendQuotedMessage) {
+                    if (draftMedia.length > 0) {
+                        await chatActions.sendQuotedMessage(quotedMessageId, trimmedText || "", draftMedia);
+                        setMessageText("");
+                    } else if (trimmedText) {
+                        await chatActions.sendQuotedMessage(quotedMessageId, trimmedText);
+                        setMessageText("");
+                    }
+                }
+            } else {
+                // Send text message normally
+                if (trimmedText) {
+                    await chatActions.sendMessage(trimmedText);
+                    setMessageText("");
+                }
 
-            // Send media
-            if (draftMedia.length > 0) {
-                await sendDraftMedia(trimmedText || undefined);
-                setMessageText("");
+                // Send media
+                if (draftMedia.length > 0) {
+                    await sendDraftMedia(trimmedText || undefined);
+                    setMessageText("");
+                }
             }
 
             scrollToLatestMessage(true);
@@ -771,7 +785,7 @@ export const GroupChatScreen: React.FC<{
         } finally {
             setIsSending(false);
         }
-    }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia, scrollToLatestMessage]);
+    }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia, scrollToLatestMessage, chatState.replyingTo]);
 
     const handleInputChange = useCallback((text: string) => {
         setMessageText(text);
@@ -785,6 +799,8 @@ export const GroupChatScreen: React.FC<{
         if (!messageId) return;
 
         const isOwn = !!currentUserId && String(message.senderId || "") === String(currentUserId);
+        const isAdmin = groupState?.group?.admins?.includes(currentUserId);
+
         Alert.alert(
             "Tùy chọn tin nhắn",
             `${message.text?.substring(0, 50) || "[Media]"}`,
@@ -843,9 +859,23 @@ export const GroupChatScreen: React.FC<{
                     setForwardMessageIds([messageId]);
                     setShowForwardDialog(true);
                 },
+                onPin: isAdmin ? async () => {
+                    try {
+                        if (actionsRef.current?.pinMessage) {
+                            await actionsRef.current.pinMessage(messageId);
+                        }
+                    } catch (error: any) {
+                        Alert.alert("Lỗi", error.message || "Không thể ghim tin nhắn");
+                    }
+                } : undefined,
+                onReply: () => {
+                    if (actionsRef.current?.setReplyingTo) {
+                        actionsRef.current.setReplyingTo(message);
+                    }
+                },
             })
         );
-    }, [currentUserId]);
+    }, [currentUserId, groupState?.group?.admins]);
 
     const handleSaveEdit = useCallback(async () => {
         if (!selectedMessageId || !editText.trim()) {
@@ -928,6 +958,19 @@ export const GroupChatScreen: React.FC<{
         setSelectedImageIndex(0);
     }, []);
 
+    // Create lookup map for quoted messages (must be before renderMessage)
+    const messageMap = useMemo(() => {
+        const map: Record<string, any | undefined> = {};
+        chatState.messages.forEach(msg => {
+            const msgId = msg._id || msg.id;
+            if (msgId) {
+                map[msgId] = msg;
+            }
+        });
+        console.log('[GroupChatScreen] messageMap created with', Object.keys(map).length, 'messages');
+        return map;
+    }, [chatState.messages]);
+
     const renderMessage = useCallback(
         ({ item }: any) => {
             // Check if it's a system message
@@ -938,6 +981,11 @@ export const GroupChatScreen: React.FC<{
                     </View>
                 );
             }
+
+            // Resolve quoted message: use existing quotedMessage OR lookup by quotedMessageId
+            const resolvedQuotedMessage = item.quotedMessage ||
+                (item.quotedMessageId && messageMap[item.quotedMessageId]) ||
+                null;
 
             // Use correct field: user.id (not user._id)
             const isOwn = item.senderId === user?.id;
@@ -1073,6 +1121,23 @@ export const GroupChatScreen: React.FC<{
                                         )}
                                     </View>
                                 )}
+                                {/* Quoted message block if this is a reply */}
+                                {(() => {
+                                    const hasQuoted = resolvedQuotedMessage || item.quotedMessageId;
+                                    if (hasQuoted) {
+                                        console.log('[GroupMessageBubble] Message has quoted content:', {
+                                            hasResolvedQuotedMessage: !!resolvedQuotedMessage,
+                                            hasQuotedMessageId: !!item.quotedMessageId,
+                                            quotedMessageData: resolvedQuotedMessage,
+                                        });
+                                    }
+                                    return resolvedQuotedMessage ? (
+                                        <QuotedMessageBlock
+                                            quotedMessage={resolvedQuotedMessage}
+                                            isOwn={isOwn}
+                                        />
+                                    ) : null;
+                                })()}
                                 <Text style={[
                                     styles.messageText,
                                     isOwn ? styles.messageTextOwn : styles.messageTextOther,
@@ -1103,7 +1168,7 @@ export const GroupChatScreen: React.FC<{
                 </Pressable>
             );
         },
-        [user?.id, handleMessageLongPress, groupState.members, openImageViewer]
+        [user?.id, handleMessageLongPress, groupState.members, openImageViewer, messageMap]
     );
 
     const handleViewableItemsChanged = useCallback(
@@ -1219,46 +1284,86 @@ export const GroupChatScreen: React.FC<{
 
             {/* Messages List */}
             {!chatState.isLoading && (
-                <FlatList
-                    ref={flatListRef}
-                    data={renderableMessages}
-                    keyExtractor={(item) => item._id || item.id || `${item.senderId}-${item.createdAt}`}
-                    renderItem={renderMessage}
-                    inverted
-                    contentContainerStyle={styles.messagesContainer}
-                    scrollEventThrottle={16}
-                    onEndReachedThreshold={0.5}
-                    onEndReached={() => {
-                        if (chatState.hasMoreMessages && !isSending && !chatState.isLoading) {
-                            chatActions.loadMoreMessages?.();
-                        }
-                    }}
-                    onViewableItemsChanged={handleViewableItemsChanged}
-                    viewabilityConfig={viewabilityConfigRef.current}
-                    ListEmptyComponent={
-                        <View style={styles.emptyMessagesContainer}>
-                            <Ionicons
-                                name="chatbubble-outline"
-                                size={56}
-                                color={colors.textMuted}
-                            />
-                            <Text style={styles.emptyMessagesText}>
-                                Hãy gửi lời chào đầu tiên
-                            </Text>
-                        </View>
-                    }
-                    ListFooterComponent={
-                        chatState.typingUsers.size > 0 && (
-                            <View style={styles.typingIndicator}>
-                                <View style={styles.typingDots}>
-                                    <View style={styles.typingDot} />
-                                    <View style={styles.typingDot} />
-                                    <View style={styles.typingDot} />
-                                </View>
+                <>
+                    {/* Pinned Message Header */}
+                    {chatState.pinnedMessages.length > 0 && (
+                        <PinnedMessageHeader
+                            pinnedMessage={chatState.pinnedMessages[chatState.pinnedMessageIndex] || null}
+                            pinnedIndex={chatState.pinnedMessageIndex}
+                            pinnedTotal={chatState.pinnedMessages.length}
+                            onNavigate={(direction) => {
+                                if (chatActions.navigatePinnedMessages) {
+                                    chatActions.navigatePinnedMessages(direction);
+                                }
+                            }}
+                            onUnpin={async () => {
+                                const msgId = chatState.pinnedMessages[chatState.pinnedMessageIndex]?._id
+                                    || chatState.pinnedMessages[chatState.pinnedMessageIndex]?.id;
+                                if (msgId && chatActions.unpinMessage) {
+                                    try {
+                                        await chatActions.unpinMessage(msgId);
+                                    } catch (error: any) {
+                                        Alert.alert("Lỗi", error.message || "Không thể bỏ ghim tin nhắn");
+                                    }
+                                }
+                            }}
+                            onPress={() => {
+                                // Scroll to pinned message
+                                const pinnedMsg = chatState.pinnedMessages[chatState.pinnedMessageIndex];
+                                if (pinnedMsg && flatListRef.current) {
+                                    const index = renderableMessages.findIndex(
+                                        (item) =>
+                                            item._id === pinnedMsg._id || item.id === pinnedMsg.id
+                                    );
+                                    if (index >= 0) {
+                                        flatListRef.current.scrollToIndex({ index, animated: true });
+                                    }
+                                }
+                            }}
+                            isAdmin={groupState?.group?.admins?.includes(currentUserId)}
+                        />
+                    )}
+                    <FlatList
+                        ref={flatListRef}
+                        data={renderableMessages}
+                        keyExtractor={(item) => item._id || item.id || `${item.senderId}-${item.createdAt}`}
+                        renderItem={renderMessage}
+                        inverted
+                        contentContainerStyle={styles.messagesContainer}
+                        scrollEventThrottle={16}
+                        onEndReachedThreshold={0.5}
+                        onEndReached={() => {
+                            if (chatState.hasMoreMessages && !isSending && !chatState.isLoading) {
+                                chatActions.loadMoreMessages?.();
+                            }
+                        }}
+                        onViewableItemsChanged={handleViewableItemsChanged}
+                        viewabilityConfig={viewabilityConfigRef.current}
+                        ListEmptyComponent={
+                            <View style={styles.emptyMessagesContainer}>
+                                <Ionicons
+                                    name="chatbubble-outline"
+                                    size={56}
+                                    color={colors.textMuted}
+                                />
+                                <Text style={styles.emptyMessagesText}>
+                                    Hãy gửi lời chào đầu tiên
+                                </Text>
                             </View>
-                        )
-                    }
-                />
+                        }
+                        ListFooterComponent={
+                            chatState.typingUsers.size > 0 && (
+                                <View style={styles.typingIndicator}>
+                                    <View style={styles.typingDots}>
+                                        <View style={styles.typingDot} />
+                                        <View style={styles.typingDot} />
+                                        <View style={styles.typingDot} />
+                                    </View>
+                                </View>
+                            )
+                        }
+                    />
+                </>
             )}
 
             {/* Upload progress bar */}
@@ -1376,6 +1481,16 @@ export const GroupChatScreen: React.FC<{
             )}
 
             {/* Message Composer */}
+            {chatState.replyingTo && (
+                <ReplyPreview
+                    message={chatState.replyingTo}
+                    onCancel={() => {
+                        if (chatActions.setReplyingTo) {
+                            chatActions.setReplyingTo(null);
+                        }
+                    }}
+                />
+            )}
             <View style={styles.messageComposer}>
                 <Pressable
                     style={styles.composerIconButton}
