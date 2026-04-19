@@ -447,15 +447,23 @@ export const useGroupChat = (): UseGroupChatReturn => {
                 return {
                     ...prev,
                     group: { ...prev.group!, ownerId: data.newOwnerId },
-                    members: prev.members.map((m) =>
-                        m.userId === data.newOwnerId
-                            ? { ...m, role: "owner" }
-                            : m.userId === data.oldOwnerId
-                                ? { ...m, role: "admin" }
-                                : m
-                    ),
                 };
             });
+
+            // Refresh authoritative roles from backend instead of forcing local owner/admin role assumptions.
+            GroupChatService.getGroupMembersWithProfiles(data.conversationId)
+                .then((members) => {
+                    setState((prev) => {
+                        if (prev.group?._id !== data.conversationId) return prev;
+                        return {
+                            ...prev,
+                            members,
+                        };
+                    });
+                })
+                .catch(() => {
+                    // Keep previous members on transient errors.
+                });
         });
 
         // Listen for member approved

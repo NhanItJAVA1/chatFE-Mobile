@@ -42,6 +42,7 @@ export const GroupSettingsScreen: React.FC<{
     const [processingDangerAction, setProcessingDangerAction] = useState(false);
     const [showTransferBeforeLeave, setShowTransferBeforeLeave] = useState(false);
     const [transferOwnerTargetId, setTransferOwnerTargetId] = useState<string | null>(null);
+    const [hasLoadedGroupOnce, setHasLoadedGroupOnce] = useState(false);
 
     // Collapse state
     const [adminCollapsed, setAdminCollapsed] = useState(false);
@@ -50,6 +51,12 @@ export const GroupSettingsScreen: React.FC<{
     useEffect(() => {
         loadGroupData();
     }, [groupId]);
+
+    useEffect(() => {
+        if (groupState.group) {
+            setHasLoadedGroupOnce(true);
+        }
+    }, [groupState.group]);
 
     // Organize members by role from member records + ownerId.
     useEffect(() => {
@@ -246,14 +253,7 @@ export const GroupSettingsScreen: React.FC<{
                     try {
                         setProcessingDangerAction(true);
                         await groupActions.leaveGroup(groupId);
-                        Alert.alert("Thành công", "Bạn đã rời nhóm.", [
-                            {
-                                text: "OK",
-                                onPress: () => {
-                                    navigateToHomeAfterAction();
-                                },
-                            },
-                        ]);
+                        navigateToHomeAfterAction();
                     } catch (err: any) {
                         Alert.alert("Lỗi", err.message || "Không thể rời nhóm");
                     } finally {
@@ -279,19 +279,26 @@ export const GroupSettingsScreen: React.FC<{
 
         try {
             setProcessingDangerAction(true);
+
+            const oldOwnerId =
+                groupState.members.find((member) =>
+                    currentUserIds.includes(String(member.userId))
+                )?.userId || currentUserIds[0];
+
+            // Best-effort demotion before ownership transfer so old owner is not retained as admin on rejoin.
+            if (oldOwnerId) {
+                try {
+                    await groupActions.setAdmin(groupId, oldOwnerId, false);
+                } catch {
+                    // Some backends may block owner self-demotion; continue transfer flow.
+                }
+            }
+
             await groupActions.transferOwner(groupId, transferOwnerTargetId);
             await groupActions.leaveGroup(groupId);
             setShowTransferBeforeLeave(false);
             setTransferOwnerTargetId(null);
-
-            Alert.alert("Thành công", "Đã chuyển quyền chủ nhóm và rời nhóm.", [
-                {
-                    text: "OK",
-                    onPress: () => {
-                        navigateToHomeAfterAction();
-                    },
-                },
-            ]);
+            navigateToHomeAfterAction();
         } catch (err: any) {
             Alert.alert("Lỗi", err.message || "Không thể chuyển quyền và rời nhóm");
         } finally {
@@ -300,6 +307,8 @@ export const GroupSettingsScreen: React.FC<{
     }, [
         transferOwnerTargetId,
         processingDangerAction,
+        groupState.members,
+        currentUserIds,
         groupActions,
         groupId,
         navigateToHomeAfterAction,
@@ -322,14 +331,7 @@ export const GroupSettingsScreen: React.FC<{
                         try {
                             setProcessingDangerAction(true);
                             await groupActions.dissolveGroup(groupId);
-                            Alert.alert("Đã giải tán", "Nhóm đã được giải tán thành công.", [
-                                {
-                                    text: "OK",
-                                    onPress: () => {
-                                        navigateToHomeAfterAction();
-                                    },
-                                },
-                            ]);
+                            navigateToHomeAfterAction();
                         } catch (err: any) {
                             Alert.alert("Lỗi", err.message || "Không thể giải tán nhóm");
                         } finally {
@@ -557,12 +559,16 @@ export const GroupSettingsScreen: React.FC<{
         );
     };
 
-    if (!groupState.group) {
+    if (!groupState.group && !hasLoadedGroupOnce) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color={colors.accent} />
             </View>
         );
+    }
+
+    if (!groupState.group && hasLoadedGroupOnce) {
+        return <View style={styles.screen} />;
     }
 
     return (
