@@ -1441,6 +1441,7 @@ export const GroupChatScreen: React.FC<{
                 currentConversationId={chatState.conversation?._id || chatState.conversation?.id || groupId || ""}
                 currentUserId={currentUserId}
                 messageIds={forwardMessageIds}
+                excludeTargetIds={groupId ? [groupId] : []}
                 onDismiss={() => {
                     setShowForwardDialog(false);
                     setForwardMessageIds([]);

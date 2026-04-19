@@ -1629,6 +1629,7 @@ export const ChatScreen = ({
                 currentConversationId={conversation?._id || conversation?.id || ""}
                 currentUserId={currentUserId}
                 messageIds={forwardMessageIds}
+                excludeTargetIds={friendId ? [friendId] : []}
                 onDismiss={() => {
                     setShowForwardDialog(false);
                     setForwardMessageIds([]);

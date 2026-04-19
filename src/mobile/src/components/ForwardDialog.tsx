@@ -24,6 +24,7 @@ type ForwardTarget = {
     displayName: string;
     subtitle: string;
     avatar?: string;
+    type: "PRIVATE" | "GROUP";
 };
 
 interface ForwardDialogProps {
@@ -31,6 +32,7 @@ interface ForwardDialogProps {
     currentConversationId: string;
     currentUserId: string;
     messageIds: string[];
+    excludeTargetIds?: string[];
     onDismiss: () => void;
     onForwardSuccess?: (result: ForwardResult) => void;
 }
@@ -40,6 +42,7 @@ const ForwardDialog: React.FC<ForwardDialogProps> = ({
     currentConversationId,
     currentUserId,
     messageIds,
+    excludeTargetIds = [],
     onDismiss,
     onForwardSuccess,
 }) => {
@@ -69,11 +72,21 @@ const ForwardDialog: React.FC<ForwardDialogProps> = ({
 
                 const userCache = new Map<string, any>();
                 const mergedTargets = new Map<string, ForwardTarget>();
+                const excludedTargetIdSet = new Set(
+                    [currentConversationId, ...excludeTargetIds]
+                        .filter(Boolean)
+                        .map((id) => String(id))
+                );
 
                 const addTarget = (target: ForwardTarget) => {
                     if (!target.id) {
                         return;
                     }
+
+                    if (excludedTargetIdSet.has(String(target.id))) {
+                        return;
+                    }
+
                     mergedTargets.set(target.id, target);
                 };
 
@@ -83,6 +96,7 @@ const ForwardDialog: React.FC<ForwardDialogProps> = ({
                         displayName: friend.friendInfo?.displayName || "Người dùng",
                         subtitle: friend.friendInfo?.phoneNumber || "Bạn bè",
                         avatar: friend.friendInfo?.avatar,
+                        type: "PRIVATE",
                     });
                 });
 
@@ -92,31 +106,52 @@ const ForwardDialog: React.FC<ForwardDialogProps> = ({
                         continue;
                     }
 
-                    if (conversation.type !== "PRIVATE") {
-                        continue;
-                    }
+                    const conversationType = String(conversation.type || "").toUpperCase();
 
-                    const otherUserId = conversation.members?.find((memberId) => memberId !== currentUserId);
-                    if (!otherUserId) {
-                        continue;
-                    }
-
-                    let user = userCache.get(otherUserId);
-                    if (!user) {
-                        try {
-                            const response = await api.get(`/users/${otherUserId}`);
-                            user = response?.data || response;
-                            userCache.set(otherUserId, user);
-                        } catch {
-                            user = null;
+                    if (conversationType === "PRIVATE") {
+                        const otherUserId = conversation.members?.find((memberId) => memberId !== currentUserId);
+                        if (!otherUserId || excludedTargetIdSet.has(String(otherUserId))) {
+                            continue;
                         }
+
+                        let user = userCache.get(otherUserId);
+                        if (!user) {
+                            try {
+                                const response = await api.get(`/users/${otherUserId}`);
+                                user = response?.data || response;
+                                userCache.set(otherUserId, user);
+                            } catch {
+                                user = null;
+                            }
+                        }
+
+                        addTarget({
+                            id: otherUserId,
+                            displayName: user?.displayName || user?.name || user?.phone || "Người dùng",
+                            subtitle: user?.phone ? `Phone: ${user.phone}` : "Cuộc trò chuyện",
+                            avatar: user?.avatarUrl || user?.avatar,
+                            type: "PRIVATE",
+                        });
+
+                        continue;
+                    }
+
+                    if (conversationType !== "GROUP") {
+                        continue;
+                    }
+
+                    if (excludedTargetIdSet.has(conversationId)) {
+                        continue;
                     }
 
                     addTarget({
-                        id: otherUserId,
-                        displayName: user?.displayName || user?.name || user?.phone || "Người dùng",
-                        subtitle: user?.phone ? `Phone: ${user.phone}` : "Cuộc trò chuyện",
-                        avatar: user?.avatarUrl || user?.avatar,
+                        id: conversationId,
+                        displayName: conversation.name || "Nhóm",
+                        subtitle: Array.isArray(conversation.members)
+                            ? `${conversation.members.length} thành viên`
+                            : "Nhóm chat",
+                        avatar: conversation.avatarUrl,
+                        type: "GROUP",
                     });
                 }
 
@@ -277,6 +312,7 @@ const ForwardDialog: React.FC<ForwardDialogProps> = ({
                             filteredConversations.map((conversation) => {
                                 const conversationId = conversation.id;
                                 const selected = selectedConversationIds.has(conversationId);
+                                const isGroup = conversation.type === "GROUP";
 
                                 return (
                                     <Pressable
@@ -289,7 +325,7 @@ const ForwardDialog: React.FC<ForwardDialogProps> = ({
                                         </View>
                                         <View style={styles.itemMeta}>
                                             <Text style={styles.itemTitle} numberOfLines={1}>
-                                                {conversation.displayName}
+                                                {conversation.displayName}{isGroup ? " (Nhóm)" : ""}
                                             </Text>
                                             <Text style={styles.itemSubtitle} numberOfLines={1}>
                                                 {conversation.subtitle}
