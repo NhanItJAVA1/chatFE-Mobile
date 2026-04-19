@@ -40,6 +40,8 @@ export const GroupSettingsScreen: React.FC<{
     const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
     const [showMemberActions, setShowMemberActions] = useState(false);
     const [processingDangerAction, setProcessingDangerAction] = useState(false);
+    const [showTransferBeforeLeave, setShowTransferBeforeLeave] = useState(false);
+    const [transferOwnerTargetId, setTransferOwnerTargetId] = useState<string | null>(null);
 
     // Collapse state
     const [adminCollapsed, setAdminCollapsed] = useState(false);
@@ -218,10 +220,20 @@ export const GroupSettingsScreen: React.FC<{
         }
 
         if (currentUserRole === "owner") {
-            Alert.alert(
-                "Không thể rời nhóm",
-                "Bạn đang là chủ nhóm. Vui lòng chuyển quyền chủ nhóm cho thành viên khác trước khi rời nhóm."
-            );
+            const transferableMembersCount = groupState.members.filter(
+                (member) => !currentUserIds.includes(String(member.userId))
+            ).length;
+
+            if (transferableMembersCount === 0) {
+                Alert.alert(
+                    "Không thể rời nhóm",
+                    "Nhóm hiện không có thành viên khác để chuyển quyền chủ nhóm."
+                );
+                return;
+            }
+
+            setTransferOwnerTargetId(null);
+            setShowTransferBeforeLeave(true);
             return;
         }
 
@@ -250,7 +262,48 @@ export const GroupSettingsScreen: React.FC<{
                 },
             },
         ]);
-    }, [processingDangerAction, currentUserRole, groupActions, groupId, navigateToHomeAfterAction]);
+    }, [
+        processingDangerAction,
+        currentUserRole,
+        groupState.members,
+        currentUserIds,
+        groupActions,
+        groupId,
+        navigateToHomeAfterAction,
+    ]);
+
+    const handleConfirmTransferAndLeave = useCallback(async () => {
+        if (!transferOwnerTargetId || processingDangerAction) {
+            return;
+        }
+
+        try {
+            setProcessingDangerAction(true);
+            await groupActions.transferOwner(groupId, transferOwnerTargetId);
+            await groupActions.leaveGroup(groupId);
+            setShowTransferBeforeLeave(false);
+            setTransferOwnerTargetId(null);
+
+            Alert.alert("Thành công", "Đã chuyển quyền chủ nhóm và rời nhóm.", [
+                {
+                    text: "OK",
+                    onPress: () => {
+                        navigateToHomeAfterAction();
+                    },
+                },
+            ]);
+        } catch (err: any) {
+            Alert.alert("Lỗi", err.message || "Không thể chuyển quyền và rời nhóm");
+        } finally {
+            setProcessingDangerAction(false);
+        }
+    }, [
+        transferOwnerTargetId,
+        processingDangerAction,
+        groupActions,
+        groupId,
+        navigateToHomeAfterAction,
+    ]);
 
     const handleDissolveGroup = useCallback(() => {
         if (processingDangerAction) {
@@ -424,6 +477,86 @@ export const GroupSettingsScreen: React.FC<{
         );
     };
 
+    const renderTransferBeforeLeave = () => {
+        if (!showTransferBeforeLeave) return null;
+
+        const transferableMembers = groupState.members.filter(
+            (member) => !currentUserIds.includes(String(member.userId))
+        );
+
+        return (
+            <View style={styles.actionPanel}>
+                <View style={styles.actionHeader}>
+                    <Text style={styles.actionTitle}>Chọn người nhận quyền chủ nhóm</Text>
+                    <Pressable
+                        onPress={() => {
+                            if (!processingDangerAction) {
+                                setShowTransferBeforeLeave(false);
+                                setTransferOwnerTargetId(null);
+                            }
+                        }}
+                    >
+                        <Ionicons name="close" size={24} color={colors.text} />
+                    </Pressable>
+                </View>
+
+                <View style={styles.actionContent}>
+                    <Text style={styles.transferDescription}>
+                        Hãy chọn 1 thành viên để chuyển quyền chủ nhóm trước khi rời nhóm.
+                    </Text>
+
+                    <FlatList
+                        data={transferableMembers}
+                        keyExtractor={(item) => item.userId}
+                        style={styles.transferList}
+                        renderItem={({ item }) => {
+                            const isSelected = transferOwnerTargetId === item.userId;
+                            const roleLabel = item.role === "admin" ? "Phó nhóm" : "Thành viên";
+
+                            return (
+                                <Pressable
+                                    style={[
+                                        styles.transferMemberItem,
+                                        isSelected && styles.transferMemberItemSelected,
+                                    ]}
+                                    onPress={() => setTransferOwnerTargetId(item.userId)}
+                                >
+                                    <Avatar
+                                        label={(item.name || "?").slice(0, 1).toUpperCase()}
+                                        size={36}
+                                        backgroundColor={colors.accentStrong}
+                                        imageUrl={item.avatar}
+                                    />
+                                    <View style={styles.transferMemberInfo}>
+                                        <Text style={styles.transferMemberName}>{item.name || "Unknown"}</Text>
+                                        <Text style={styles.transferMemberRole}>{roleLabel}</Text>
+                                    </View>
+                                    {isSelected ? (
+                                        <Ionicons name="checkmark-circle" size={22} color={colors.accent} />
+                                    ) : (
+                                        <Ionicons name="ellipse-outline" size={22} color={colors.textMuted} />
+                                    )}
+                                </Pressable>
+                            );
+                        }}
+                    />
+
+                    <Pressable
+                        style={[
+                            styles.transferAndLeaveButton,
+                            (!transferOwnerTargetId || processingDangerAction) && styles.actionDisabled,
+                        ]}
+                        disabled={!transferOwnerTargetId || processingDangerAction}
+                        onPress={handleConfirmTransferAndLeave}
+                    >
+                        <Ionicons name="swap-horizontal-outline" size={18} color={colors.danger} />
+                        <Text style={styles.transferAndLeaveText}>Chuyển owner và rời nhóm</Text>
+                    </Pressable>
+                </View>
+            </View>
+        );
+    };
+
     if (!groupState.group) {
         return (
             <View style={styles.loadingContainer}>
@@ -558,6 +691,9 @@ export const GroupSettingsScreen: React.FC<{
 
             {/* Member Actions Overlay */}
             {showMemberActions && renderMemberActions()}
+
+            {/* Owner transfer-and-leave overlay */}
+            {showTransferBeforeLeave && renderTransferBeforeLeave()}
         </View>
     );
 };
@@ -771,5 +907,60 @@ const styles = StyleSheet.create({
     },
     actionDisabled: {
         opacity: 0.5,
+    },
+    transferDescription: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginBottom: 12,
+        lineHeight: 18,
+    },
+    transferList: {
+        maxHeight: 280,
+        marginBottom: 12,
+    },
+    transferMemberItem: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        paddingVertical: 10,
+        paddingHorizontal: 10,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+        marginBottom: 8,
+        backgroundColor: colors.background,
+    },
+    transferMemberItemSelected: {
+        borderColor: colors.accent,
+    },
+    transferMemberInfo: {
+        flex: 1,
+    },
+    transferMemberName: {
+        fontSize: 14,
+        fontWeight: "600",
+        color: colors.text,
+    },
+    transferMemberRole: {
+        marginTop: 2,
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    transferAndLeaveButton: {
+        borderWidth: 1,
+        borderColor: colors.danger,
+        borderRadius: 10,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        backgroundColor: colors.surface,
+    },
+    transferAndLeaveText: {
+        fontSize: 14,
+        fontWeight: "700",
+        color: colors.danger,
     },
 });
