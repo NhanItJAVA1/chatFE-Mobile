@@ -24,6 +24,7 @@ import { useChatMessage } from "../../../shared/hooks/useChat";
 import { useAuth } from "../../../shared/hooks";
 import { Avatar, ForwardDialog } from "../components";
 import { colors } from "../theme";
+import { buildMessageActionSheetOptions } from "../../../shared/utils";
 import MediaMessage from "../components/MediaMessage";
 import chatMediaService from "../../../shared/services/chatMediaService";
 import { unfriend } from "../../../shared/services/friendService";
@@ -1224,82 +1225,65 @@ export const ChatScreen = ({
         if (!messageId) return;
 
         const isOwn = message.senderId === currentUser?.id;
-        const options: string[] = ["Hủy", "Xóa phía tôi"];
-        const cancelButtonIndex = 0;
-
-        // Add actions based on message ownership
-        if (isOwn) {
-            options.push("Sửa");
-            options.push("Thu hồi");
-        }
-
-        options.push("Chuyển tiếp");
-
         Alert.alert(
             "Tùy chọn tin nhắn",
             `${message.text?.substring(0, 50) || "[Media]"}`,
-            options.map((action, index) => ({
-                text: action,
-                onPress: () => {
-                    if (action === "Hủy") return;
-                    if (action === "Sửa") {
-                        setSelectedMessageId(messageId);
-                        setEditText(message.text || "");
-                        setShowEditDialog(true);
-                    } else if (action === "Xóa phía tôi") {
-                        Alert.alert(
-                            "Xóa tin nhắn",
-                            "Xóa tin nhắn này khỏi phía bạn?",
-                            [
-                                { text: "Hủy", style: "cancel" },
-                                {
-                                    text: "Xóa",
-                                    style: "destructive",
-                                    onPress: async () => {
-                                        try {
-                                            if (actionsRef.current?.deleteMessage) {
-                                                await actionsRef.current.deleteMessage(messageId);
-                                            }
-                                        } catch (error: any) {
-                                            Alert.alert("Lỗi", error.message || "Không thể xóa tin nhắn");
+            buildMessageActionSheetOptions({
+                isOwn,
+                onDeleteForMe: async () => {
+                    Alert.alert(
+                        "Xóa tin nhắn",
+                        "Xóa tin nhắn này khỏi phía bạn?",
+                        [
+                            { text: "Hủy", style: "cancel" },
+                            {
+                                text: "Xóa",
+                                style: "destructive",
+                                onPress: async () => {
+                                    try {
+                                        if (actionsRef.current?.deleteMessage) {
+                                            await actionsRef.current.deleteMessage(messageId);
                                         }
-                                    },
+                                    } catch (error: any) {
+                                        Alert.alert("Lỗi", error.message || "Không thể xóa tin nhắn");
+                                    }
                                 },
-                            ]
-                        );
-                    } else if (action === "Thu hồi") {
-                        Alert.alert(
-                            "Thu hồi tin nhắn",
-                            "Tin nhắn sẽ bị xóa với tất cả mọi người?",
-                            [
-                                { text: "Hủy", style: "cancel" },
-                                {
-                                    text: "Thu hồi",
-                                    style: "destructive",
-                                    onPress: async () => {
-                                        try {
-                                            if (actionsRef.current?.revokeMessage) {
-                                                await actionsRef.current.revokeMessage(messageId);
-                                            }
-                                        } catch (error: any) {
-                                            Alert.alert("Lỗi", error.message || "Không thể thu hồi tin nhắn");
-                                        }
-                                    },
-                                },
-                            ]
-                        );
-                    } else if (action === "Chuyển tiếp") {
-                        setForwardMessageIds([messageId]);
-                        setShowForwardDialog(true);
-                    }
+                            },
+                        ]
+                    );
                 },
-                style:
-                    index === cancelButtonIndex
-                        ? "cancel"
-                        : action === "Xóa phía tôi" || action === "Thu hồi"
-                            ? "destructive"
-                            : "default",
-            }))
+                onEdit: () => {
+                    setSelectedMessageId(messageId);
+                    setEditText(message.text || "");
+                    setShowEditDialog(true);
+                },
+                onRevoke: async () => {
+                    Alert.alert(
+                        "Thu hồi tin nhắn",
+                        "Tin nhắn sẽ bị xóa với tất cả mọi người?",
+                        [
+                            { text: "Hủy", style: "cancel" },
+                            {
+                                text: "Thu hồi",
+                                style: "destructive",
+                                onPress: async () => {
+                                    try {
+                                        if (actionsRef.current?.revokeMessage) {
+                                            await actionsRef.current.revokeMessage(messageId);
+                                        }
+                                    } catch (error: any) {
+                                        Alert.alert("Lỗi", error.message || "Không thể thu hồi tin nhắn");
+                                    }
+                                },
+                            },
+                        ]
+                    );
+                },
+                onForward: () => {
+                    setForwardMessageIds([messageId]);
+                    setShowForwardDialog(true);
+                },
+            })
         );
     }, [currentUser?.id]);
 

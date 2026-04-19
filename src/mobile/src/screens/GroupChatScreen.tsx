@@ -28,6 +28,7 @@ import chatMediaService from "../../../shared/services/chatMediaService";
 import { Avatar, ForwardDialog, VoiceRecorder } from "../components";
 import MediaMessage from "../components/MediaMessage";
 import { colors } from "../theme";
+import { buildMessageActionSheetOptions } from "../../../shared/utils";
 
 /**
  * Helper function to generate unique asset ID - matches ChatScreen implementation
@@ -167,6 +168,7 @@ export const GroupChatScreen: React.FC<{
         token || ""
     );
     const { state: groupState, actions: groupActions } = useGroupChat();
+    const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
 
     // Local state
     const [messageText, setMessageText] = useState("");
@@ -782,85 +784,68 @@ export const GroupChatScreen: React.FC<{
         const messageId = message._id || message.id;
         if (!messageId) return;
 
-        const isOwn = message.senderId === user?._id;
-        const options: string[] = ["Hủy", "Xóa phía tôi"];
-        const cancelButtonIndex = 0;
-
-        // Add actions based on message ownership
-        if (isOwn) {
-            options.push("Sửa");
-            options.push("Thu hồi");
-        }
-
-        options.push("Chuyển tiếp");
-
+        const isOwn = !!currentUserId && String(message.senderId || "") === String(currentUserId);
         Alert.alert(
             "Tùy chọn tin nhắn",
             `${message.text?.substring(0, 50) || "[Media]"}`,
-            options.map((action, index) => ({
-                text: action,
-                onPress: () => {
-                    if (action === "Hủy") return;
-                    if (action === "Sửa") {
-                        setSelectedMessageId(messageId);
-                        setEditText(message.text || "");
-                        setShowEditDialog(true);
-                    } else if (action === "Xóa phía tôi") {
-                        Alert.alert(
-                            "Xóa tin nhắn",
-                            "Xóa tin nhắn này khỏi phía bạn?",
-                            [
-                                { text: "Hủy", style: "cancel" },
-                                {
-                                    text: "Xóa",
-                                    style: "destructive",
-                                    onPress: async () => {
-                                        try {
-                                            if (actionsRef.current?.deleteMessage) {
-                                                await actionsRef.current.deleteMessage(messageId);
-                                            }
-                                        } catch (error: any) {
-                                            Alert.alert("Lỗi", error.message || "Không thể xóa tin nhắn");
+            buildMessageActionSheetOptions({
+                isOwn,
+                onDeleteForMe: async () => {
+                    Alert.alert(
+                        "Xóa tin nhắn",
+                        "Xóa tin nhắn này khỏi phía bạn?",
+                        [
+                            { text: "Hủy", style: "cancel" },
+                            {
+                                text: "Xóa",
+                                style: "destructive",
+                                onPress: async () => {
+                                    try {
+                                        if (actionsRef.current?.deleteMessage) {
+                                            await actionsRef.current.deleteMessage(messageId);
                                         }
-                                    },
+                                    } catch (error: any) {
+                                        Alert.alert("Lỗi", error.message || "Không thể xóa tin nhắn");
+                                    }
                                 },
-                            ]
-                        );
-                    } else if (action === "Thu hồi") {
-                        Alert.alert(
-                            "Thu hồi tin nhắn",
-                            "Tin nhắn sẽ bị xóa với tất cả mọi người?",
-                            [
-                                { text: "Hủy", style: "cancel" },
-                                {
-                                    text: "Thu hồi",
-                                    style: "destructive",
-                                    onPress: async () => {
-                                        try {
-                                            if (actionsRef.current?.revokeMessage) {
-                                                await actionsRef.current.revokeMessage(messageId);
-                                            }
-                                        } catch (error: any) {
-                                            Alert.alert("Lỗi", error.message || "Không thể thu hồi tin nhắn");
-                                        }
-                                    },
-                                },
-                            ]
-                        );
-                    } else if (action === "Chuyển tiếp") {
-                        setForwardMessageIds([messageId]);
-                        setShowForwardDialog(true);
-                    }
+                            },
+                        ]
+                    );
                 },
-                style:
-                    index === cancelButtonIndex
-                        ? "cancel"
-                        : action === "Xóa phía tôi" || action === "Thu hồi"
-                            ? "destructive"
-                            : "default",
-            }))
+                onEdit: () => {
+                    setSelectedMessageId(messageId);
+                    setEditText(message.text || "");
+                    setShowEditDialog(true);
+                },
+                onRevoke: async () => {
+                    Alert.alert(
+                        "Thu hồi tin nhắn",
+                        "Tin nhắn sẽ bị xóa với tất cả mọi người?",
+                        [
+                            { text: "Hủy", style: "cancel" },
+                            {
+                                text: "Thu hồi",
+                                style: "destructive",
+                                onPress: async () => {
+                                    try {
+                                        if (actionsRef.current?.revokeMessage) {
+                                            await actionsRef.current.revokeMessage(messageId);
+                                        }
+                                    } catch (error: any) {
+                                        Alert.alert("Lỗi", error.message || "Không thể thu hồi tin nhắn");
+                                    }
+                                },
+                            },
+                        ]
+                    );
+                },
+                onForward: () => {
+                    setForwardMessageIds([messageId]);
+                    setShowForwardDialog(true);
+                },
+            })
         );
-    }, [user?._id]);
+    }, [currentUserId]);
 
     const handleSaveEdit = useCallback(async () => {
         if (!selectedMessageId || !editText.trim()) {
@@ -1451,7 +1436,22 @@ export const GroupChatScreen: React.FC<{
             </View>
 
             {/* Forward Dialog Modal */}
-            {/* TODO: Implement forward dialog */}
+            <ForwardDialog
+                visible={showForwardDialog}
+                currentConversationId={chatState.conversation?._id || chatState.conversation?.id || groupId || ""}
+                currentUserId={currentUserId}
+                messageIds={forwardMessageIds}
+                onDismiss={() => {
+                    setShowForwardDialog(false);
+                    setForwardMessageIds([]);
+                }}
+                onForwardSuccess={(result) => {
+                    Alert.alert(
+                        "Thành công",
+                        `Đã chuyển tiếp tới ${result.sentToCount} cuộc trò chuyện`
+                    );
+                }}
+            />
 
             {allViewerImages.length > 0 && (
                 <Modal
@@ -1503,7 +1503,60 @@ export const GroupChatScreen: React.FC<{
             )}
 
             {/* Edit Message Dialog Modal */}
-            {/* TODO: Implement edit dialog */}
+            <Modal
+                visible={showEditDialog}
+                transparent
+                animationType="fade"
+                onRequestClose={() => {
+                    setShowEditDialog(false);
+                    setSelectedMessageId(null);
+                    setEditText("");
+                }}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => {
+                        setShowEditDialog(false);
+                        setSelectedMessageId(null);
+                        setEditText("");
+                    }}
+                >
+                    <Pressable style={styles.modalContent} onPress={() => { }}>
+                        <View style={styles.editDialogContent}>
+                            <Text style={styles.editDialogTitle}>Sửa tin nhắn</Text>
+                            <TextInput
+                                style={styles.editDialogInput}
+                                placeholder="Nhập nội dung mới..."
+                                placeholderTextColor={colors.textMuted}
+                                value={editText}
+                                onChangeText={setEditText}
+                                multiline
+                                maxLength={1000}
+                            />
+
+                            <View style={styles.editDialogButtons}>
+                                <Pressable
+                                    style={[styles.editDialogButton, styles.editDialogCancelButton]}
+                                    onPress={() => {
+                                        setShowEditDialog(false);
+                                        setSelectedMessageId(null);
+                                        setEditText("");
+                                    }}
+                                >
+                                    <Text style={styles.editDialogButtonText}>Hủy</Text>
+                                </Pressable>
+
+                                <Pressable
+                                    style={[styles.editDialogButton, styles.editDialogSaveButton]}
+                                    onPress={handleSaveEdit}
+                                >
+                                    <Text style={styles.editDialogButtonText}>Lưu</Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </KeyboardAvoidingView>
     );
 };

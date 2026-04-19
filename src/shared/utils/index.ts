@@ -3,3 +3,4 @@
  */
 
 export * from "./mediaUploadUtils";
+export * from "./messageActions";

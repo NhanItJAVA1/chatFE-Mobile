@@ -305,13 +305,21 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             if (!state.conversation) return;
 
             try {
-                await SocketService.editMessage(messageId, text);
+                const updated = await SocketService.editMessage(messageId, text);
+
+                updateStateAndCache({
+                    messages: state.messages.map((msg) =>
+                        getMessageId(msg) === messageId
+                            ? { ...msg, ...(updated || {}), text, updatedAt: new Date().toISOString() }
+                            : msg
+                    ),
+                });
             } catch (error) {
                 console.error("[useGroupChatMessage] Edit error:", error);
                 throw error;
             }
         },
-        [state.conversation]
+        [state.conversation, state.messages, updateStateAndCache, getMessageId]
     );
 
     const deleteMessage = useCallback(
@@ -441,6 +449,9 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     console.error("[useGroupChatMessage]", errorMsg);
                     throw new Error(errorMsg);
                 }
+
+                // Join conversation room to receive edit/revoke/delete group events reliably.
+                await SocketService.joinConversation(conversationId);
 
                 // Try cache first
                 let cachedMessages = await loadMessagesFromCache(conversationId);
