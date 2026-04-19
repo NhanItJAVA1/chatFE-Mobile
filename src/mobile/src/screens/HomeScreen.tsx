@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import {
     ActivityIndicator,
@@ -41,6 +41,47 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [conversationsLoading, setConversationsLoading] = useState(false);
 
+    const getConversationIdentity = useCallback((conversation: Conversation): string => {
+        const id = (conversation as any)?.id || (conversation as any)?._id;
+        if (id) {
+            return String(id);
+        }
+
+        if ((conversation as any)?.pairKey) {
+            return String((conversation as any).pairKey);
+        }
+
+        return `${conversation?.type || "UNKNOWN"}::${conversation?.name || "unknown"}`;
+    }, []);
+
+    const dedupeConversations = useCallback((items: Conversation[]): Conversation[] => {
+        const map = new Map<string, Conversation>();
+
+        items.forEach((conversation) => {
+            if (!conversation) return;
+
+            const identity = getConversationIdentity(conversation);
+            const existing = map.get(identity);
+
+            if (!existing) {
+                map.set(identity, conversation);
+                return;
+            }
+
+            const existingTs = new Date(
+                (existing as any)?.lastMessageAt || (existing as any)?.updatedAt || 0
+            ).getTime() || 0;
+            const nextTs = new Date(
+                (conversation as any)?.lastMessageAt || (conversation as any)?.updatedAt || 0
+            ).getTime() || 0;
+
+            // Keep the newer conversation snapshot when duplicates happen.
+            map.set(identity, nextTs >= existingTs ? conversation : existing);
+        });
+
+        return Array.from(map.values());
+    }, [getConversationIdentity]);
+
     // Load friends on mount
     useEffect(() => {
         const loadHomeData = async () => {
@@ -48,7 +89,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             try {
                 await Promise.all([
                     actions.loadFriends(),
-                    ConversationService.getConversations(1, 50).then(setConversations),
+                    ConversationService.getConversations(1, 50).then((items) => {
+                        setConversations(dedupeConversations(items));
+                    }),
                 ]);
             } finally {
                 setConversationsLoading(false);
@@ -79,12 +122,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                                 createdAt: createdGroupData.createdAt || new Date().toISOString(),
                                 updatedAt: createdGroupData.updatedAt || new Date().toISOString(),
                             };
-                            return [groupAsConversation, ...prev];
+                            return dedupeConversations([groupAsConversation, ...prev]);
                         });
                     } else {
                         // Fallback: reload all conversations
                         const updated = await ConversationService.getConversations(1, 50);
-                        setConversations(updated);
+                        setConversations(dedupeConversations(updated));
                     }
                 } catch (err) {
                     console.error("Failed to reload conversations:", err);
@@ -99,7 +142,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
             return () => clearTimeout(timeout);
         }
-    }, [createdGroupId, createdGroupData, onGroupCreatedAck]);
+    }, [createdGroupId, createdGroupData, onGroupCreatedAck, dedupeConversations]);
 
     const truncateName = (name: string | undefined, maxLength = 20) => {
         if (!name || name.length <= maxLength) {
@@ -269,7 +312,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         const handleGroupCreated = (data: any) => {
             // Reload conversations when a new group is created
             ConversationService.getConversations(1, 50).then((updated) => {
-                setConversations(updated);
+                setConversations(dedupeConversations(updated));
             });
         };
 
@@ -339,7 +382,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             socket.off("conversation:member_removed", handleGroupMemberRemoved);
             socket.off("conversation:updated", handleConversationUpdated);
         };
-    }, [token, user?.id, (user as any)?._id]);
+    }, [token, user?.id, (user as any)?._id, dedupeConversations]);
 
     // Fallback refresh when backend does not emit socket events.
     useEffect(() => {
@@ -353,7 +396,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             try {
                 const updated = await ConversationService.getConversations(1, 50);
                 if (isMounted) {
-                    setConversations(updated);
+                    setConversations(dedupeConversations(updated));
                 }
             } catch {
                 // Silent fallback; socket path is still primary source.
@@ -372,7 +415,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             clearInterval(interval);
             appStateSub.remove();
         };
-    }, [token]);
+    }, [token, dedupeConversations]);
 
     const conversationByFriendId = useMemo(() => {
         const map = new Map<string, Conversation>();
@@ -620,7 +663,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
                             return (
                                 <View
-                                    key={conversation._id || conversation.id}
+                                    key={`${getConversationIdentity(conversation)}-${index}`}
                                     style={[
                                         styles.chatRow,
                                         index !== filteredConversations.length - 1 &&
