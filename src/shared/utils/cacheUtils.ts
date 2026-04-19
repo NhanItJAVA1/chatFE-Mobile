@@ -14,6 +14,15 @@ const getMessageCacheKey = (message: MessagePayload): string => {
     return message._id || message.id || `${message.senderId}-${message.createdAt}`;
 };
 
+const getMessageCacheTimestamp = (message: MessagePayload): number => {
+    const parsedTime = Date.parse(message.deletedAt || message.updatedAt || message.createdAt || "");
+    return Number.isFinite(parsedTime) ? parsedTime : 0;
+};
+
+const isSystemOrDeletedMessage = (message: MessagePayload): boolean => {
+    return message.type === "system" || !!message.deletedAt || Array.isArray(message.deletedForUserIds);
+};
+
 /**
  * Save messages to AsyncStorage with timestamp
  */
@@ -146,14 +155,33 @@ export function mergeMessages(
         return apiMessages;
     }
 
-    // Create a map of API message IDs for quick lookup
-    const apiIds = new Set(apiMessages.map(getMessageCacheKey));
+    const mergedById = new Map<string, MessagePayload>();
 
-    // Add cached messages that aren't in API (newer messages)
-    const uniqueCached = cachedMessages.filter(m => !apiIds.has(getMessageCacheKey(m)));
+    for (const message of apiMessages) {
+        mergedById.set(getMessageCacheKey(message), message);
+    }
 
-    // Combine: API messages first (they're more recent), then unique cached
-    const merged = [...apiMessages, ...uniqueCached];
+    for (const cachedMessage of cachedMessages) {
+        const messageKey = getMessageCacheKey(cachedMessage);
+        const existingMessage = mergedById.get(messageKey);
+
+        if (!existingMessage) {
+            mergedById.set(messageKey, cachedMessage);
+            continue;
+        }
+
+        const existingTimestamp = getMessageCacheTimestamp(existingMessage);
+        const cachedTimestamp = getMessageCacheTimestamp(cachedMessage);
+        const shouldPreferCached =
+            cachedTimestamp > existingTimestamp ||
+            (isSystemOrDeletedMessage(cachedMessage) && !isSystemOrDeletedMessage(existingMessage));
+
+        if (shouldPreferCached) {
+            mergedById.set(messageKey, { ...existingMessage, ...cachedMessage });
+        }
+    }
+
+    const merged = Array.from(mergedById.values());
 
     console.log('[cacheUtils] Merged messages: API=', apiMessages.length, 'Cached=', cachedMessages.length, 'Total=', merged.length);
 

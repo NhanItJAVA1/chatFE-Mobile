@@ -101,6 +101,10 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const messagesStateRef = useRef(state);
 
+    const getMessageId = useCallback((message: MessagePayload): string => {
+        return message._id || message.id || `${message.senderId}-${message.createdAt}`;
+    }, []);
+
     // Update ref when state changes
     useEffect(() => {
         messagesStateRef.current = state;
@@ -301,11 +305,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             if (!state.conversation) return;
 
             try {
-                await SocketService.editMessage(
-                    state.conversation._id || state.conversation.id,
-                    messageId,
-                    text
-                );
+                await SocketService.editMessage(messageId, text);
             } catch (error) {
                 console.error("[useGroupChatMessage] Edit error:", error);
                 throw error;
@@ -319,10 +319,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             if (!state.conversation) return;
 
             try {
-                await SocketService.deleteMessage(
-                    state.conversation._id || state.conversation.id,
-                    messageId
-                );
+                await SocketService.deleteMessage(messageId);
             } catch (error) {
                 console.error("[useGroupChatMessage] Delete error:", error);
                 throw error;
@@ -336,10 +333,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             if (!state.conversation) return;
 
             try {
-                await SocketService.revokeMessage(
-                    state.conversation._id || state.conversation.id,
-                    messageId
-                );
+                await SocketService.revokeMessage(messageId);
             } catch (error) {
                 console.error("[useGroupChatMessage] Revoke error:", error);
                 throw error;
@@ -353,11 +347,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             if (!state.conversation) return;
 
             try {
-                await SocketService.addReaction(
-                    state.conversation._id || state.conversation.id,
-                    messageId,
-                    emoji
-                );
+                await SocketService.addReaction(messageId, emoji);
             } catch (error) {
                 console.error("[useGroupChatMessage] Add reaction error:", error);
                 throw error;
@@ -371,11 +361,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             if (!state.conversation) return;
 
             try {
-                await SocketService.removeReaction(
-                    state.conversation._id || state.conversation.id,
-                    messageId,
-                    emoji
-                );
+                await SocketService.removeReaction(messageId, emoji);
             } catch (error) {
                 console.error("[useGroupChatMessage] Remove reaction error:", error);
                 throw error;
@@ -483,6 +469,27 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     }
                 });
 
+                SocketService.onMessageUpdated((message: MessagePayload) => {
+                    if ((message.conversationId && message.conversationId !== conversationId && message.conversationId !== groupId) || !messagesStateRef.current) {
+                        return;
+                    }
+
+                    const messageId = getMessageId(message);
+                    const currentUserId = user?.id || (user as any)?._id;
+                    const deletedForMe =
+                        Array.isArray((message as any).deletedForUserIds) &&
+                        !!currentUserId &&
+                        (message as any).deletedForUserIds.includes(currentUserId);
+
+                    const updatedMessages = deletedForMe
+                        ? messagesStateRef.current.messages.filter((msg) => getMessageId(msg) !== messageId)
+                        : messagesStateRef.current.messages.map((msg) =>
+                            getMessageId(msg) !== messageId ? msg : { ...msg, ...message }
+                        );
+
+                    updateStateAndCache({ messages: updatedMessages });
+                });
+
                 SocketService.onTyping((data: TypingData) => {
                     if (data.conversationId === conversationId && data.userId !== user?._id) {
                         setState((prev) => {
@@ -513,6 +520,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 clearTimeout(typingTimeoutRef.current);
             }
             SocketService.offMessage();
+            SocketService.offMessageUpdated();
             SocketService.offTyping();
         };
     }, [groupId, token, user?._id, updateStateAndCache]);

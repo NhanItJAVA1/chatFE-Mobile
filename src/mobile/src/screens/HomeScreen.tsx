@@ -161,6 +161,31 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return lastMessage.messageId || lastMessage.id || lastMessage._id;
     };
 
+    const updateConversationLastMessage = useCallback(
+        (conversationId: string, updater: (conversation: Conversation) => Conversation | null) => {
+            if (!conversationId) return;
+
+            setConversations((prev) => {
+                const next = prev
+                    .map((conversation) => {
+                        const id = conversation.id || conversation._id;
+                        if (id !== conversationId) return conversation;
+
+                        const updated = updater(conversation);
+                        return updated || conversation;
+                    })
+                    .filter(Boolean) as Conversation[];
+
+                return [...next].sort((a, b) => {
+                    const ta = new Date(getLastMessageCreatedAt(a) || 0).getTime() || 0;
+                    const tb = new Date(getLastMessageCreatedAt(b) || 0).getTime() || 0;
+                    return tb - ta;
+                });
+            });
+        },
+        []
+    );
+
     const getPreviewFromMessageType = (messageType: string): string => {
         const upperType = String(messageType || "").toUpperCase();
         if (upperType === "IMAGE") return "📷 Image";
@@ -309,6 +334,86 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             );
         };
 
+        const handleMessageEdited = (data: any) => {
+            const message = data?.message || data;
+            const conversationId = String(message?.conversationId || data?.conversationId || "");
+            const messageId = String(message?._id || message?.id || data?.messageId || "");
+
+            if (!conversationId || !messageId) return;
+
+            updateConversationLastMessage(conversationId, (conversation) => {
+                const lastMessageId = getLastMessageId(conversation);
+                if (lastMessageId !== messageId) return conversation;
+
+                return {
+                    ...conversation,
+                    lastMessage: {
+                        ...(conversation.lastMessage as any),
+                        messageId,
+                        senderId: message?.senderId || (conversation.lastMessage as any)?.senderId || "",
+                        type: String(message?.type || (conversation.lastMessage as any)?.type || "TEXT").toUpperCase(),
+                        textPreview: message?.text?.trim()
+                            ? message.text
+                            : (conversation.lastMessage as any)?.textPreview || getPreviewFromMessageType(message?.type || ""),
+                        createdAt: message?.createdAt || (conversation.lastMessage as any)?.createdAt || conversation.lastMessageAt,
+                    },
+                    lastMessageAt: message?.createdAt || conversation.lastMessageAt,
+                } as Conversation;
+            });
+        };
+
+        const handleMessageRevoked = (data: any) => {
+            const message = data?.message || data;
+            const conversationId = String(message?.conversationId || data?.conversationId || "");
+            const messageId = String(message?._id || message?.id || data?.messageId || "");
+
+            if (!conversationId || !messageId) return;
+
+            updateConversationLastMessage(conversationId, (conversation) => {
+                const lastMessageId = getLastMessageId(conversation);
+                if (lastMessageId !== messageId) return conversation;
+
+                return {
+                    ...conversation,
+                    lastMessage: {
+                        ...(conversation.lastMessage as any),
+                        messageId,
+                        senderId: message?.senderId || (conversation.lastMessage as any)?.senderId || "",
+                        type: "SYSTEM",
+                        textPreview: "Đã thu hồi",
+                        createdAt: message?.createdAt || (conversation.lastMessage as any)?.createdAt || conversation.lastMessageAt,
+                    },
+                    lastMessageAt: message?.createdAt || conversation.lastMessageAt,
+                } as Conversation;
+            });
+        };
+
+        const handleMessageDeletedForEveryone = (data: any) => {
+            const message = data?.message || data;
+            const conversationId = String(message?.conversationId || data?.conversationId || "");
+            const messageId = String(message?._id || message?.id || data?.messageId || "");
+
+            if (!conversationId || !messageId) return;
+
+            updateConversationLastMessage(conversationId, (conversation) => {
+                const lastMessageId = getLastMessageId(conversation);
+                if (lastMessageId !== messageId) return conversation;
+
+                return {
+                    ...conversation,
+                    lastMessage: {
+                        ...(conversation.lastMessage as any),
+                        messageId,
+                        senderId: message?.senderId || (conversation.lastMessage as any)?.senderId || "",
+                        type: "SYSTEM",
+                        textPreview: "Tin nhắn đã bị xóa",
+                        createdAt: message?.createdAt || (conversation.lastMessage as any)?.createdAt || conversation.lastMessageAt,
+                    },
+                    lastMessageAt: message?.createdAt || conversation.lastMessageAt,
+                } as Conversation;
+            });
+        };
+
         const handleGroupCreated = (data: any) => {
             // Reload conversations when a new group is created
             ConversationService.getConversations(1, 50).then((updated) => {
@@ -371,6 +476,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
         socket.on("receiveMessage", handleReceiveMessage);
         socket.on("messageSeen", handleMessageSeen);
+        socket.on("message:edited", handleMessageEdited);
+        socket.on("message:revoked", handleMessageRevoked);
+        socket.on("message:deleted_for_everyone", handleMessageDeletedForEveryone);
         socket.on("conversation:created", handleGroupCreated);
         socket.on("conversation:member_removed", handleGroupMemberRemoved);
         socket.on("conversation:updated", handleConversationUpdated);
@@ -378,11 +486,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return () => {
             socket.off("receiveMessage", handleReceiveMessage);
             socket.off("messageSeen", handleMessageSeen);
+            socket.off("message:edited", handleMessageEdited);
+            socket.off("message:revoked", handleMessageRevoked);
+            socket.off("message:deleted_for_everyone", handleMessageDeletedForEveryone);
             socket.off("conversation:created", handleGroupCreated);
             socket.off("conversation:member_removed", handleGroupMemberRemoved);
             socket.off("conversation:updated", handleConversationUpdated);
         };
-    }, [token, user?.id, (user as any)?._id, dedupeConversations]);
+    }, [token, user?.id, (user as any)?._id, dedupeConversations, updateConversationLastMessage]);
 
     // Fallback refresh when backend does not emit socket events.
     useEffect(() => {

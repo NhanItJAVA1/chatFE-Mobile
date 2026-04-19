@@ -692,7 +692,9 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 setState((prev) => ({
                     ...prev,
                     messages: prev.messages.map((msg) =>
-                        getMessageId(msg) === messageId ? updated : msg
+                        getMessageId(msg) === messageId
+                            ? { ...msg, ...updated, updatedAt: new Date().toISOString() }
+                            : msg
                     ),
                 }));
             } catch (error: any) {
@@ -753,7 +755,14 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             setState((prev) => {
                 const newMessages = prev.messages.map((msg) =>
                     getMessageId(msg) === messageId
-                        ? { ...msg, text: "Đã thu hồi", media: null, type: "system" as const }
+                        ? {
+                            ...msg,
+                            text: "Đã thu hồi",
+                            media: null,
+                            type: "system" as const,
+                            deletedAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                        }
                         : msg
                 );
 

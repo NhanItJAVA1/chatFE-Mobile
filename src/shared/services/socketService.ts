@@ -1,5 +1,6 @@
 import { io, Socket } from "socket.io-client";
 import { getApiBaseUrl } from "../runtime";
+import { apiCall } from "./api";
 
 // Remove /v1 suffix from API URL to get base socket URL
 const SOCKET_URL = getApiBaseUrl().replace("/v1", "");
@@ -470,102 +471,318 @@ export class SocketService {
     /**
      * Add reaction to message
      */
-    static addReaction(messageId: string, emoji: string): Promise<any> {
-        return new Promise((resolve, reject) => {
-            if (!this.socket) {
-                reject(new Error("Socket not connected"));
-                return;
+    static async addReaction(messageId: string, emoji: string): Promise<any> {
+        try {
+            if (!this.socket?.connected) {
+                await this.waitForConnection(5000);
             }
 
-            this.socket.emit("addReaction", { messageId, emoji }, (response: any) => {
-                if (response?.success) {
-                    resolve(response.reaction);
-                } else {
-                    reject(new Error(response?.error || "Failed to add reaction"));
+            return new Promise((resolve, reject) => {
+                if (!this.socket) {
+                    reject(new Error("Socket not connected"));
+                    return;
                 }
+
+                this.socket.emit("addReaction", { messageId, emoji }, (response: any) => {
+                    if (response?.success) {
+                        resolve(response.reaction);
+                    } else {
+                        reject(new Error(response?.error || "Failed to add reaction"));
+                    }
+                });
             });
-        });
+        } catch (error: any) {
+            throw error;
+        }
     }
 
     /**
      * Remove reaction from message
      */
-    static removeReaction(messageId: string, emoji?: string): Promise<any> {
-        return new Promise((resolve, reject) => {
-            if (!this.socket) {
-                reject(new Error("Socket not connected"));
-                return;
+    static async removeReaction(messageId: string, emoji?: string): Promise<any> {
+        try {
+            if (!this.socket?.connected) {
+                await this.waitForConnection(5000);
             }
 
-            const payload = emoji ? { messageId, emoji } : { messageId };
-
-            this.socket.emit("removeReaction", payload, (response: any) => {
-                if (response?.success) {
-                    resolve(response);
-                } else {
-                    reject(new Error(response?.error || "Failed to remove reaction"));
+            return new Promise((resolve, reject) => {
+                if (!this.socket) {
+                    reject(new Error("Socket not connected"));
+                    return;
                 }
+
+                const payload = emoji ? { messageId, emoji } : { messageId };
+
+                this.socket.emit("removeReaction", payload, (response: any) => {
+                    if (response?.success) {
+                        resolve(response);
+                    } else {
+                        reject(new Error(response?.error || "Failed to remove reaction"));
+                    }
+                });
             });
-        });
+        } catch (error: any) {
+            throw error;
+        }
     }
 
     /**
      * Edit message
      */
-    static editMessage(messageId: string, text: string): Promise<any> {
-        return new Promise((resolve, reject) => {
-            if (!this.socket) {
-                reject(new Error("Socket not connected"));
-                return;
+    static async editMessage(messageId: string, text: string): Promise<any> {
+        try {
+            if (!this.socket?.connected) {
+                await this.waitForConnection(5000);
             }
 
-            this.socket.emit("editMessage", { messageId, text }, (response: any) => {
-                if (response?.success) {
-                    resolve(response.message);
-                } else {
-                    reject(new Error(response?.error || "Failed to edit message"));
+            return new Promise((resolve, reject) => {
+                if (!this.socket) {
+                    reject(new Error("Socket not connected"));
+                    return;
                 }
+
+                this.socket.emit("editMessage", { messageId, text }, (response: any) => {
+                    if (response?.success) {
+                        resolve(response.message);
+                    } else {
+                        reject(new Error(response?.error || "Failed to edit message"));
+                    }
+                });
             });
-        });
+        } catch (error: any) {
+            throw error;
+        }
     }
 
     /**
      * Delete message (for self only)
      */
-    static deleteMessage(messageId: string): Promise<any> {
+    static async deleteMessage(messageId: string): Promise<any> {
+        try {
+            if (!this.socket?.connected) {
+                await this.waitForConnection(5000);
+            }
+
+            return new Promise((resolve, reject) => {
+                if (!this.socket) {
+                    reject(new Error("Socket not connected"));
+                    return;
+                }
+
+                this.socket.emit("deleteMessage", { messageId }, (response: any) => {
+                    if (response?.success) {
+                        resolve(response);
+                    } else {
+                        reject(new Error(response?.error || "Failed to delete message"));
+                    }
+                });
+            });
+        } catch (error: any) {
+            throw error;
+        }
+    }
+
+    /**
+     * Revoke message (delete for everyone)
+     */
+    static async revokeMessage(messageId: string): Promise<any> {
+        try {
+            const response = await apiCall(`/messages/${messageId}/revoke`, {
+                method: "POST",
+            });
+
+            return response?.data || response;
+        } catch (error: any) {
+            throw error;
+        }
+    }
+
+    /**
+     * Delete message for everyone
+     */
+    static async deleteMessageForEveryone(messageId: string): Promise<any> {
+        try {
+            if (!this.socket?.connected) {
+                await this.waitForConnection(5000);
+            }
+
+            return new Promise((resolve, reject) => {
+                if (!this.socket) {
+                    reject(new Error("Socket not connected"));
+                    return;
+                }
+
+                this.socket.emit("deleteMessageForEveryone", { messageId }, (response: any) => {
+                    if (response?.success) {
+                        resolve(response);
+                    } else {
+                        reject(new Error(response?.error || "Failed to delete message for everyone"));
+                    }
+                });
+            });
+        } catch (error: any) {
+            throw error;
+        }
+    }
+
+    /**
+     * Mark message as delivered
+     */
+    static async markMessageDelivered(
+        conversationId: string,
+        lastDeliveredMessageId: string
+    ): Promise<any> {
+        try {
+            if (!this.socket?.connected) {
+                await this.waitForConnection(5000);
+            }
+
+            return new Promise((resolve, reject) => {
+                if (!this.socket) {
+                    reject(new Error("Socket not connected"));
+                    return;
+                }
+
+                const payload = {
+                    conversationId,
+                    lastDeliveredMessageId,
+                };
+
+                this.socket.emit("messageDelivered", payload, (response: any) => {
+                    if (response?.success) {
+                        resolve(response);
+                    } else {
+                        reject(new Error(response?.error || "Failed to mark as delivered"));
+                    }
+                });
+            });
+        } catch (error: any) {
+            throw error;
+        }
+    }
+
+    /**
+     * Mark all messages as seen
+     */
+    static markAllSeen(conversationId: string): Promise<any> {
         return new Promise((resolve, reject) => {
             if (!this.socket) {
                 reject(new Error("Socket not connected"));
                 return;
             }
 
-            this.socket.emit("deleteMessage", { messageId }, (response: any) => {
+            this.socket.emit("markAllSeen", { conversationId }, (response: any) => {
                 if (response?.success) {
                     resolve(response);
                 } else {
-                    reject(new Error(response?.error || "Failed to delete message"));
+                    reject(new Error(response?.error || "Failed to mark all as seen"));
                 }
             });
         });
     }
 
     /**
-     * Revoke message (delete for everyone)
+     * Forward messages to other conversations
      */
-    static revokeMessage(messageId: string): Promise<any> {
+    static forwardMessages(
+        messageIds: string[],
+        targetConversationIds: string[]
+    ): Promise<any> {
         return new Promise((resolve, reject) => {
             if (!this.socket) {
                 reject(new Error("Socket not connected"));
                 return;
             }
 
-            this.socket.emit("revokeMessage", { messageId }, (response: any) => {
-                if (response?.success) {
-                    resolve(response);
-                } else {
-                    reject(new Error(response?.error || "Failed to revoke message"));
+            this.socket.emit(
+                "forwardMessages",
+                { messageIds, targetConversationIds },
+                (response: any) => {
+                    if (response?.success) {
+                        resolve(response);
+                    } else {
+                        reject(new Error(response?.error || "Failed to forward messages"));
+                    }
                 }
-            });
+            );
+        });
+    }
+
+    /**
+     * Quote (reply to) a message
+     */
+    static quoteMessage(
+        conversationId: string,
+        quotedMessageId: string,
+        text?: string,
+        media?: any[]
+    ): Promise<MessagePayload[]> {
+        return new Promise(async (resolve, reject) => {
+            try {
+                if (!this.socket) {
+                    throw new Error("Socket not initialized");
+                }
+
+                // Wait for connection if not connected (increase timeout to 10s for reliability)
+                if (!this.socket.connected) {
+                    console.log('[SocketService] Socket not connected, waiting 10s for connection before quoting message...', {
+                        socketExists: !!this.socket,
+                        socketConnected: this.socket?.connected,
+                        socketState: this.socket?.io?.engine?.readyState,
+                    });
+                    await this.waitForConnection(10000);
+                    console.log('[SocketService] Socket reconnected, proceeding with quoteMessage');
+                }
+
+                const payload: any = {
+                    conversationId,
+                    quotedMessageId,
+                };
+                if (text) payload.text = text;
+                if (media) payload.media = media;
+
+                console.log('[SocketService] Emitting quoteMessage:', {
+                    conversationId,
+                    quotedMessageId,
+                    textLength: text?.length || 0,
+                    mediaCount: media?.length || 0,
+                });
+
+                this.socket.emit("quoteMessage", payload, (response: any) => {
+                    console.log('[SocketService] quoteMessage callback received:', {
+                        success: response?.success,
+                        hasMessages: !!response?.messages,
+                        messagesCount: response?.messages?.length,
+                        responseKeys: Object.keys(response || {}),
+                    });
+
+                    if (response?.success) {
+                        const messages = response?.messages || response?.data || response?.message;
+                        if (Array.isArray(messages)) {
+                            console.log('[SocketService] ✓ Message quoted, received', messages.length, 'messages back');
+                            resolve(messages);
+                            return;
+                        }
+                        if (messages) {
+                            console.log('[SocketService] ✓ Message quoted');
+                            resolve([messages]);
+                            return;
+                        }
+                        console.log('[SocketService] ✓ Message quoted (empty response)');
+                        resolve([]);
+                    } else {
+                        console.error('[SocketService] Quote message failed:', response?.error);
+                        reject(new Error(response?.error || "Failed to quote message"));
+                    }
+                });
+            } catch (error: any) {
+                console.error('[SocketService] quoteMessage error:', {
+                    errorMessage: error?.message,
+                    socketExists: !!this.socket,
+                    socketConnected: this.socket?.connected,
+                });
+                reject(error);
+            }
         });
     }
 
@@ -595,6 +812,20 @@ export class SocketService {
             } as any);
         });
 
+        this.socket.on("message:deleted_for_everyone", (data: any) => {
+            console.log("[SocketService] Message deleted for everyone:", data);
+            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
+            callback({
+                ...(data.message || {}),
+                id: messageId,
+                _id: messageId,
+                conversationId: data?.conversationId || data?.message?.conversationId,
+                status: "deleted",
+                deletedBy: data?.deletedBy,
+                deletedAt: new Date().toISOString(),
+            } as any);
+        });
+
         this.socket.on("message:revoked", (data: any) => {
             console.log("[SocketService] Message revoked:", data);
             const messageId = data?.messageId || data?.message?.id || data?.message?._id;
@@ -619,7 +850,71 @@ export class SocketService {
         if (this.socket) {
             this.socket.off("message:edited");
             this.socket.off("message:deleted");
+            this.socket.off("message:deleted_for_everyone");
             this.socket.off("message:revoked");
+        }
+    }
+
+    /**
+     * Listen for message reactions
+     */
+    static onMessageReaction(callback: (data: { messageId: string; reaction: any }) => void): void {
+        if (!this.socket) return;
+
+        this.socket.on("message:reaction", (data: any) => {
+            console.log("[SocketService] Message reaction:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove message reaction listener
+     */
+    static offMessageReaction(): void {
+        if (this.socket) {
+            this.socket.off("message:reaction");
+        }
+    }
+
+    /**
+     * Listen for message reaction removal
+     */
+    static onMessageReactionRemove(callback: (data: { messageId: string; userId: string; emoji?: string }) => void): void {
+        if (!this.socket) return;
+
+        this.socket.on("message:reaction:remove", (data: any) => {
+            console.log("[SocketService] Message reaction removed:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove message reaction removal listener
+     */
+    static offMessageReactionRemove(): void {
+        if (this.socket) {
+            this.socket.off("message:reaction:remove");
+        }
+    }
+
+    /**
+     * Listen for message delivered notifications
+     */
+    static onMessageDelivered(callback: (data: { conversationId: string; userId: string; lastDeliveredMessageId: string }) => void): void {
+        if (!this.socket) return;
+
+        this.socket.on("messageDelivered", (data: any) => {
+            console.log("[SocketService] Message delivered:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove message delivered listener
+     */
+    static offMessageDelivered(): void {
+        if (this.socket) {
+            this.socket.off("messageDelivered");
         }
     }
 
@@ -881,6 +1176,52 @@ export class SocketService {
     }
 
     /**
+     * Listen for new poll
+     */
+    static onPollNew(
+        callback: (data: { conversationId: string; poll: any }) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("poll:new", (data: any) => {
+            console.log("[SocketService] Poll created:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove poll new listener
+     */
+    static offPollNew(): void {
+        if (this.socket) {
+            this.socket.off("poll:new");
+        }
+    }
+
+    /**
+     * Listen for poll vote
+     */
+    static onPollVote(
+        callback: (data: { conversationId: string; pollId: string; userId: string; poll: any }) => void
+    ): void {
+        if (!this.socket) return;
+
+        this.socket.on("poll:vote", (data: any) => {
+            console.log("[SocketService] Poll voted:", data);
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove poll vote listener
+     */
+    static offPollVote(): void {
+        if (this.socket) {
+            this.socket.off("poll:vote");
+        }
+    }
+
+    /**
      * Clean up all group event listeners
      */
     static offAllGroupEvents(): void {
@@ -894,8 +1235,197 @@ export class SocketService {
         this.offGroupMemberRejected();
         this.offGroupSettingsUpdated();
         this.offGroupDissolved();
+        this.offPollNew();
+        this.offPollVote();
     }
 
+    /**
+     * Clean up all message event listeners
+     */
+    static offAllMessageEvents(): void {
+        this.offMessage();
+        this.offMessageUpdated();
+        this.offMessageSeen();
+        this.offMessageDelivered();
+        this.offMessageReaction();
+        this.offMessageReactionRemove();
+        this.offTyping();
+    }
+
+    // ========================================================================
+    // PIN MESSAGE EVENTS (HTTP-based + Socket broadcast)
+    // ========================================================================
+
+    /**
+     * Pin a message (HTTP POST)
+     * BE will broadcast message:pinned event after pinning
+     */
+    static async pinMessage(
+        conversationId: string,
+        messageId: string
+    ): Promise<any> {
+        try {
+            console.log('[SocketService] 📌 Pinning message via HTTP POST:', { messageId, conversationId });
+
+            const response = await apiCall(`/messages/${messageId}/pin`, {
+                method: "POST",
+                body: JSON.stringify({ conversationId }),
+            });
+
+            console.log('[SocketService] ✓ Message pinned successfully (HTTP POST)', {
+                messageId,
+                pinned: response?.data?.pinned,
+            });
+
+            return response;
+        } catch (error: any) {
+            console.error('[SocketService] ❌ Pin message HTTP error:', {
+                message: error?.message,
+                status: error?.status,
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Unpin a message (HTTP DELETE)
+     * BE will broadcast message:unpinned event after unpinning
+     */
+    static async unpinMessage(
+        conversationId: string,
+        messageId: string
+    ): Promise<any> {
+        try {
+            console.log('[SocketService] 📌 Unpinning message via HTTP DELETE:', { messageId, conversationId });
+
+            const response = await apiCall(`/messages/${messageId}/pin`, {
+                method: "DELETE",
+                body: JSON.stringify({ conversationId }),
+            });
+
+            console.log('[SocketService] ✓ Message unpinned successfully (HTTP DELETE)', {
+                pinned: response?.data?.pinned,
+            });
+
+            return response;
+        } catch (error: any) {
+            console.error('[SocketService] ❌ Unpin message HTTP error:', {
+                message: error?.message,
+                status: error?.status,
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Listen for pinned message events
+     */
+    static onPinnedMessage(callback: (data: any) => void): void {
+        if (!this.socket) {
+            console.warn("[SocketService] Socket not available for onPinnedMessage");
+            return;
+        }
+
+        console.log("[SocketService] Setting up onPinnedMessage listener");
+
+        // New message pinned
+        this.socket.on("message:pinned", (data: any) => {
+            console.log("[SocketService] 🔔 RECEIVED message:pinned event:", data);
+            callback({ type: "pinned", pinnedMessage: data });
+        });
+
+        // Message unpinned
+        this.socket.on("message:unpinned", (data: any) => {
+            console.log("[SocketService] 🔔 RECEIVED message:unpinned event:", data);
+            callback({ type: "unpinned", pinnedMessage: data });
+        });
+
+        // Debug: Log all socket events
+        this.socket.onAny((event: string, ...args: any[]) => {
+            if (event.includes("pin")) {
+                console.log(`[SocketService] Socket event: ${event}`, args);
+            }
+        });
+    }
+
+    /**
+     * Remove pinned message listeners
+     */
+    static offPinnedMessage(): void {
+        if (this.socket) {
+            this.socket.off("message:pinned");
+            this.socket.off("message:unpinned");
+        }
+    }
+
+    /**
+     * Get pinned messages for conversation (HTTP GET)
+     */
+    static async getPinnedMessages(conversationId: string): Promise<any[]> {
+        try {
+            console.log('[SocketService] Fetching pinned messages via HTTP GET:', { conversationId });
+
+            const response = await apiCall(`/conversations/${conversationId}/pinned-messages`, {
+                method: "GET",
+            });
+
+            // Handle various response formats
+            const messages = response?.data?.pinnedMessages
+                || response?.data?.messages
+                || response?.pinnedMessages
+                || response?.messages
+                || response?.data
+                || [];
+
+            const pinnedArray = Array.isArray(messages) ? messages : [];
+
+            // Normalize pinned messages to ensure required fields exist
+            const normalized = pinnedArray.map((pin: any) => {
+                const msg = pin.message || pin;
+
+                // Extract pinnedByName from various possible locations
+                let pinnedByName = pin.pinnedByName;
+                if (!pinnedByName && pin.pinnedBy) {
+                    if (typeof pin.pinnedBy === 'string') {
+                        pinnedByName = pin.pinnedBy; // If pinnedBy is just a string ID, use it
+                    } else if (pin.pinnedBy.displayName) {
+                        pinnedByName = pin.pinnedBy.displayName;
+                    } else if (pin.pinnedBy.name) {
+                        pinnedByName = pin.pinnedBy.name;
+                    } else if (pin.pinnedBy.username) {
+                        pinnedByName = pin.pinnedBy.username;
+                    }
+                }
+
+                // Try to get from message sender if still missing (fallback)
+                if (!pinnedByName && msg.senderName) {
+                    pinnedByName = msg.senderName;
+                }
+
+                return {
+                    ...pin,
+                    message: {
+                        ...msg,
+                        // Ensure these fields exist with fallbacks
+                        senderName: msg.senderName || msg.senderDisplayName || "Unknown",
+                        senderAvatar: msg.senderAvatar || msg.senderProfilePicture || "https://via.placeholder.com/40",
+                        text: msg.text || "",
+                        senderId: msg.senderId || msg.sender?.id || "unknown",
+                    },
+                    pinnedByName: pinnedByName || "Unknown",
+                    pinnedAt: pin.pinnedAt || new Date().toISOString(),
+                };
+            });
+
+            console.log('[SocketService] ✓ Pinned messages loaded and normalized:', normalized.length);
+
+            return normalized;
+        } catch (error: any) {
+            console.error('[SocketService] ❌ Failed to load pinned messages:', error?.message);
+            // Return empty array on error instead of throwing, so chat still loads
+            return [];
+        }
+    }
 }
 
 export default SocketService;
