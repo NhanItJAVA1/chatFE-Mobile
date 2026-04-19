@@ -13,11 +13,13 @@ import {
     KeyboardAvoidingView,
     Platform,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../../shared/hooks";
 import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { Avatar } from "../components";
 import { colors } from "../theme";
+import { requestPresignedUrl, confirmUpload } from "../../../shared/services/presignedUrlService";
 
 interface GroupMemberWithRole {
     _id: string;
@@ -57,6 +59,7 @@ export const GroupSettingsScreen: React.FC<{
         allowMemberInvite: groupState.group?.settings?.allowMemberInvite ?? true,
     });
     const [processingGroupUpdate, setProcessingGroupUpdate] = useState(false);
+    const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
     // Collapse state
     const [adminCollapsed, setAdminCollapsed] = useState(false);
@@ -369,6 +372,90 @@ export const GroupSettingsScreen: React.FC<{
         );
     }, [processingDangerAction, groupActions, groupId, navigateToHomeAfterAction]);
 
+    const handleUploadGroupAvatar = useCallback(async () => {
+        try {
+            // Request permission
+            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (status !== "granted") {
+                Alert.alert("Lỗi", "Cần cấp quyền truy cập thư viện ảnh");
+                return;
+            }
+
+            // Pick image
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'] as any,
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.8,
+            });
+
+            if (result.canceled) {
+                return;
+            }
+
+            const pickedAsset = result.assets[0];
+            const imageUri = pickedAsset.uri;
+
+            setUploadingAvatar(true);
+
+            // Get file info
+            const fileSize = pickedAsset.fileSize || 5242880; // 5MB default
+            const mimeType = pickedAsset.mimeType || "image/jpeg";
+            const fileName = `group_${groupId}_${Date.now()}.jpg`;
+
+            console.log("[GroupSettings] Uploading avatar:", { fileName, fileSize, mimeType });
+
+            // Step 1: Request presigned URL
+            const urlResponse = await requestPresignedUrl({
+                fileType: "IMAGE",
+                mimeType,
+                fileSize,
+                originalName: fileName,
+                expiresIn: 3600,
+            });
+
+            console.log("[GroupSettings] Got presigned URL, uploading file...");
+
+            // Step 2: Upload to S3
+            const response = await fetch(imageUri);
+            const blob = await response.blob();
+
+            const uploadResponse = await fetch(urlResponse.presignedUrl, {
+                method: "PUT",
+                body: blob,
+                headers: {
+                    "Content-Type": mimeType,
+                    ...urlResponse.headers,
+                },
+            });
+
+            if (!uploadResponse.ok) {
+                throw new Error(`Upload failed: ${uploadResponse.statusText}`);
+            }
+
+            console.log("[GroupSettings] File uploaded, confirming...");
+
+            // Step 3: Confirm upload
+            await confirmUpload({
+                fileId: urlResponse.fileId,
+                uploadedUrl: urlResponse.presignedUrl,
+            });
+
+            console.log("[GroupSettings] Upload confirmed, updating group...");
+
+            // Step 4: Update group with new avatar URL
+            const avatarUrl = `${urlResponse.presignedUrl.split("?")[0]}`;
+            await groupActions.updateGroup(groupId, { avatarUrl });
+
+            setUploadingAvatar(false);
+            Alert.alert("Thành công", "Đã cập nhật ảnh nhóm");
+        } catch (err: any) {
+            setUploadingAvatar(false);
+            console.error("[GroupSettings] Avatar upload error:", err);
+            Alert.alert("Lỗi", err.message || "Không thể upload ảnh nhóm");
+        }
+    }, [groupId, groupActions]);
+
     const handleUpdateGroupName = useCallback(async () => {
         if (!newGroupName.trim() || newGroupName === groupState.group?.name) {
             setEditingGroupName(false);
@@ -667,15 +754,28 @@ export const GroupSettingsScreen: React.FC<{
                         </Text>
                     </View>
                     {canManageMembers && (
-                        <Pressable
-                            style={styles.editInfoButton}
-                            onPress={() => {
-                                setEditingGroupName(true);
-                                setNewGroupName(groupState.group?.name || "");
-                            }}
-                        >
-                            <Ionicons name="create-outline" size={18} color={colors.accent} />
-                        </Pressable>
+                        <View style={styles.editButtonsGroup}>
+                            <Pressable
+                                style={styles.editInfoButton}
+                                onPress={() => {
+                                    setEditingGroupName(true);
+                                    setNewGroupName(groupState.group?.name || "");
+                                }}
+                            >
+                                <Ionicons name="create-outline" size={18} color={colors.accent} />
+                            </Pressable>
+                            <Pressable
+                                style={styles.editInfoButton}
+                                onPress={handleUploadGroupAvatar}
+                                disabled={uploadingAvatar}
+                            >
+                                {uploadingAvatar ? (
+                                    <ActivityIndicator size="small" color={colors.accent} />
+                                ) : (
+                                    <Ionicons name="image-outline" size={18} color={colors.accent} />
+                                )}
+                            </Pressable>
+                        </View>
                     )}
                 </View>
 
@@ -1356,6 +1456,10 @@ const styles = StyleSheet.create({
     },
 
     // Edit Info Button
+    editButtonsGroup: {
+        flexDirection: "row",
+        gap: 8,
+    },
     editInfoButton: {
         padding: 8,
         borderRadius: 8,

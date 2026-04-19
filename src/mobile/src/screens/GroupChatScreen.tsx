@@ -1176,6 +1176,15 @@ export const GroupChatScreen: React.FC<{
                 >
                     <Ionicons name="chevron-back" size={24} color={colors.text} />
                 </Pressable>
+
+                {/* Group Avatar */}
+                {groupState.group?.avatarUrl && (
+                    <Image
+                        source={{ uri: groupState.group.avatarUrl }}
+                        style={styles.groupAvatarImage}
+                    />
+                )}
+
                 <View style={styles.chatHeaderCard}>
                     <Text
                         style={styles.chatHeaderTitle}
@@ -1550,6 +1559,12 @@ const styles = StyleSheet.create({
     chatHeaderCard: {
         flex: 1,
         justifyContent: "center",
+        marginLeft: 8,
+    },
+    groupAvatarImage: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
     },
     chatHeaderTitle: {
         fontSize: 16,
