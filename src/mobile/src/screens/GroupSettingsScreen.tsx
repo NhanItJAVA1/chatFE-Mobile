@@ -9,6 +9,9 @@ import {
     Alert,
     FlatList,
     Image,
+    TextInput,
+    KeyboardAvoidingView,
+    Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../../shared/hooks";
@@ -43,6 +46,17 @@ export const GroupSettingsScreen: React.FC<{
     const [showTransferBeforeLeave, setShowTransferBeforeLeave] = useState(false);
     const [transferOwnerTargetId, setTransferOwnerTargetId] = useState<string | null>(null);
     const [hasLoadedGroupOnce, setHasLoadedGroupOnce] = useState(false);
+
+    // Edit group name/settings
+    const [editingGroupName, setEditingGroupName] = useState(false);
+    const [newGroupName, setNewGroupName] = useState("");
+    const [showSettingsModal, setShowSettingsModal] = useState(false);
+    const [settingForm, setSettingForm] = useState({
+        allowSendLink: groupState.group?.settings?.allowSendLink ?? true,
+        requireApproval: groupState.group?.settings?.requireApproval ?? false,
+        allowMemberInvite: groupState.group?.settings?.allowMemberInvite ?? true,
+    });
+    const [processingGroupUpdate, setProcessingGroupUpdate] = useState(false);
 
     // Collapse state
     const [adminCollapsed, setAdminCollapsed] = useState(false);
@@ -94,6 +108,18 @@ export const GroupSettingsScreen: React.FC<{
             );
         }
     }, [groupState.group, groupState.members]);
+
+    // Sync group name and settings form when group updates
+    useEffect(() => {
+        if (groupState.group) {
+            setNewGroupName(groupState.group.name);
+            setSettingForm({
+                allowSendLink: groupState.group.settings?.allowSendLink ?? true,
+                requireApproval: groupState.group.settings?.requireApproval ?? false,
+                allowMemberInvite: groupState.group.settings?.allowMemberInvite ?? true,
+            });
+        }
+    }, [groupState.group]);
 
     const loadGroupData = useCallback(async () => {
         try {
@@ -342,6 +368,45 @@ export const GroupSettingsScreen: React.FC<{
             ]
         );
     }, [processingDangerAction, groupActions, groupId, navigateToHomeAfterAction]);
+
+    const handleUpdateGroupName = useCallback(async () => {
+        if (!newGroupName.trim() || newGroupName === groupState.group?.name) {
+            setEditingGroupName(false);
+            return;
+        }
+
+        if (processingGroupUpdate) {
+            return;
+        }
+
+        try {
+            setProcessingGroupUpdate(true);
+            await groupActions.updateGroup(groupId, { name: newGroupName.trim() });
+            setEditingGroupName(false);
+            Alert.alert("Thành công", "Đã cập nhật tên nhóm");
+        } catch (err: any) {
+            Alert.alert("Lỗi", err.message || "Không thể cập nhật tên nhóm");
+        } finally {
+            setProcessingGroupUpdate(false);
+        }
+    }, [newGroupName, groupState.group?.name, processingGroupUpdate, groupActions, groupId]);
+
+    const handleUpdateSettings = useCallback(async () => {
+        if (processingGroupUpdate) {
+            return;
+        }
+
+        try {
+            setProcessingGroupUpdate(true);
+            await groupActions.updateSettings(groupId, settingForm);
+            setShowSettingsModal(false);
+            Alert.alert("Thành công", "Đã cập nhật cài đặt nhóm");
+        } catch (err: any) {
+            Alert.alert("Lỗi", err.message || "Không thể cập nhật cài đặt");
+        } finally {
+            setProcessingGroupUpdate(false);
+        }
+    }, [settingForm, processingGroupUpdate, groupActions, groupId]);
 
     const MemberItem: React.FC<{ member: GroupMemberWithRole }> = ({ member }) => {
         const memberInitials = (member.name || "?")
@@ -601,7 +666,191 @@ export const GroupSettingsScreen: React.FC<{
                             {groupState.members?.length || 0} thành viên
                         </Text>
                     </View>
+                    {canManageMembers && (
+                        <Pressable
+                            style={styles.editInfoButton}
+                            onPress={() => {
+                                setEditingGroupName(true);
+                                setNewGroupName(groupState.group?.name || "");
+                            }}
+                        >
+                            <Ionicons name="create-outline" size={18} color={colors.accent} />
+                        </Pressable>
+                    )}
                 </View>
+
+                {/* Edit Group Name Modal */}
+                {editingGroupName && canManageMembers && (
+                    <KeyboardAvoidingView
+                        behavior={Platform.OS === "ios" ? "padding" : "height"}
+                        style={styles.editModal}
+                    >
+                        <Pressable
+                            style={styles.editModalOverlay}
+                            onPress={() => {
+                                setEditingGroupName(false);
+                                setNewGroupName(groupState.group?.name || "");
+                            }}
+                        />
+                        <View style={styles.editModalContent}>
+                            <Text style={styles.editModalTitle}>Đổi tên nhóm</Text>
+                            <TextInput
+                                style={styles.editInput}
+                                value={newGroupName}
+                                onChangeText={setNewGroupName}
+                                placeholder="Tên nhóm mới"
+                                maxLength={100}
+                                autoFocus
+                            />
+                            <View style={styles.editModalActions}>
+                                <Pressable
+                                    style={styles.editModalButton}
+                                    onPress={() => {
+                                        setEditingGroupName(false);
+                                        setNewGroupName(groupState.group?.name || "");
+                                    }}
+                                >
+                                    <Text style={styles.editModalButtonText}>Hủy</Text>
+                                </Pressable>
+                                <Pressable
+                                    style={[styles.editModalButton, styles.editModalButtonPrimary]}
+                                    disabled={processingGroupUpdate}
+                                    onPress={handleUpdateGroupName}
+                                >
+                                    <Text style={styles.editModalButtonTextPrimary}>
+                                        {processingGroupUpdate ? "Đang lưu..." : "Lưu"}
+                                    </Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    </KeyboardAvoidingView>
+                )}
+
+                {/* Settings Button */}
+                {canManageMembers && (
+                    <View style={styles.settingsButtonSection}>
+                        <Pressable
+                            style={styles.settingsButton}
+                            onPress={() => setShowSettingsModal(true)}
+                        >
+                            <Ionicons name="settings-outline" size={18} color={colors.text} />
+                            <Text style={styles.settingsButtonText}>Cài đặt nhóm</Text>
+                        </Pressable>
+                    </View>
+                )}
+
+                {/* Settings Modal */}
+                {showSettingsModal && canManageMembers && (
+                    <KeyboardAvoidingView
+                        behavior={Platform.OS === "ios" ? "padding" : "height"}
+                        style={styles.editModal}
+                    >
+                        <Pressable
+                            style={styles.editModalOverlay}
+                            onPress={() => setShowSettingsModal(false)}
+                        />
+                        <View style={styles.editModalContent}>
+                            <View style={styles.editModalHeader}>
+                                <Text style={styles.editModalTitle}>Cài đặt nhóm</Text>
+                                <Pressable onPress={() => setShowSettingsModal(false)}>
+                                    <Ionicons name="close" size={24} color={colors.text} />
+                                </Pressable>
+                            </View>
+
+                            <ScrollView style={styles.settingsForm} keyboardShouldPersistTaps="handled">
+                                {/* Allow Send Link */}
+                                <View style={styles.settingRow}>
+                                    <View style={styles.settingLabel}>
+                                        <Text style={styles.settingLabelText}>Cho phép gửi link</Text>
+                                        <Text style={styles.settingDescription}>Cho phép thành viên chia sẻ link</Text>
+                                    </View>
+                                    <Pressable
+                                        style={styles.toggle}
+                                        onPress={() =>
+                                            setSettingForm((prev) => ({
+                                                ...prev,
+                                                allowSendLink: !prev.allowSendLink,
+                                            }))
+                                        }
+                                    >
+                                        <View
+                                            style={[
+                                                styles.toggleSwitch,
+                                                settingForm.allowSendLink && styles.toggleSwitchActive,
+                                            ]}
+                                        />
+                                    </Pressable>
+                                </View>
+
+                                {/* Require Approval */}
+                                <View style={styles.settingRow}>
+                                    <View style={styles.settingLabel}>
+                                        <Text style={styles.settingLabelText}>Cần duyệt member mới</Text>
+                                        <Text style={styles.settingDescription}>Phê duyệt trước khi thành viên mới tham gia</Text>
+                                    </View>
+                                    <Pressable
+                                        style={styles.toggle}
+                                        onPress={() =>
+                                            setSettingForm((prev) => ({
+                                                ...prev,
+                                                requireApproval: !prev.requireApproval,
+                                            }))
+                                        }
+                                    >
+                                        <View
+                                            style={[
+                                                styles.toggleSwitch,
+                                                settingForm.requireApproval && styles.toggleSwitchActive,
+                                            ]}
+                                        />
+                                    </Pressable>
+                                </View>
+
+                                {/* Allow Member Invite */}
+                                <View style={styles.settingRow}>
+                                    <View style={styles.settingLabel}>
+                                        <Text style={styles.settingLabelText}>Cho phép member mời người</Text>
+                                        <Text style={styles.settingDescription}>Cho phép thành viên mời người mới</Text>
+                                    </View>
+                                    <Pressable
+                                        style={styles.toggle}
+                                        onPress={() =>
+                                            setSettingForm((prev) => ({
+                                                ...prev,
+                                                allowMemberInvite: !prev.allowMemberInvite,
+                                            }))
+                                        }
+                                    >
+                                        <View
+                                            style={[
+                                                styles.toggleSwitch,
+                                                settingForm.allowMemberInvite && styles.toggleSwitchActive,
+                                            ]}
+                                        />
+                                    </Pressable>
+                                </View>
+                            </ScrollView>
+
+                            <View style={styles.editModalActions}>
+                                <Pressable
+                                    style={styles.editModalButton}
+                                    onPress={() => setShowSettingsModal(false)}
+                                >
+                                    <Text style={styles.editModalButtonText}>Đóng</Text>
+                                </Pressable>
+                                <Pressable
+                                    style={[styles.editModalButton, styles.editModalButtonPrimary]}
+                                    disabled={processingGroupUpdate}
+                                    onPress={handleUpdateSettings}
+                                >
+                                    <Text style={styles.editModalButtonTextPrimary}>
+                                        {processingGroupUpdate ? "Đang lưu..." : "Lưu"}
+                                    </Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    </KeyboardAvoidingView>
+                )}
 
                 {/* Owner Section */}
                 {owner && (
@@ -968,5 +1217,152 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: "700",
         color: colors.danger,
+    },
+
+    // Edit Modal
+    editModal: {
+        flex: 1,
+        justifyContent: "flex-end",
+        zIndex: 1000,
+    },
+    editModalOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+    },
+    editModalContent: {
+        backgroundColor: colors.surface,
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+        paddingHorizontal: 16,
+        paddingVertical: 20,
+        maxHeight: "80%",
+    },
+    editModalHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 16,
+    },
+    editModalTitle: {
+        fontSize: 18,
+        fontWeight: "700",
+        color: colors.text,
+    },
+    editInput: {
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        fontSize: 14,
+        color: colors.text,
+        marginBottom: 16,
+    },
+    editModalActions: {
+        flexDirection: "row",
+        gap: 12,
+        marginTop: 20,
+    },
+    editModalButton: {
+        flex: 1,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.background,
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: 48,
+    },
+    editModalButtonText: {
+        fontSize: 15,
+        fontWeight: "700",
+        color: colors.text,
+    },
+    editModalButtonPrimary: {
+        backgroundColor: colors.accent,
+        borderColor: colors.accent,
+    },
+    editModalButtonTextPrimary: {
+        fontSize: 15,
+        fontWeight: "700",
+        color: "#fff",
+    },
+
+    // Settings
+    settingsButtonSection: {
+        paddingHorizontal: 12,
+        marginVertical: 12,
+    },
+    settingsButton: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        backgroundColor: colors.surface,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    settingsButtonText: {
+        fontSize: 14,
+        fontWeight: "600",
+        color: colors.text,
+    },
+    settingsForm: {
+        maxHeight: 400,
+        marginBottom: 16,
+    },
+    settingRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    settingLabel: {
+        flex: 1,
+    },
+    settingLabelText: {
+        fontSize: 14,
+        fontWeight: "600",
+        color: colors.text,
+    },
+    settingDescription: {
+        fontSize: 12,
+        color: colors.textMuted,
+        marginTop: 4,
+    },
+    toggle: {
+        width: 50,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: colors.textMuted + "30",
+        justifyContent: "center",
+        paddingHorizontal: 2,
+    },
+    toggleSwitch: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: colors.textMuted,
+    },
+    toggleSwitchActive: {
+        backgroundColor: colors.accent,
+        alignSelf: "flex-end",
+    },
+
+    // Edit Info Button
+    editInfoButton: {
+        padding: 8,
+        borderRadius: 8,
+        backgroundColor: colors.accentStrong + "15",
+        minWidth: 40,
+        minHeight: 40,
+        justifyContent: "center",
+        alignItems: "center",
     },
 });

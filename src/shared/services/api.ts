@@ -229,6 +229,14 @@ export const api = {
         });
     },
 
+    put: async (endpoint: string, data: any = null, config: any = {}) => {
+        return apiCall(endpoint, {
+            method: "PUT",
+            body: data ? JSON.stringify(data) : undefined,
+            ...config,
+        });
+    },
+
     delete: async (endpoint: string, config: any = {}) => {
         return apiCall(endpoint, {
             method: "DELETE",

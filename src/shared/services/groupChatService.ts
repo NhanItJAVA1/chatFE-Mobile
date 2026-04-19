@@ -177,7 +177,7 @@ export class GroupChatService {
         payload: GroupUpdatePayload
     ): Promise<Group> {
         try {
-            const response = await api.patch(`/groups/${groupId}`, payload);
+            const response = await api.put(`/groups/${groupId}`, payload);
             const data = response.data || response;
             return data.data || data;
         } catch (error: any) {
