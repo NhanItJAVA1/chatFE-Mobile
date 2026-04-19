@@ -49,7 +49,7 @@ export const GroupSettingsScreen: React.FC<{
         loadGroupData();
     }, [groupId]);
 
-    // Organize members by role
+    // Organize members by role from member records + ownerId.
     useEffect(() => {
         if (groupState.group && groupState.members) {
             const ownerMember = groupState.members.find(
@@ -63,7 +63,7 @@ export const GroupSettingsScreen: React.FC<{
             }
 
             const adminMembers = groupState.members.filter((m) =>
-                groupState.group?.admins?.includes(m.userId)
+                m.userId !== groupState.group?.ownerId && m.role === "admin"
             );
             setAdmins(
                 adminMembers.map((m) => ({
@@ -75,7 +75,7 @@ export const GroupSettingsScreen: React.FC<{
             const regularMembers = groupState.members.filter(
                 (m) =>
                     m.userId !== groupState.group?.ownerId &&
-                    !groupState.group?.admins?.includes(m.userId)
+                    m.role !== "admin"
             );
             setMembers(
                 regularMembers.map((m) => ({
@@ -101,9 +101,13 @@ export const GroupSettingsScreen: React.FC<{
         .filter(Boolean)
         .map((id) => String(id));
 
+    const currentUserMemberRecord = groupState.members.find((member) =>
+        currentUserIds.includes(String(member.userId))
+    );
+
     const currentUserRole = currentUserIds.includes(String(groupState.group?.ownerId || ""))
         ? "owner"
-        : (groupState.group?.admins || []).some((adminId) => currentUserIds.includes(String(adminId)))
+        : currentUserMemberRecord?.role === "admin"
             ? "admin"
             : "member";
 

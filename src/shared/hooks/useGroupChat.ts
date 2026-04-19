@@ -317,20 +317,24 @@ export const useGroupChat = (): UseGroupChatReturn => {
         async (groupId: string, newOwnerId: string): Promise<void> => {
             try {
                 setState((prev) => ({ ...prev, isLoading: true, error: null }));
-                const updated = await GroupChatService.transferOwner(
+                const transferResult: any = await GroupChatService.transferOwner(
                     groupId,
                     newOwnerId
                 );
+
+                // Reload authoritative data after transfer to keep owner/admin/member roles in sync.
+                const [groupInfo, members] = await Promise.all([
+                    GroupChatService.getGroupInfo(groupId),
+                    GroupChatService.getGroupMembersWithProfiles(groupId),
+                ]);
+
                 setState((prev) => ({
                     ...prev,
-                    group: updated,
-                    members: prev.members.map((m) =>
-                        m.userId === newOwnerId
-                            ? { ...m, role: "owner" }
-                            : m.role === "owner"
-                                ? { ...m, role: "admin" }
-                                : m
-                    ),
+                    group: {
+                        ...groupInfo,
+                        ownerId: transferResult?.ownerId || transferResult?.data?.ownerId || groupInfo?.ownerId,
+                    },
+                    members,
                     isLoading: false,
                 }));
             } catch (err: any) {
