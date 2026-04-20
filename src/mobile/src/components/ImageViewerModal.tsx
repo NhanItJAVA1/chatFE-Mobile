@@ -14,11 +14,14 @@ interface ImageViewerModalProps {
 let NativeImageViewing: any = null;
 if (Platform.OS !== 'web') {
     try {
+        // Chỉ require khi không phải web để tránh lỗi bundling
         NativeImageViewing = require('react-native-image-viewing').default;
     } catch (e) {
-        // fallback nếu chưa cài
         NativeImageViewing = null;
     }
+} else {
+    // Trên web, tuyệt đối không require/react-native-image-viewing để tránh lỗi bundler
+    NativeImageViewing = null;
 }
 
 const ImageViewerModal: React.FC<ImageViewerModalProps> = (props) => {
