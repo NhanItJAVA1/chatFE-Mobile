@@ -22,7 +22,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useChatMessage } from "../../../shared/hooks/useChat";
 import { useAuth } from "../../../shared/hooks";
-import { Avatar, ForwardDialog, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock } from "../components";
+import { Avatar, ForwardDialog, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage } from "../components";
 import { colors } from "../theme";
 import { buildMessageActionSheetOptions } from "../../../shared/utils";
 import MediaMessage from "../components/MediaMessage";
@@ -40,8 +40,10 @@ const MessageBubble: React.FC<{
     message: MessagePayload;
     isOwn: boolean;
     onLongPress?: () => void;
+    onPressQuoted?: (quotedMessageId: string) => void;
+    isHighlighted?: boolean;
     messageMap?: Record<string, MessagePayload | undefined>;
-}> = ({ message, isOwn, onLongPress, messageMap = {} }) => {
+}> = ({ message, isOwn, onLongPress, onPressQuoted, isHighlighted, messageMap = {} }) => {
     const formatTime = (date: string) => {
         const d = new Date(date);
         return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
@@ -78,12 +80,14 @@ const MessageBubble: React.FC<{
     }, [hasMedia, message.media]);
 
     return (
-        <Pressable
+        <HighlightableMessage
             onLongPress={onLongPress}
             delayLongPress={300}
+            isHighlighted={!!isHighlighted}
             style={[
                 styles.bubbleRow,
                 isOwn ? styles.outgoingRow : styles.incomingRow,
+                isHighlighted && styles.messageHighlighted,
             ]}
         >
             {/* Media display */}
@@ -122,6 +126,7 @@ const MessageBubble: React.FC<{
                             <QuotedMessageBlock
                                 quotedMessage={resolvedQuotedMessage}
                                 isOwn={isOwn}
+                                onPress={() => message.quotedMessageId && onPressQuoted?.(message.quotedMessageId)}
                             />
                         ) : null;
                     })()}
@@ -151,8 +156,7 @@ const MessageBubble: React.FC<{
                     </View>
                 </View>
             )}
-
-        </Pressable>
+        </HighlightableMessage>
     );
 };
 
@@ -393,7 +397,6 @@ export const ChatScreen = ({
     const [allViewerImages, setAllViewerImages] = React.useState<Array<{ uri: string; key: string }>>([]);
     const [showAvatarMenu, setShowAvatarMenu] = React.useState(false);
     const [unfriending, setUnfriending] = React.useState(false);
-    const flatListRef = useRef<FlatList>(null);
     const imageViewerScrollRef = useRef<FlatList>(null);
     const actionsRef = useRef<any>(null);
     const recordingRef = useRef<Audio.Recording | null>(null);
@@ -414,7 +417,7 @@ export const ChatScreen = ({
         console.log('[ChatScreen] Token available:', token ? `${token.substring(0, 20)}...` : 'MISSING');
     }, [chatUser?.id, token]);
 
-    const { state, actions } = useChatMessage(
+    const { state, actions, flatListRef } = useChatMessage(
         friendId || "",
         token || ""
     );
@@ -495,6 +498,7 @@ export const ChatScreen = ({
         error,
         typingUsers,
         hasMoreMessages,
+        highlightedMessageId,
     } = state;
 
     const renderableMessages = useMemo(
@@ -566,6 +570,7 @@ export const ChatScreen = ({
     const userColor = chatUser?.color || colors.accentStrong;
     const hasDraftMedia = draftMedia.length > 0;
     const hasSendableContent = hasDraftMedia || messageText.trim().length > 0;
+
 
     const appendDraftMedia = useCallback((assets: any[]) => {
         setDraftMedia((prev) => {
@@ -1391,44 +1396,52 @@ export const ChatScreen = ({
         []
     );
 
-    /**
-     * Render message item
-     */
-    const renderMessage = useCallback(
-        ({ item }: { item: RenderableChatItem }) => {
-            if (item.kind === "message" && item.message.type === "system") {
-                return <SystemMessageBubble text={item.message.text} />;
-            }
+    const renderMessage = useCallback(({ item }: { item: RenderableChatItem }) => {
+        // System Message
+        if (item.kind === "message" && item.message.type === "system") {
+            return <SystemMessageBubble text={item.message.text} />;
+        }
 
-            if (item.kind === "gallery") {
-                return (
-                    <ImageGalleryBubble
-                        messages={item.messages}
-                        isOwn={item.isOwn}
-                        onLongPress={() => handleMessageLongPress(item.messages[0])}
-                        onImagePress={(msgs, idx) => {
-                            const senderId = msgs[0].senderId;
-                            const { allImages, startingIndex } = getAllUserImages(senderId, msgs);
-                            setAllViewerImages(allImages);
-                            setSelectedImageIndex(startingIndex);
-                            setViewingGalleryMessages(msgs);
-                        }}
-                    />
-                );
-            }
-
-            const isOwn = item.message.senderId === currentUser?.id;
+        // Standard Message
+        if (item.kind === "message") {
+            const msgId = item.message._id || item.message.id;
             return (
                 <MessageBubble
                     message={item.message}
-                    isOwn={isOwn}
-                    messageMap={messageMap}
+                    isOwn={item.message.senderId === currentUserId}
                     onLongPress={() => handleMessageLongPress(item.message)}
+                    onPressQuoted={async (quotedId) => {
+                        if (actions.scrollToMessage) {
+                            const success = await actions.scrollToMessage(quotedId);
+                            if (!success) {
+                                Alert.alert("Thông báo", "Không tìm thấy tin nhắn gốc hoặc tin nhắn đã quá cũ");
+                            }
+                        }
+                    }}
+                    isHighlighted={!!msgId && msgId === highlightedMessageId}
+                    messageMap={messageMap}
                 />
             );
-        },
-        [currentUser?.id, handleMessageLongPress, getAllUserImages, messageMap]
-    );
+        }
+
+        // Gallery / Grouped media
+        return (
+            <ImageGalleryBubble
+                messages={item.messages}
+                isOwn={item.isOwn}
+                onLongPress={() => handleMessageLongPress(item.messages[0])}
+                onImagePress={async (galleryMessages, index) => {
+                    // Logic for image viewer
+                    const senderId = galleryMessages[0].senderId;
+                    const { allImages, startingIndex } = getAllUserImages(senderId, galleryMessages);
+                    setAllViewerImages(allImages);
+                    setSelectedImageIndex(startingIndex + index);
+                    setViewingGalleryMessages(galleryMessages);
+                }}
+            />
+        );
+    }, [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages]);
+
 
     /**
      * Error state
@@ -1541,17 +1554,14 @@ export const ChatScreen = ({
                                     }
                                 }
                             }}
-                            onPress={() => {
+                            onPress={async () => {
                                 // Scroll to pinned message
                                 const pinnedMsg = state.pinnedMessages[state.pinnedMessageIndex];
-                                if (pinnedMsg && flatListRef.current) {
-                                    const index = renderableMessages.findIndex(
-                                        (item) =>
-                                            item.kind === "message" &&
-                                            (item.message._id === pinnedMsg._id || item.message.id === pinnedMsg.id)
-                                    );
-                                    if (index >= 0) {
-                                        flatListRef.current.scrollToIndex({ index, animated: true });
+                                const pinnedMsgId = pinnedMsg?._id || pinnedMsg?.id;
+                                if (pinnedMsgId && actions.scrollToMessage) {
+                                    const success = await actions.scrollToMessage(pinnedMsgId);
+                                    if (!success) {
+                                        Alert.alert("Thông báo", "Không tìm thấy tin nhắn gốc hoặc tin nhắn đã quá cũ");
                                     }
                                 }
                             }}
@@ -2188,7 +2198,17 @@ const styles = StyleSheet.create({
         fontWeight: "800",
     },
     seenStatus: {
-        color: colors.successSeen,
+        color: "#4CAF50",
+    },
+    messageHighlighted: {
+        backgroundColor: "rgba(255, 200, 0, 0.18)",
+        borderRadius: 12,
+    },
+    mediaContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        paddingVertical: 4,
+        gap: 4,
     },
     typingContainer: {
         flexDirection: "row",
@@ -2498,18 +2518,6 @@ const styles = StyleSheet.create({
         color: colors.contrastText,
     },
 
-    // Media container in messages
-    mediaContainer: {
-        gap: 8,
-    },
-    mediaTimestamp: {
-        flexDirection: "row",
-        justifyContent: "flex-end",
-        alignItems: "center",
-        gap: 6,
-        paddingHorizontal: 8,
-        marginTop: 4,
-    },
 
     // Edit dialog styles
     editDialogOverlay: {

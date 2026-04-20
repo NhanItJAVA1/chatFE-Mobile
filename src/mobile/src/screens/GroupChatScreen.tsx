@@ -1141,6 +1141,15 @@ export const GroupChatScreen: React.FC<{
                                         <QuotedMessageBlock
                                             quotedMessage={resolvedQuotedMessage}
                                             isOwn={isOwn}
+                                            onPress={async () => {
+                                                const msgId = item.quotedMessageId;
+                                                if (msgId && chatActions.scrollToMessage) {
+                                                    const success = await chatActions.scrollToMessage(msgId);
+                                                    if (!success) {
+                                                        Alert.alert("Thông báo", "Không tìm thấy tin nhắn gốc hoặc tin nhắn đã quá cũ");
+                                                    }
+                                                }
+                                            }}
                                         />
                                     ) : null;
                                 })()}

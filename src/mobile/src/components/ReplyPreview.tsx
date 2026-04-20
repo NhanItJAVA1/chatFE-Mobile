@@ -8,6 +8,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../theme";
 import type { MessagePayload } from "../../../shared/services/socketService";
+import { useUserCache } from "@/shared";
 
 export interface ReplyPreviewProps {
     message: MessagePayload;
@@ -22,7 +23,8 @@ export const ReplyPreview: React.FC<ReplyPreviewProps> = ({
     message,
     onCancel,
 }) => {
-    const senderName = message.senderName || "Unknown";
+    const { user } = useUserCache(message.senderId);
+    const senderName = user?.name ?? "Unknown";
     const messageText = message.text || (
         message.media && message.media.length > 0
             ? `[Media: ${message.media.length} item(s)]`

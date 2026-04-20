@@ -70,12 +70,12 @@ export const useScrollToMessage = (options?: UseScrollToMessageOptions) => {
         });
     }, [executeScroll]);
 
-    const scrollToMessage = useCallback(async (messageId: string) => {
+    const scrollToMessage = useCallback(async (messageId: string): Promise<boolean> => {
         const index = messageIndexMapRef.current.get(messageId);
 
         if (index !== undefined) {
             executeScroll(messageId, index);
-            return;
+            return true;
         }
 
         if (options?.fetchMissingMessage) {
@@ -84,9 +84,15 @@ export const useScrollToMessage = (options?: UseScrollToMessageOptions) => {
             if (!success) {
                 // Fetch failed or message not found
                 setPendingScrollId(null);
+                return false;
             }
+            // If success, buildMessageIndexMap will be triggered when messages change,
+            // and it will check setPendingScrollId to execute the scroll.
+            // So we return true here as the "process" started successfully.
+            return true;
         } else {
             console.warn(`[useScrollToMessage] Target message ${messageId} not found locally.`);
+            return false;
         }
     }, [executeScroll, options]);
 

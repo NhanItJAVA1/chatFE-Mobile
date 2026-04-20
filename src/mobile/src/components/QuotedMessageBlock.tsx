@@ -3,13 +3,17 @@ import {
     View,
     Text,
     StyleSheet,
+    Pressable,
 } from "react-native";
 import { colors } from "../theme";
 import type { MessagePayload, QuotedMessage } from "../../../shared/services/socketService";
+import { useUserCache } from "@/shared/hooks/useUserCache";
+import { resolveUserName } from "@/shared/cache/userCache";
 
 interface QuotedMessageBlockProps {
     quotedMessage?: MessagePayload | QuotedMessage;
     isOwn: boolean;
+    onPress?: () => void;
 }
 
 /**
@@ -26,21 +30,25 @@ interface QuotedMessageBlockProps {
 export const QuotedMessageBlock: React.FC<QuotedMessageBlockProps> = ({
     quotedMessage,
     isOwn,
+    onPress,
 }) => {
-    if (!quotedMessage) {
-        console.log('[QuotedMessageBlock] No quotedMessage provided, rendering nothing');
-        return null;
-    }
+    // if (!quotedMessage) {
+    //     console.log('[QuotedMessageBlock] No quotedMessage provided, rendering nothing');
+    //     return null;
+    // }
 
-    console.log('[QuotedMessageBlock] Rendering quoted message:', {
-        senderName: quotedMessage?.senderName ? quotedMessage.senderName : quotedMessage.senderId,
-        text: quotedMessage.text?.substring(0, 30),
-        hasMedia: !!quotedMessage.media,
-    });
+    // console.log('[QuotedMessageBlock]', {
+    //     senderId: quotedMessage.senderId,
+    //     cachedName: resolveUserName(quotedMessage.senderId),
+    //     rawSenderName: quotedMessage.senderName,
+    //     text: quotedMessage.text?.substring(0, 30),
+    // });
 
-    // Safety fallback: senderName may be undefined if enrich ran before the
-    // quoted message was loaded into the local message array.
-    const senderName = quotedMessage?.senderName || "Unknown";
+    // Sử dụng Hook để lấy thông tin user một cách đúng đắn trong React
+    const { user } = useUserCache(quotedMessage.senderId);
+    const senderName = user?.name ?? "Unknown";
+
+
 
     // Handle different message types
     const hasMedia = quotedMessage.media && quotedMessage.media.length > 0;
@@ -56,7 +64,10 @@ export const QuotedMessageBlock: React.FC<QuotedMessageBlockProps> = ({
         : messageText;
 
     return (
-        <View style={styles.quotedWrapper}>
+        <Pressable 
+            onPress={onPress}
+            style={styles.quotedWrapper}
+        >
             {/* Main Quoted Container with Left Border */}
             <View style={[
                 styles.quotedContainer,
@@ -84,7 +95,7 @@ export const QuotedMessageBlock: React.FC<QuotedMessageBlockProps> = ({
 
             {/* Divider Line */}
             <View style={styles.quotedDivider} />
-        </View>
+        </Pressable>
     );
 };
 

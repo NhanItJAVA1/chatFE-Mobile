@@ -38,6 +38,8 @@ type Colors = {
     incoming: string;
     outgoing: string;
     tabInactive: string;
+    textSecondary: string;
+    textPrimary: string;
 };
 
 type Gradients = {
@@ -85,6 +87,8 @@ export const colors: Colors = {
     incoming: "#2a2a2a",
     outgoing: "#cc5f99",
     tabInactive: "#a4a4a4",
+    textSecondary: "#b8b8b8",
+    textPrimary: "#ffffff",
 };
 
 export const gradients: Gradients = {

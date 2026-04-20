@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
     },
     messageText: {
         fontSize: 14,
-        color: colors.textSecondary,
+        color: colors.textSoft,
     },
     chevronContainer: {
         flexDirection: "row",
@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
     },
     badgeText: {
         fontSize: 10,
-        color: colors.textSecondary,
+        color: colors.textSoft,
         fontWeight: "bold",
     },
     expandedContainer: {

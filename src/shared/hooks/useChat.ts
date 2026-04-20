@@ -3,6 +3,7 @@ import { ConversationService, Conversation } from "../services/conversationServi
 import { SocketService, MessagePayload, TypingData } from "../services/socketService";
 import { useAuth } from "./useAuth";
 import { saveMessagesToCache, loadMessagesFromCache, mergeMessages } from "../utils/cacheUtils";
+import { useScrollToMessage } from "./useScrollToMessage";
 
 export interface UseChatMessageState {
     conversation: Conversation | null;
@@ -16,6 +17,8 @@ export interface UseChatMessageState {
     pinnedMessages: MessagePayload[];
     pinnedMessageIndex: number;
     replyingTo: MessagePayload | null;
+    /** ID of the message currently lit up after a scroll-to, or null */
+    highlightedMessageId: string | null;
 }
 
 export interface UseChatMessageActions {
@@ -36,11 +39,15 @@ export interface UseChatMessageActions {
     navigatePinnedMessages: (direction: "prev" | "next") => void;
     setReplyingTo: (message: MessagePayload | null) => void;
     retryLoadConversation: () => Promise<void>;
+    /** Scroll the FlatList to the given message and briefly highlight it */
+    scrollToMessage: (messageId: string) => Promise<boolean>;
 }
 
 export interface UseChatMessageReturn {
     state: UseChatMessageState;
     actions: UseChatMessageActions;
+    /** Ref to attach to the <FlatList> so scrollToMessage can control it */
+    flatListRef: ReturnType<typeof useScrollToMessage>["flatListRef"];
 }
 
 const MESSAGE_LIMIT = 30;
@@ -186,6 +193,42 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         pinnedMessages: [],
         pinnedMessageIndex: 0,
         replyingTo: null,
+        highlightedMessageId: null,
+    });
+
+    const fetchMissingMessage = useCallback(async (messageId: string): Promise<boolean> => {
+        try {
+            const message = await ConversationService.getMessageById(messageId);
+            if (message && (message._id || message.id)) {
+                setState((prev) => {
+                    // Prepend/Merge and enrich
+                    const merged = mergeUniqueMessages([message], prev.messages);
+                    // For private chat, we need to sort to ensure correct order
+                    const sorted = merged.sort((a, b) => {
+                        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+                    });
+                    const enriched = enrichMessagesWithQuotedData(sorted);
+                    return {
+                        ...prev,
+                        messages: enriched
+                    };
+                });
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error("[useChat] Failed to fetch missing message:", error);
+            return false;
+        }
+    }, []);
+
+    const {
+        flatListRef,
+        highlightedMessageId,
+        scrollToMessage,
+        buildMessageIndexMap,
+    } = useScrollToMessage({
+        fetchMissingMessage
     });
 
     const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -647,7 +690,10 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
         setState((prev) => {
             const merged = mergeUniqueMessages(messages, prev.messages);
-            const newMessages = enrichMessagesWithQuotedData(merged);
+            const sorted = merged.sort((a, b) => {
+                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            });
+            const newMessages = enrichMessagesWithQuotedData(sorted);
             const newState = {
                 ...prev,
                 messages: newMessages,
@@ -667,9 +713,17 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 });
             }
 
+            // Update index map
+            buildMessageIndexMap(newMessages);
+
             return newState;
         });
-    }, []);
+    }, [buildMessageIndexMap]);
+
+    // Update index map whenever messages change
+    useEffect(() => {
+        buildMessageIndexMap(state.messages);
+    }, [state.messages, buildMessageIndexMap]);
 
     /**
      * Send message

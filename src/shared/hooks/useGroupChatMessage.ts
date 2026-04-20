@@ -234,7 +234,7 @@ export interface UseChatMessageActions {
     setReplyingTo: (message: MessagePayload | null) => void;
     retryLoadConversation: () => Promise<void>;
     /** Scroll the FlatList to the given message and briefly highlight it */
-    scrollToMessage: (messageId: string) => void;
+    scrollToMessage: (messageId: string) => Promise<boolean>;
 }
 
 export interface UseChatMessageReturn {
@@ -484,6 +484,11 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             return newState;
         });
     }, [buildMessageIndexMap]);
+
+    // Keep scroll-index map fresh whenever messages change
+    useEffect(() => {
+        buildMessageIndexMap(state.messages);
+    }, [state.messages, buildMessageIndexMap]);
 
     /**
      * Send message to group

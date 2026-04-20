@@ -9,6 +9,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../theme";
 import type { MessagePayload } from "../../../shared/services/socketService";
+import { useUserCache } from "@/shared/hooks/useUserCache";
 
 interface PinnedMessageHeaderProps {
     pinnedMessage: MessagePayload | null;
@@ -38,7 +39,8 @@ export const PinnedMessageHeader: React.FC<PinnedMessageHeaderProps> = ({
         return null;
     }
 
-    const senderName = pinnedMessage.senderName || "Unknown";
+    const { user } = useUserCache(pinnedMessage.senderId);
+    const senderName = user?.name ?? "Unknown";
     const messageText = pinnedMessage.text || (
         pinnedMessage.media && pinnedMessage.media.length > 0
             ? `[Media: ${pinnedMessage.media.length} item(s)]`
