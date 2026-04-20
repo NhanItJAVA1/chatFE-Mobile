@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ConversationService, Conversation } from "../services/conversationService";
 import { SocketService, MessagePayload, TypingData } from "../services/socketService";
 import { useAuth } from "./useAuth";
 import { saveMessagesToCache, loadMessagesFromCache } from "../utils/cacheUtils";
+import { useScrollToMessage } from "./useScrollToMessage";
 
 const getMessageId = (message: MessagePayload): string => {
     return message._id || message.id || `${message.senderId}-${message.createdAt}`;
@@ -36,85 +37,163 @@ const mergeUniqueMessages = (
 };
 
 /**
- * Build user map from messages for lookup by senderId
+ * Build a userId → name lookup map.
+ *
+ * Priority (per user id):
+ *  1. userList entry (displayName or name) — authoritative roster from the conversation
+ *  2. senderName carried on a message — fallback only for IDs absent from userList
  */
-const buildUserMap = (messages: MessagePayload[]): Record<string, string> => {
-    const userMap: Record<string, string> = {};
-    messages.forEach(msg => {
-        if (msg.senderId && msg.senderName && !userMap[msg.senderId]) {
-            userMap[msg.senderId] = msg.senderName;
+const buildUserMap = (
+    messages: MessagePayload[],
+    userList?: Array<{ id: string; displayName?: string; name?: string }>
+): Record<string, string> => {
+    const map: Record<string, string> = {};
+
+    // Seed from messages first (lowest priority)
+    for (const msg of messages) {
+        if (msg.senderId && msg.senderName && !map[msg.senderId]) {
+            map[msg.senderId] = msg.senderName;
         }
-    });
-    return userMap;
+    }
+
+    // userList overwrites — displayName takes precedence over name
+    if (Array.isArray(userList)) {
+        for (const user of userList) {
+            if (!user.id) continue;
+            const name = user.displayName || user.name;
+            if (name) {
+                map[user.id] = name;
+            }
+        }
+    }
+
+    return map;
 };
 
 /**
- * Enrich messages by populating quotedMessage with BE data or user map lookup
- * Priority: quotedMessageSenderName (BE) → userMap lookup by quotedMessageSenderId → message lookup
+ * Build a messageId → MessagePayload lookup map in O(n).
  */
-const enrichMessagesWithQuotedData = (messages: MessagePayload[]): MessagePayload[] => {
-    // Build user map from all messages for quick lookup by senderId
-    const userMap = buildUserMap(messages);
-
-    return messages.map(msg => {
-        // If message has quotedMessageId, ensure quotedMessage object exists and has proper data
-        if (msg.quotedMessageId) {
-            // Try multiple sources for sender name, in priority order
-            let quotedSenderName = msg.quotedMessageSenderName;  // 1. From BE response
-            let quotedText = msg.quotedMessagePreview;
-
-            // 2. Lookup by quotedMessageSenderId in user map
-            if (!quotedSenderName && msg.quotedMessageSenderId) {
-                quotedSenderName = userMap[msg.quotedMessageSenderId];
-                console.log('[enrichMessagesWithQuotedData] Lookup user by senderId:', {
-                    quotedMessageSenderId: msg.quotedMessageSenderId,
-                    foundName: quotedSenderName,
-                });
-            }
-
-            // 3. Fallback to lookup original message by ID
-            if (!quotedSenderName) {
-                const quotedMsg = messages.find(m => (m._id || m.id) === msg.quotedMessageId);
-                if (quotedMsg) {
-                    quotedSenderName = quotedMsg.senderName;
-                    quotedText = quotedText || quotedMsg.text;
-                }
-            }
-
-            if (!msg.quotedMessage) {
-                // Build quotedMessage from available data
-                msg.quotedMessage = {
-                    text: quotedText || "",
-                    senderName: quotedSenderName || "Unknown",
-                    senderId: msg.quotedMessageSenderId,
-                    media: [],
-                } as any;
-            } else {
-                // Update existing quotedMessage with resolved data
-                if (quotedSenderName && !msg.quotedMessage.senderName) {
-                    msg.quotedMessage.senderName = quotedSenderName;
-                } else if (!msg.quotedMessage.senderName) {
-                    msg.quotedMessage.senderName = "Unknown";
-                }
-
-                if (msg.quotedMessageSenderId && !msg.quotedMessage.senderId) {
-                    msg.quotedMessage.senderId = msg.quotedMessageSenderId;
-                }
-
-                if (quotedText && !msg.quotedMessage.text) {
-                    msg.quotedMessage.text = quotedText;
-                }
-            }
-
-            console.log('[enrichMessagesWithQuotedData] Enriched quoted message:', {
-                quotedMessageId: msg.quotedMessageId,
-                senderName: msg.quotedMessage.senderName,
-                fromBE: msg.quotedMessageSenderName,
-                fromUserMap: msg.quotedMessageSenderId ? userMap[msg.quotedMessageSenderId] : 'N/A',
-                senderId: msg.quotedMessageSenderId,
-            });
+const buildMessageMap = (
+    messages: MessagePayload[]
+): Record<string, MessagePayload> => {
+    const map: Record<string, MessagePayload> = {};
+    for (const msg of messages) {
+        const id = msg._id || msg.id;
+        if (id) {
+            map[id] = msg;
         }
-        return msg;
+    }
+    return map;
+};
+
+/**
+ * Enrich every message that has a quotedMessageId with a fully-resolved
+ * `quotedMessage` object.
+ *
+ * senderName resolution order:
+ *  1. msg.quotedMessageSenderName              (field sent by the backend)
+ *  2. userMap[msg.quotedMessageSenderId]       (O(1) lookup)
+ *  3. userMap[msg.quotedMessageData?.senderId] (fallback via quotedMessageData)
+ *  4. messageMap[msg.quotedMessageId]?.senderName (O(1) lookup — may be absent
+ *     when the quoted message was sent before the current pagination window)
+ *  5. "Unknown"
+ *
+ * Critical: priorities 1–3 work even when the quoted message is NOT in the
+ * current message page (cursor pagination edge-case).
+ *
+ * Guarantees:
+ *  - Immutable: original objects are never mutated.
+ *  - O(n): no .find() or nested loops.
+ *  - senderName is always a non-empty string.
+ */
+const enrichMessagesWithQuotedData = (
+    messages: MessagePayload[],
+    userList?: Array<{ id: string; displayName?: string; name?: string }>,
+    fetchedCache?: Record<string, MessagePayload>
+): MessagePayload[] => {
+    const userMap = buildUserMap(messages, userList);
+    const messageMap = buildMessageMap(messages);
+
+    return messages.map((msg): MessagePayload => {
+        if (msg.type === "system") {
+            return {
+                ...msg,
+                senderName: "System",
+                quotedMessage: undefined
+            };
+        }
+
+        if (!msg.quotedMessageId) {
+            return msg;
+        }
+
+        // --- Resolve quoted text ---
+        // Use || (not ??) so that empty-string values also fall through
+        const quotedText: string =
+            msg.quotedMessagePreview ||
+            (msg as any).quotedMessageData?.text ||
+            messageMap[msg.quotedMessageId]?.text ||
+            "";
+
+        // --- Resolve sender name (priority chain) ---
+        // Priority 3 covers the cursor-pagination edge-case where the quoted
+        // message itself is not present in the current page.
+        const quotedDataSenderId: string | undefined = (msg as any).quotedMessageData?.senderId;
+        const quotedSenderId = msg.quotedMessageSenderId || quotedDataSenderId;
+
+        let msgSenderName = msg.quotedMessageSenderName;
+        if (msgSenderName === "Unknown") msgSenderName = undefined;
+
+        let quotedDataSenderName = (msg as any).quotedMessageData?.senderName;
+        if (quotedDataSenderName === "Unknown") quotedDataSenderName = undefined;
+
+        const resolvedSenderName: string | undefined =
+            msgSenderName ||
+            quotedDataSenderName ||
+            (quotedSenderId ? userMap[quotedSenderId] : undefined) ||
+            messageMap[msg.quotedMessageId]?.senderName ||
+            fetchedCache?.[msg.quotedMessageId]?.senderName;
+
+        const resolvedSenderId: string =
+            quotedSenderId ||
+            messageMap[msg.quotedMessageId]?.senderId ||
+            fetchedCache?.[msg.quotedMessageId]?.senderId ||
+            "";
+
+        const textFromCache = fetchedCache?.[msg.quotedMessageId]?.text || (fetchedCache?.[msg.quotedMessageId]?.media?.length ? "[Media]" : "");
+        const finalQuotedText = msg.quotedMessage?.text || quotedText || textFromCache || "Tin nhắn đã bị xóa";
+
+        // Build a fresh quotedMessage — never mutate existing object.
+        const enrichedQuotedMessage = {
+            ...(msg.quotedMessage ?? {}),
+            text: finalQuotedText,
+            senderId: msg.quotedMessage?.senderId || resolvedSenderId,
+            media: msg.quotedMessage?.media || fetchedCache?.[msg.quotedMessageId]?.media || [],
+        };
+
+        // Always overwrite stale data: If senderName is missing, or is "Unknown" (from a previous bad enrich), overwrite it.
+        const currentSenderName = msg.quotedMessage?.senderName;
+        if (!currentSenderName || currentSenderName === "Unknown" || resolvedSenderName) {
+            // Assign resolvedSenderName (which might be undefined, allowing UI to fallback)
+            enrichedQuotedMessage.senderName = resolvedSenderName;
+        }
+
+        console.log("RESOLVE NAME", {
+            senderId: quotedSenderId,
+            fromUserMap: quotedSenderId ? userMap[quotedSenderId] : undefined,
+            final: resolvedSenderName
+        });
+
+        // Debug: verify senderName is populated after enrich
+        console.log("ENRICHED MESSAGE", {
+            quotedMessageId: msg.quotedMessageId,
+            quotedMessage: enrichedQuotedMessage,
+        });
+
+        return {
+            ...msg,
+            quotedMessage: enrichedQuotedMessage,
+        };
     });
 };
 
@@ -122,6 +201,8 @@ export interface UseChatMessageState {
     conversation: Conversation | null;
     messages: MessagePayload[];
     isLoading: boolean;
+    /** True while older pages are being fetched (pagination) */
+    loadingMore: boolean;
     isSending: boolean;
     error: string | null;
     typingUsers: Set<string>;
@@ -130,6 +211,8 @@ export interface UseChatMessageState {
     pinnedMessages: MessagePayload[];
     pinnedMessageIndex: number;
     replyingTo: MessagePayload | null;
+    /** ID of the message currently lit up after a scroll-to, or null */
+    highlightedMessageId: string | null;
 }
 
 export interface UseChatMessageActions {
@@ -150,11 +233,15 @@ export interface UseChatMessageActions {
     navigatePinnedMessages: (direction: "prev" | "next") => void;
     setReplyingTo: (message: MessagePayload | null) => void;
     retryLoadConversation: () => Promise<void>;
+    /** Scroll the FlatList to the given message and briefly highlight it */
+    scrollToMessage: (messageId: string) => void;
 }
 
 export interface UseChatMessageReturn {
     state: UseChatMessageState;
     actions: UseChatMessageActions;
+    /** Ref to attach to the <FlatList> so scrollToMessage can control it */
+    flatListRef: ReturnType<typeof useScrollToMessage>["flatListRef"];
 }
 
 const MESSAGE_LIMIT = 30;
@@ -170,6 +257,47 @@ const conversationCache = new Map<string, {
     nextCursor: string | null;
 }>();
 
+export interface NormalizedPinnedMessage {
+    id: string;
+    text: string;
+    senderId: string;
+    senderName: string;
+    createdAt: string;
+    media: any[];
+}
+
+export const normalizePinnedMessages = (
+    rawPinnedMessages: Array<any>,
+    conversationMembers?: Array<any>
+): NormalizedPinnedMessage[] => {
+    const userMap: Record<string, string> = {};
+    if (Array.isArray(conversationMembers)) {
+        for (const member of conversationMembers) {
+            const uid = member.id || member.userId;
+            if (uid) {
+                userMap[uid] = member.displayName || member.name || "Unknown";
+            }
+        }
+    }
+
+    return rawPinnedMessages.map((pin) => {
+        // Handle BE format {conversationId, message: {...}} vs raw message payload
+        const msg = pin.message || pin;
+        const senderId = msg.senderId;
+        
+        const resolvedName = (senderId ? userMap[senderId] : undefined) || "Unknown";
+
+        return {
+            id: msg._id || msg.id || "",
+            text: msg.text || "",
+            senderId: senderId,
+            senderName: resolvedName,
+            createdAt: msg.createdAt,
+            media: msg.media || [],
+        };
+    });
+};
+
 /**
  * Custom hook for managing group chat messages
  * @param groupId - The group/conversation ID
@@ -181,6 +309,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         conversation: null,
         messages: [],
         isLoading: true,
+        loadingMore: false,
         isSending: false,
         error: null,
         typingUsers: new Set(),
@@ -189,6 +318,37 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         pinnedMessages: [],
         pinnedMessageIndex: 0,
         replyingTo: null,
+        highlightedMessageId: null,
+    });
+
+    const fetchMissingMessage = useCallback(async (messageId: string): Promise<boolean> => {
+        try {
+            const message = await ConversationService.getMessageById(messageId);
+            if (message && message._id) {
+                // Ensure message gets to state directly
+                setState((prev) => {
+                    const merged = mergeUniqueMessages([message], prev.messages);
+                    return {
+                        ...prev,
+                        messages: enrichMessagesWithQuotedData(merged, prev.conversation?.members as any)
+                    };
+                });
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error("Failed to fetch target reply message:", error);
+            return false;
+        }
+    }, []);
+
+    const {
+        flatListRef,
+        highlightedMessageId,
+        scrollToMessage,
+        buildMessageIndexMap,
+    } = useScrollToMessage({
+        fetchMissingMessage
     });
 
     const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -209,11 +369,11 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             setState((prev) => {
                 const newState = { ...prev, ...updates };
 
-                // Save to cache
-                if (prev.conversation) {
-                    const conversationId = prev.conversation._id || prev.conversation.id;
+                // Persist to in-memory + async cache
+                if (newState.conversation) {
+                    const conversationId = newState.conversation._id || newState.conversation.id;
                     conversationCache.set(conversationId, {
-                        conversation: prev.conversation,
+                        conversation: newState.conversation,
                         messages: newState.messages,
                         hasMoreMessages: newState.hasMoreMessages,
                         nextCursor: newState.nextCursor,
@@ -229,6 +389,62 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         },
         []
     );
+
+    const fetchedMissingMessagesCache = useRef<Record<string, MessagePayload>>({});
+    const fetchingIds = useRef<Set<string>>(new Set());
+
+    useEffect(() => {
+        const messages = state.messages;
+        if (!messages.length) return;
+
+        const localMap = buildMessageMap(messages);
+        const missingIds = new Set<string>();
+
+        for (const msg of messages) {
+            if (
+                msg.quotedMessageId &&
+                !localMap[msg.quotedMessageId] &&
+                !fetchedMissingMessagesCache.current[msg.quotedMessageId] &&
+                !fetchingIds.current.has(msg.quotedMessageId)
+            ) {
+                missingIds.add(msg.quotedMessageId);
+            }
+        }
+
+        if (missingIds.size > 0) {
+            const idsToFetch = Array.from(missingIds);
+            idsToFetch.forEach(id => fetchingIds.current.add(id));
+
+            Promise.all(
+                idsToFetch.map(id =>
+                    ConversationService.getMessageById(id).catch(() => null)
+                )
+            ).then(responses => {
+                let hasNew = false;
+                responses.forEach(res => {
+                    if (res) {
+                        const id = res._id || res.id;
+                        if (id) {
+                            fetchedMissingMessagesCache.current[id] = res;
+                            hasNew = true;
+                        }
+                    }
+                });
+
+                if (hasNew) {
+                    setState(prev => {
+                        const members: any[] = (prev.conversation as any)?.members ?? [];
+                        const reEnriched = enrichMessagesWithQuotedData(
+                            prev.messages,
+                            members,
+                            fetchedMissingMessagesCache.current
+                        );
+                        return { ...prev, messages: reEnriched };
+                    });
+                }
+            });
+        }
+    }, [state.messages]);
 
     // Use mergeUniqueMessages to merge new and existing messages
 
@@ -262,9 +478,12 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 });
             }
 
+            // Keep scroll-index map fresh after every addMessages call
+            buildMessageIndexMap(newMessages);
+
             return newState;
         });
-    }, []);
+    }, [buildMessageIndexMap]);
 
     /**
      * Send message to group
@@ -363,41 +582,83 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     }, [state.conversation, stopTyping]);
 
     const loadMoreMessages = useCallback(async () => {
-        if (!state.conversation || state.isLoading || !state.hasMoreMessages) {
+        if (
+            !state.conversation ||
+            state.isLoading ||
+            state.loadingMore ||
+            !state.hasMoreMessages
+        ) {
             return;
         }
 
-        setState((prev) => ({ ...prev, isLoading: true }));
+        setState((prev) => ({ ...prev, loadingMore: true }));
 
         try {
             const conversationId = state.conversation._id || state.conversation.id;
             if (!conversationId) {
                 throw new Error("No conversation ID available");
             }
+
             const response = await ConversationService.loadMessages(
                 conversationId,
-                state.nextCursor || undefined,
+                state.nextCursor,
                 MESSAGE_LIMIT
             );
 
-            const newMessages = Array.isArray(response.items) ? response.items : [];
-            const mergedMessages = mergeUniqueMessages(newMessages, state.messages);
+            const fetchedMessages = Array.isArray(response.items) ? response.items : [];
 
-            updateStateAndCache({
-                messages: mergedMessages,
-                hasMoreMessages: response.hasMore ?? false,
-                nextCursor: response.nextCursor || null,
-                isLoading: false,
+            setState((prev) => {
+                // Enrich new page using the combined userList from the conversation members
+                const members: Array<{ id: string; displayName?: string; name?: string }> =
+                    (prev.conversation as any)?.members ?? [];
+
+                // Older messages prepended in front so they appear above the existing ones
+                // (FlatList is inverted, newest = index-0)
+                const combined = [...fetchedMessages, ...prev.messages];
+                const deduped = mergeUniqueMessages(fetchedMessages, prev.messages);
+                const enriched = enrichMessagesWithQuotedData(deduped, members);
+
+                const newState = {
+                    ...prev,
+                    messages: enriched,
+                    hasMoreMessages: response.hasMore ?? false,
+                    nextCursor: response.nextCursor ?? null,
+                    loadingMore: false,
+                };
+
+                // Persist to in-memory + async cache
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: enriched,
+                        hasMoreMessages: newState.hasMoreMessages,
+                        nextCursor: newState.nextCursor,
+                    });
+                    saveMessagesToCache(convId, enriched).catch((err) =>
+                        console.error("[useGroupChatMessage] loadMore cache error:", err)
+                    );
+                }
+
+                return newState;
             });
         } catch (error: any) {
-            console.error("[useGroupChatMessage] Load more error:", error);
-            setState((prev) => ({ ...prev, isLoading: false }));
+            console.error("[useGroupChatMessage] loadMoreMessages error:", error);
+            setState((prev) => ({ ...prev, loadingMore: false }));
         }
-    }, [state.conversation, state.isLoading, state.hasMoreMessages, state.nextCursor, state.messages, updateStateAndCache]);
+    }, [
+        state.conversation,
+        state.isLoading,
+        state.loadingMore,
+        state.hasMoreMessages,
+        state.nextCursor,
+        updateStateAndCache,
+    ]);
 
     const editMessage = useCallback(
         async (messageId: string, text: string) => {
             if (!state.conversation) return;
+            if (messageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
 
             try {
                 const updated = await SocketService.editMessage(messageId, text);
@@ -420,6 +681,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     const deleteMessage = useCallback(
         async (messageId: string) => {
             if (!state.conversation) return;
+            if (messageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
 
             try {
                 await SocketService.deleteMessage(messageId);
@@ -434,6 +696,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     const revokeMessage = useCallback(
         async (messageId: string) => {
             if (!state.conversation) return;
+            if (messageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
 
             try {
                 await SocketService.revokeMessage(messageId);
@@ -448,6 +711,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     const addReaction = useCallback(
         async (messageId: string, emoji: string) => {
             if (!state.conversation) return;
+            if (messageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
 
             try {
                 await SocketService.addReaction(messageId, emoji);
@@ -462,6 +726,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     const removeReaction = useCallback(
         async (messageId: string, emoji: string) => {
             if (!state.conversation) return;
+            if (messageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
 
             try {
                 await SocketService.removeReaction(messageId, emoji);
@@ -478,6 +743,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
      */
     const pinMessage = useCallback(async (messageId: string) => {
         try {
+            if (messageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
             if (!state.conversation) {
                 throw new Error("No conversation loaded");
             }
@@ -501,6 +767,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         let previousIndex = state.pinnedMessageIndex;
 
         try {
+            if (messageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
             if (!state.conversation) {
                 throw new Error("No conversation loaded");
             }
@@ -571,6 +838,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
      */
     const sendQuotedMessage = useCallback(async (quotedMessageId: string, text: string, media?: any[]) => {
         try {
+            if (quotedMessageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
             if (!state.conversation) {
                 throw new Error("No conversation loaded");
             }
@@ -711,19 +979,29 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 // Try cache first
                 let cachedMessages = await loadMessagesFromCache(conversationId);
 
-                // Load messages from server
-                const response = await ConversationService.loadMessages(conversationId, undefined, MESSAGE_LIMIT);
+                // Load messages (cursor = null → newest page)
+                const response = await ConversationService.loadMessages(
+                    conversationId,
+                    null,
+                    MESSAGE_LIMIT
+                );
                 const newMessages = Array.isArray(response.items) ? response.items : [];
-
                 const mergedMessages = mergeUniqueMessages(newMessages, cachedMessages);
+
+                // Extract member roster for authoritative senderName resolution.
+                // Members may carry displayName (profile) or name (legacy).
+                const members: Array<{ id: string; displayName?: string; name?: string }> =
+                    (conversation as any)?.members ?? [];
+
+                const enrichedMessages = enrichMessagesWithQuotedData(mergedMessages, members);
 
                 clearTimeout(timeoutId);
 
                 updateStateAndCache({
                     conversation,
-                    messages: mergedMessages,
+                    messages: enrichedMessages,
                     hasMoreMessages: response.hasMore ?? false,
-                    nextCursor: response.nextCursor || null,
+                    nextCursor: response.nextCursor ?? null,
                     isLoading: false,
                 });
 
@@ -846,8 +1124,31 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         };
     }, [groupId, token, user?._id, updateStateAndCache]);
 
+    // Keep the scroll-index map in sync whenever messages change
+    useEffect(() => {
+        buildMessageIndexMap(state.messages);
+    }, [state.messages, buildMessageIndexMap]);
+
+    // Mirror the external highlight state back into the shared state shape
+    useEffect(() => {
+        setState((prev) => ({ ...prev, highlightedMessageId }));
+    }, [highlightedMessageId]);
+
+    const returnState = useMemo(() => {
+        const normalizedPins = normalizePinnedMessages(
+            state.pinnedMessages,
+            (state.conversation as any)?.members
+        );
+
+        return {
+            ...state,
+            pinnedMessages: normalizedPins as any, // Cast as we're overriding to the normalized type
+        };
+    }, [state]);
+
     return {
-        state,
+        state: returnState,
+        flatListRef,
         actions: {
             sendMessage,
             sendQuotedMessage,
@@ -866,6 +1167,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             navigatePinnedMessages,
             setReplyingTo,
             retryLoadConversation,
+            scrollToMessage,
         },
     };
 };

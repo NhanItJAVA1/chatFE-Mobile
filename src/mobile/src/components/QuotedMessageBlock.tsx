@@ -33,13 +33,14 @@ export const QuotedMessageBlock: React.FC<QuotedMessageBlockProps> = ({
     }
 
     console.log('[QuotedMessageBlock] Rendering quoted message:', {
-        senderName: quotedMessage.senderName,
+        senderName: quotedMessage?.senderName ? quotedMessage.senderName : quotedMessage.senderId,
         text: quotedMessage.text?.substring(0, 30),
         hasMedia: !!quotedMessage.media,
     });
 
-    // Fallback for senderName - might be undefined on local lookup
-    const senderName = quotedMessage.senderName || "Unknown User";
+    // Safety fallback: senderName may be undefined if enrich ran before the
+    // quoted message was loaded into the local message array.
+    const senderName = quotedMessage?.senderName || "Unknown";
 
     // Handle different message types
     const hasMedia = quotedMessage.media && quotedMessage.media.length > 0;

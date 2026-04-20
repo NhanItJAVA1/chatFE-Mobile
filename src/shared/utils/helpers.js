@@ -59,3 +59,4 @@ export const getDefaultAvatarUrl = (displayName = "User", userId = "") => {
 export const classNames = (...classes) => {
   return classes.filter(Boolean).join(" ");
 };
+

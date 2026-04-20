@@ -25,7 +25,8 @@ import { useAuth } from "../../../shared/hooks";
 import { GroupChatService } from "../../../shared/services/groupChatService";
 import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
-import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock } from "../components";
+import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage } from "../components";
+import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import MediaMessage from "../components/MediaMessage";
 import { colors } from "../theme";
 import { buildMessageActionSheetOptions } from "../../../shared/utils";
@@ -163,10 +164,14 @@ export const GroupChatScreen: React.FC<{
     const authContext = useAuth();
     const token = authContext.token;
     const { user } = authContext;
-    const { state: chatState, actions: chatActions } = useGroupChatMessage(
-        groupId,
-        token || ""
-    );
+    const {
+        state: chatState,
+        actions: chatActions,
+        flatListRef,
+    } = useGroupChatMessage(groupId, token || "");
+
+    // Highlight state is managed inside useScrollToMessage (via useGroupChatMessage)
+    const highlightedMessageId = chatState.highlightedMessageId;
     const { state: groupState, actions: groupActions } = useGroupChat();
     const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
 
@@ -187,7 +192,7 @@ export const GroupChatScreen: React.FC<{
     const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
 
     // Refs
-    const flatListRef = useRef<FlatList>(null);
+    // flatListRef comes from useGroupChatMessage → useScrollToMessage (enables scrollToMessage)
     const imageViewerScrollRef = useRef<FlatList>(null);
     const actionsRef = useRef(chatActions);
     const kickedOutRef = useRef(false);
@@ -975,11 +980,7 @@ export const GroupChatScreen: React.FC<{
         ({ item }: any) => {
             // Check if it's a system message
             if (item.isSystemMessage || item.type === "system") {
-                return (
-                    <View style={styles.systemMessageContainer}>
-                        <Text style={styles.systemMessageText}>{item.text}</Text>
-                    </View>
-                );
+                return <SystemMessageBubble text={item.text} />;
             }
 
             // Resolve quoted message: use existing quotedMessage OR lookup by quotedMessageId
@@ -1035,13 +1036,18 @@ export const GroupChatScreen: React.FC<{
             const galleryPreviewMedia = hasGalleryMedia ? item.media.slice(0, 3) : [];
             const galleryExtraCount = hasGalleryMedia ? Math.max(0, item.media.length - galleryPreviewMedia.length) : 0;
 
+            const messageId = item._id || item.id;
+            const isHighlighted = !!messageId && messageId === highlightedMessageId;
+
             return (
-                <Pressable
+                <HighlightableMessage
                     onLongPress={() => handleMessageLongPress(item)}
                     delayLongPress={300}
+                    isHighlighted={isHighlighted}
                     style={[
                         styles.messageBubbleRow,
                         isOwn ? styles.outgoingRow : styles.incomingRow,
+                        isHighlighted && styles.messageHighlighted,
                     ]}
                 >
                     {/* Avatar for incoming messages */}
@@ -1165,10 +1171,10 @@ export const GroupChatScreen: React.FC<{
                             </View>
                         )}
                     </View>
-                </Pressable>
+                </HighlightableMessage>
             );
         },
-        [user?.id, handleMessageLongPress, groupState.members, openImageViewer, messageMap]
+        [user?.id, handleMessageLongPress, groupState.members, openImageViewer, messageMap, highlightedMessageId]
     );
 
     const handleViewableItemsChanged = useCallback(
@@ -1308,16 +1314,11 @@ export const GroupChatScreen: React.FC<{
                                 }
                             }}
                             onPress={() => {
-                                // Scroll to pinned message
+                                // Scroll to pinned message and highlight it
                                 const pinnedMsg = chatState.pinnedMessages[chatState.pinnedMessageIndex];
-                                if (pinnedMsg && flatListRef.current) {
-                                    const index = renderableMessages.findIndex(
-                                        (item) =>
-                                            item._id === pinnedMsg._id || item.id === pinnedMsg.id
-                                    );
-                                    if (index >= 0) {
-                                        flatListRef.current.scrollToIndex({ index, animated: true });
-                                    }
+                                const pinnedMsgId = pinnedMsg?._id || pinnedMsg?.id;
+                                if (pinnedMsgId && chatActions.scrollToMessage) {
+                                    chatActions.scrollToMessage(pinnedMsgId);
                                 }
                             }}
                             isAdmin={groupState?.group?.admins?.includes(currentUserId)}
@@ -1767,6 +1768,10 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "flex-end",
         gap: 8,
+    },
+    messageHighlighted: {
+        backgroundColor: "rgba(255, 200, 0, 0.18)",
+        borderRadius: 12,
     },
     messageContentWrapper: {
         flexDirection: "column",

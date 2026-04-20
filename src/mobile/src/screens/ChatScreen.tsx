@@ -26,6 +26,7 @@ import { Avatar, ForwardDialog, PinnedMessageHeader, ReplyPreview, QuotedMessage
 import { colors } from "../theme";
 import { buildMessageActionSheetOptions } from "../../../shared/utils";
 import MediaMessage from "../components/MediaMessage";
+import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import chatMediaService from "../../../shared/services/chatMediaService";
 import { unfriend } from "../../../shared/services/friendService";
 import { FriendSocketService, type FriendshipNotification } from "../../../shared/services/friendSocket";
@@ -1395,6 +1396,10 @@ export const ChatScreen = ({
      */
     const renderMessage = useCallback(
         ({ item }: { item: RenderableChatItem }) => {
+            if (item.kind === "message" && item.message.type === "system") {
+                return <SystemMessageBubble text={item.message.text} />;
+            }
+
             if (item.kind === "gallery") {
                 return (
                     <ImageGalleryBubble

@@ -186,4 +186,6 @@ export function mergeMessages(
     console.log('[cacheUtils] Merged messages: API=', apiMessages.length, 'Cached=', cachedMessages.length, 'Total=', merged.length);
 
     return merged;
+
 }
+

@@ -10,3 +10,5 @@ export { VoiceRecorder } from "./VoiceRecorder";
 export { PinnedMessageHeader } from "./PinnedMessageHeader";
 export { ReplyPreview } from "./ReplyPreview";
 export { QuotedMessageBlock } from "./QuotedMessageBlock";
+export { PinnedMessagesBar } from "./PinnedMessagesBar";
+export { HighlightableMessage } from "./HighlightableMessage";

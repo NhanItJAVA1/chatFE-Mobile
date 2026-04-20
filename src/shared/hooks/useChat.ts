@@ -95,6 +95,14 @@ const enrichMessagesWithQuotedData = (messages: MessagePayload[]): MessagePayloa
     const userMap = buildUserMap(messages);
 
     return messages.map(msg => {
+        if (msg.type === "system") {
+            return {
+                ...msg,
+                senderName: "System",
+                quotedMessage: undefined
+            };
+        }
+
         // If message has quotedMessageId, ensure quotedMessage object exists and has proper data
         if (msg.quotedMessageId) {
             // Try multiple sources for sender name, in priority order

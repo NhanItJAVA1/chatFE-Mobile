@@ -375,6 +375,18 @@ export class ConversationService {
     }
 
     /**
+     * Get a specific message by ID
+     */
+    static async getMessageById(messageId: string): Promise<any> {
+        try {
+            const response = await api.get(`/messages/${messageId}`);
+            return response.data || response;
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    /**
      * Mute/unmute conversation
      */
     static async muteConversation(
