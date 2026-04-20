@@ -1040,7 +1040,25 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                             getMessageId(msg) !== messageId ? msg : { ...msg, ...message }
                         );
 
-                    updateStateAndCache({ messages: updatedMessages });
+                    // Re-enrich in case quoted data was updated
+                    const enriched = enrichMessagesWithQuotedData(updatedMessages);
+
+                    updateStateAndCache({ messages: enriched });
+                });
+
+                // Quoted (Reply) messages - specific event from BE
+                SocketService.onMessageQuoted((data) => {
+                    const { conversationId: incomingConvId, message } = data;
+                    if (incomingConvId && incomingConvId !== conversationId && incomingConvId !== groupId) {
+                        return;
+                    }
+
+                    if (messagesStateRef.current) {
+                        console.log('[useGroupChatMessage] onMessageQuoted - adding and enriching');
+                        const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
+                        const enriched = enrichMessagesWithQuotedData(merged);
+                        updateStateAndCache({ messages: enriched });
+                    }
                 });
 
                 SocketService.onTyping((data: TypingData) => {
@@ -1059,6 +1077,11 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
 
                 // Pinned message listener
                 SocketService.onPinnedMessage((data: any) => {
+                    const incomingConvId = data.conversationId || data.pinnedMessage?.conversationId;
+                    if (incomingConvId && incomingConvId !== conversationId && incomingConvId !== groupId) {
+                        return;
+                    }
+                    
                     console.log('[useGroupChatMessage] Pinned message event:', data);
 
                     setState((prev) => {
@@ -1125,6 +1148,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             SocketService.offMessageUpdated();
             SocketService.offTyping();
             SocketService.offPinnedMessage();
+            SocketService.offMessageQuoted();
         };
     }, [groupId, token, user?._id, updateStateAndCache]);
 

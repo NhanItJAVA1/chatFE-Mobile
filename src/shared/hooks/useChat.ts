@@ -413,7 +413,12 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             // Step 5: Setup Socket.IO event listeners
             console.log('[useChat] Step 5: Setting up socket listeners...');
             setupSocketListeners(conversationId);
-            console.log('[useChat] Step 5: Socket listeners ready');
+            
+            // Join conversation room to receive events
+            SocketService.joinConversation(conversationId).catch(err => {
+                console.warn('[useChat] Failed to join socket room:', err.message);
+            });
+            console.log('[useChat] Step 5: Socket listeners and room join ready');
 
             // Step 6: Load pinned messages
             console.log('[useChat] Step 6: Loading pinned messages...');
@@ -487,12 +492,13 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 console.log('[useChat] ✓ Message is for current conversation, adding to state');
                 setState((prev) => {
                     const merged = mergeUniqueMessages([message], prev.messages);
+                    // Use the helper to add and enrich
                     const enriched = enrichMessagesWithQuotedData(merged);
                     const newState = {
                         ...prev,
                         messages: enriched,
                     };
-                    // Update cache with new message (both in-memory and device storage)
+                    // Update cache...
                     if (prev.conversation) {
                         const conversationId = prev.conversation._id || prev.conversation.id;
                         conversationCache.set(conversationId, {
@@ -501,10 +507,43 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                             hasMoreMessages: prev.hasMoreMessages,
                             nextCursor: prev.nextCursor,
                         });
+                        saveMessagesToCache(conversationId, newState.messages).catch(err => {
+                            console.error('[useChat] Failed to save message to cache:', err);
+                        });
+                    }
+                    return newState;
+                });
+            });
 
-                        // Also save to AsyncStorage
-                        saveMessagesToCache(conversationId, newState.messages).catch((error) => {
-                            console.error('[useChat] Failed to save message to cache:', error);
+            // Quoted (Reply) messages - specific event from BE
+            SocketService.onMessageQuoted((data) => {
+                const { conversationId: incomingConvId, message } = data;
+                if (incomingConvId && incomingConvId !== conversationId) {
+                    return;
+                }
+
+                console.log('[useChat] !!!!! RECEIVED QUOTED MESSAGE LISTENER FIRED !!!!!', {
+                    messageId: message._id || message.id,
+                });
+
+                setState((prev) => {
+                    const merged = mergeUniqueMessages([message], prev.messages);
+                    // Use helper to add and enrich
+                    const enriched = enrichMessagesWithQuotedData(merged);
+                    const newState = {
+                        ...prev,
+                        messages: enriched,
+                    };
+                    if (prev.conversation) {
+                        const conversationId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(conversationId, {
+                            conversation: prev.conversation,
+                            messages: newState.messages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(conversationId, newState.messages).catch(err => {
+                            console.error('[useChat] Failed to save quoted message to cache:', err);
                         });
                     }
                     return newState;
@@ -594,11 +633,14 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                         };
                     });
 
+                    // Re-enrich in case quoted message data was updated
+                    const enriched = enrichMessagesWithQuotedData(mergedMessages);
+
                     const newState = {
                         ...prev,
                         messages: deletedForMe
-                            ? prev.messages.filter((msg) => getMessageId(msg) !== messageId)
-                            : mergedMessages,
+                            ? enriched.filter((msg) => getMessageId(msg) !== messageId)
+                            : enriched,
                     };
                     // Update cache with updated message (both in-memory and device storage)
                     if (prev.conversation) {
@@ -621,6 +663,11 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
             // Pinned message events
             SocketService.onPinnedMessage((data: any) => {
+                const incomingConvId = data.conversationId || data.pinnedMessage?.conversationId;
+                if (incomingConvId && incomingConvId !== conversationId) {
+                    return;
+                }
+                
                 console.log('[useChat] Pinned message event:', data);
 
                 setState((prev) => {
@@ -1252,6 +1299,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             SocketService.offTyping();
             SocketService.offMessageUpdated();
             SocketService.offPinnedMessage();
+            SocketService.offMessageQuoted();
 
             messageListenerActiveRef.current = false;
             console.log('[useChat] messageListenerActiveRef.current set to FALSE');

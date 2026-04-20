@@ -459,6 +459,36 @@ export class SocketService {
     }
 
     /**
+     * Listen for quoted (reply) message events
+     */
+    static onMessageQuoted(callback: (data: { conversationId: string; message: MessagePayload; quotedMessageId: string }) => void): void {
+        if (!this.socket) {
+            console.warn("[SocketService] Socket not available for onMessageQuoted");
+            return;
+        }
+
+        console.log("[SocketService] Setting up message:quoted listener");
+
+        this.socket.on("message:quoted", (data: any) => {
+            console.log("[SocketService] 🔔 RECEIVED message:quoted event:", {
+                conversationId: data.conversationId,
+                messageId: data.message?._id || data.message?.id,
+                quotedMessageId: data.quotedMessageId,
+            });
+            callback(data);
+        });
+    }
+
+    /**
+     * Remove quoted message listener
+     */
+    static offMessageQuoted(): void {
+        if (this.socket) {
+            this.socket.off("message:quoted");
+        }
+    }
+
+    /**
      * Mark messages as seen
      */
     static markMessagesSeen(
