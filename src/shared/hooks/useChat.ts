@@ -408,20 +408,20 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 hasMoreMessages: hasMore,
                 nextCursor,
             });
-            console.log('[useChat] Saved to in-memory cache. Size:', conversationCache.size);
+            // console.log('[useChat] Saved to in-memory cache. Size:', conversationCache.size);
 
-            // Step 5: Setup Socket.IO event listeners
-            console.log('[useChat] Step 5: Setting up socket listeners...');
+            // // Step 5: Setup Socket.IO event listeners
+            // console.log('[useChat] Step 5: Setting up socket listeners...');
             setupSocketListeners(conversationId);
-            
+
             // Join conversation room to receive events
             SocketService.joinConversation(conversationId).catch(err => {
                 console.warn('[useChat] Failed to join socket room:', err.message);
             });
-            console.log('[useChat] Step 5: Socket listeners and room join ready');
+            // console.log('[useChat] Step 5: Socket listeners and room join ready');
 
             // Step 6: Load pinned messages
-            console.log('[useChat] Step 6: Loading pinned messages...');
+            // console.log('[useChat] Step 6: Loading pinned messages...');
             try {
                 const pinnedMsgs = await SocketService.getPinnedMessages(conversationId);
                 setState((prev) => ({
@@ -667,7 +667,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 if (incomingConvId && incomingConvId !== conversationId) {
                     return;
                 }
-                
+
                 console.log('[useChat] Pinned message event:', data);
 
                 setState((prev) => {

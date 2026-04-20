@@ -1,4 +1,8 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import ImageViewerModal from "../components/ImageViewerModal";
+import { Modal as RNModal } from "react-native";
+import { Modal, Dimensions } from "react-native";
+import { Video, ResizeMode } from "expo-av";
 import {
     View,
     Text,
@@ -16,7 +20,17 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../../shared/hooks";
+
 import { useGroupChat } from "../../../shared/hooks/useGroupChat";
+import { useGroupChatMessage } from "../../../shared/hooks/useGroupChatMessage";
+
+
+export const MEDIA_TABS = [
+    { key: 'image', label: 'Ảnh' },
+    { key: 'video', label: 'Video' },
+    { key: 'audio', label: 'Audio' },
+    { key: 'file', label: 'File' },
+];
 import { Avatar } from "../components";
 import { colors } from "../theme";
 import { requestPresignedUrl, confirmUpload } from "../../../shared/services/presignedUrlService";
@@ -38,6 +52,117 @@ export const GroupSettingsScreen: React.FC<{
     const authContext = useAuth();
     const { user } = authContext;
     const { state: groupState, actions: groupActions } = useGroupChat();
+
+    // Tab state for media
+    const [mediaTab, setMediaTab] = useState('image');
+
+    // Lấy toàn bộ messages của group để lọc media
+    const { state: groupMessageState } = useGroupChatMessage(groupId, authContext?.user?.token || authContext?.token || "");
+
+    // Lọc media theo từng loại (dựa vào mediaType)
+    const mediaByType = useMemo(() => {
+        const allMessages = groupMessageState.messages || [];
+        const images = [];
+        const videos = [];
+        const audios = [];
+        const files = [];
+        allMessages.forEach(msg => {
+            if (Array.isArray(msg.media)) {
+                msg.media.forEach(m => {
+                    if (!m || !m.url) return;
+                    switch (m.mediaType) {
+                        case 'image':
+                            images.push({ ...m, messageId: msg._id || msg.id });
+                            break;
+                        case 'video':
+                            videos.push({ ...m, messageId: msg._id || msg.id });
+                            break;
+                        case 'audio':
+                            audios.push({ ...m, messageId: msg._id || msg.id });
+                            break;
+                        case 'file':
+                        case 'document':
+                        default:
+                            files.push({ ...m, messageId: msg._id || msg.id });
+                            break;
+                    }
+                });
+            }
+        });
+        return { image: images, video: videos, audio: audios, file: files };
+    }, [groupMessageState.messages]);
+
+    // State cho modal xem ảnh
+    const [imageViewerVisible, setImageViewerVisible] = useState(false);
+    const [imageViewerIndex, setImageViewerIndex] = useState(0);
+
+    // State cho modal xem video
+    const [videoViewerVisible, setVideoViewerVisible] = useState(false);
+    const [videoViewerIndex, setVideoViewerIndex] = useState(0);
+
+    // Render media grid
+    const renderMediaGrid = (items, type) => {
+        if (!items.length) {
+            return <Text style={{ color: colors.textMuted, textAlign: 'center', marginVertical: 16 }}>Không có dữ liệu</Text>;
+        }
+        if (type === 'image') {
+            return (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 8 }}>
+                    {items.map((m, idx) => (
+                        <Pressable
+                            key={m.url + idx}
+                            onPress={() => {
+                                setImageViewerIndex(idx);
+                                setImageViewerVisible(true);
+                            }}
+                        >
+                            <Image
+                                source={{ uri: m.url }}
+                                style={{ width: 90, height: 90, borderRadius: 8, marginBottom: 8, backgroundColor: '#eee' }}
+                                resizeMode="cover"
+                            />
+                        </Pressable>
+                    ))}
+                </View>
+            );
+        }
+        if (type === 'video') {
+            return (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 8 }}>
+                    {items.map((m, idx) => (
+                        <Pressable
+                            key={m.url + idx}
+                            onPress={() => {
+                                setVideoViewerIndex(idx);
+                                setVideoViewerVisible(true);
+                            }}
+                        >
+                            <Image
+                                source={{ uri: m.thumbnailUrl || m.url }}
+                                style={{ width: 90, height: 90, borderRadius: 8, marginBottom: 8, backgroundColor: '#222' }}
+                                resizeMode="cover"
+                            />
+                            <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                                <Ionicons name="play-circle" size={36} color="#fff" />
+                            </View>
+                        </Pressable>
+                    ))}
+                </View>
+            );
+        }
+        // File/audio dạng list
+        return (
+            <View style={{ marginVertical: 8 }}>
+                {items.map((m, idx) => (
+                    <View key={m.url + idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 10 }}>
+                        <Ionicons name={type === 'audio' ? 'musical-notes-outline' : 'document-outline'} size={22} color={colors.accent} />
+                        <Text numberOfLines={1} style={{ flex: 1 }}>{m.name || m.url.split('/').pop()}</Text>
+                        {/* Có thể thêm nút tải về hoặc mở file */}
+                    </View>
+                ))}
+            </View>
+        );
+    };
 
     const [owner, setOwner] = useState<GroupMemberWithRole | null>(null);
     const [admins, setAdmins] = useState<GroupMemberWithRole[]>([]);
@@ -952,6 +1077,7 @@ export const GroupSettingsScreen: React.FC<{
                     </KeyboardAvoidingView>
                 )}
 
+
                 {/* Owner Section */}
                 {owner && (
                     <View style={styles.section}>
@@ -1017,6 +1143,80 @@ export const GroupSettingsScreen: React.FC<{
                         )}
                     </View>
                 )}
+
+                {/* Group Media Library Section */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Thư viện nhóm</Text>
+                    {/* Tabs */}
+                    <View style={{ flexDirection: 'row', marginVertical: 8, gap: 8 }}>
+                        {MEDIA_TABS.map(tab => (
+                            <Pressable
+                                key={tab.key}
+                                style={{
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 16,
+                                    borderRadius: 16,
+                                    backgroundColor: mediaTab === tab.key ? colors.accent : colors.surface,
+                                }}
+                                onPress={() => setMediaTab(tab.key)}
+                            >
+                                <Text style={{ color: mediaTab === tab.key ? '#fff' : colors.text }}>{tab.label}</Text>
+                            </Pressable>
+                        ))}
+                    </View>
+                    {renderMediaGrid(mediaByType[mediaTab], mediaTab)}
+                    {/* Image Viewer Modal */}
+                    <ImageViewerModal
+                        images={mediaByType.image.map(img => ({ uri: img.url }))}
+                        imageIndex={imageViewerIndex}
+                        visible={imageViewerVisible}
+                        onRequestClose={() => setImageViewerVisible(false)}
+                        swipeToCloseEnabled
+                        doubleTapToZoomEnabled
+                    />
+                    {/* Video Viewer Modal */}
+                    <Modal
+                        visible={videoViewerVisible}
+                        animationType="slide"
+                        onRequestClose={() => setVideoViewerVisible(false)}
+                        transparent={false}
+                    >
+                        <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
+                            <Pressable
+                                style={{ position: 'absolute', top: 40, right: 20, zIndex: 10 }}
+                                onPress={() => setVideoViewerVisible(false)}
+                            >
+                                <Ionicons name="close" size={32} color="#fff" />
+                            </Pressable>
+                            {/* Lướt qua các video */}
+                            <FlatList
+                                data={mediaByType.video}
+                                horizontal
+                                pagingEnabled
+                                initialScrollIndex={videoViewerIndex}
+                                getItemLayout={(_, index) => ({ length: Dimensions.get('window').width, offset: Dimensions.get('window').width * index, index })}
+                                renderItem={({ item }) => (
+                                    <View style={{ width: Dimensions.get('window').width, height: Dimensions.get('window').height, justifyContent: 'center', alignItems: 'center' }}>
+                                        <Video
+                                            source={{ uri: item.url }}
+                                            style={{ width: Dimensions.get('window').width, height: Dimensions.get('window').width * 9 / 16, backgroundColor: '#000' }}
+                                            useNativeControls
+                                            resizeMode={ResizeMode.CONTAIN}
+                                            shouldPlay
+                                        />
+                                        <Text style={{ color: '#fff', marginTop: 10, fontSize: 16 }}>{item.name || item.url.split('/').pop()}</Text>
+                                    </View>
+                                )}
+                                keyExtractor={(item, idx) => item.url + idx}
+                                showsHorizontalScrollIndicator={false}
+                                onMomentumScrollEnd={e => {
+                                    const idx = Math.round(e.nativeEvent.contentOffset.x / Dimensions.get('window').width);
+                                    setVideoViewerIndex(idx);
+                                }}
+                            />
+                        </View>
+                    </Modal>
+                </View>
 
                 {/* Group actions */}
                 <View style={styles.section}>
