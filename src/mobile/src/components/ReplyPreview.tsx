@@ -66,7 +66,7 @@ export const ReplyPreview: React.FC<ReplyPreviewProps> = ({
 
 const styles = StyleSheet.create({
     container: {
-        backgroundColor: colors.surfaceSoft,
+        backgroundColor: colors.surfaceSoftTransparent,
         paddingVertical: 12,
         paddingHorizontal: 12,
         borderTopColor: colors.accent,

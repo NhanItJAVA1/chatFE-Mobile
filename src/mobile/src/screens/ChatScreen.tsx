@@ -2058,7 +2058,7 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
-        backgroundColor: colors.background,
+        backgroundColor: colors.surfaceTransparent,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
     },
@@ -2066,7 +2066,7 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceTransparent,
         borderWidth: 1,
         borderColor: colors.border,
         alignItems: "center",
@@ -2074,7 +2074,7 @@ const styles = StyleSheet.create({
     },
     chatHeaderCard: {
         flex: 1,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceTransparent,
         borderRadius: 22,
         paddingVertical: 12,
         paddingHorizontal: 16,
@@ -2129,11 +2129,11 @@ const styles = StyleSheet.create({
         maxWidth: "84%",
     },
     incomingBubble: {
-        backgroundColor: colors.incoming,
+        backgroundColor: colors.bubbleIncomingBgTransparent,
         borderTopLeftRadius: 6,
     },
     outgoingBubble: {
-        backgroundColor: colors.outgoing,
+        backgroundColor: colors.bubbleOutgoingBgTransparent,
         borderTopRightRadius: 6,
     },
     bubbleText: {
@@ -2241,7 +2241,6 @@ const styles = StyleSheet.create({
         gap: 10,
         paddingHorizontal: 14,
         paddingVertical: 10,
-        backgroundColor: colors.background,
         borderTopWidth: 1,
         borderTopColor: colors.border,
     },

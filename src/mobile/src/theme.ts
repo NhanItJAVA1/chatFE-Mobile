@@ -40,6 +40,12 @@ type Colors = {
     tabInactive: string;
     textSecondary: string;
     textPrimary: string;
+    headerBgTransparent: string;
+    inputBgTransparent: string;
+    bubbleIncomingBgTransparent: string;
+    bubbleOutgoingBgTransparent: string;
+    surfaceTransparent: string;
+    surfaceSoftTransparent: string;
 };
 
 type Gradients = {
@@ -93,6 +99,12 @@ export const colors: Colors = {
     tabInactive: "#a4a4a4",
     textSecondary: "#b8b8b8",
     textPrimary: "#ffffff",
+    headerBgTransparent: "rgba(46, 45, 45, 0.75)",
+    inputBgTransparent: "rgba(26, 26, 26, 0.75)",
+    bubbleIncomingBgTransparent: "rgba(42, 42, 42, 0.75)",
+    bubbleOutgoingBgTransparent: "rgba(204, 95, 153, 0.75)",
+    surfaceTransparent: "rgba(17, 17, 17, 0.75)",
+    surfaceSoftTransparent: "rgba(21, 21, 21, 0.75)",
 };
 
 export const gradients: Gradients = {

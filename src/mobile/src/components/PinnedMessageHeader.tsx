@@ -123,7 +123,7 @@ export const PinnedMessageHeader: React.FC<PinnedMessageHeaderProps> = ({
 
 const styles = StyleSheet.create({
     container: {
-        backgroundColor: colors.surfaceSoft,
+        backgroundColor: colors.surfaceSoftTransparent,
         borderBottomColor: colors.accent,
         borderBottomWidth: 1,
         paddingVertical: 8,

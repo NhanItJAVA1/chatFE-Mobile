@@ -1731,6 +1731,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         paddingHorizontal: 8,
         paddingVertical: 12,
+        backgroundColor: colors.headerBgTransparent,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
         gap: 8,
@@ -1818,11 +1819,11 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
     },
     messageBubbleOwn: {
-        backgroundColor: colors.accent,
+        backgroundColor: colors.bubbleOutgoingBgTransparent,
         borderTopRightRadius: 6,
     },
     messageBubbleOther: {
-        backgroundColor: colors.surface,
+        backgroundColor: colors.bubbleIncomingBgTransparent,
         borderTopLeftRadius: 6,
     },
     senderName: {

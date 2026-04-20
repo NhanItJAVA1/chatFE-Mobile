@@ -117,12 +117,12 @@ const styles = StyleSheet.create({
         flexShrink: 0,
     },
     quotedContainerOwn: {
-        // Own message (pink background #cc5f99) - use semi-transparent white overlay
-        backgroundColor: "rgba(255, 255, 255, 0.3)",
+        // Own message (pink background) - use subtle white overlay
+        backgroundColor: "rgba(255, 255, 255, 0.2)",
     },
     quotedContainerOther: {
-        // Other message (gray background #2a2a2a) - use semi-transparent white overlay
-        backgroundColor: "rgba(255, 255, 255, 0.15)",
+        // Other message (gray background) - use subtle white overlay
+        backgroundColor: "rgba(255, 255, 255, 0.1)",
     },
     quotedBorderLeft: {
         width: 4,
