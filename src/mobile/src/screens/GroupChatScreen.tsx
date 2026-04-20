@@ -168,10 +168,10 @@ export const GroupChatScreen: React.FC<{
         state: chatState,
         actions: chatActions,
         flatListRef,
+        highlightedMessageId,
     } = useGroupChatMessage(groupId, token || "");
 
     // Highlight state is managed inside useScrollToMessage (via useGroupChatMessage)
-    const highlightedMessageId = chatState.highlightedMessageId;
     const { state: groupState, actions: groupActions } = useGroupChat();
     const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
 

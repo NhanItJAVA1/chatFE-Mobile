@@ -417,7 +417,7 @@ export const ChatScreen = ({
         console.log('[ChatScreen] Token available:', token ? `${token.substring(0, 20)}...` : 'MISSING');
     }, [chatUser?.id, token]);
 
-    const { state, actions, flatListRef } = useChatMessage(
+    const { state, actions, flatListRef, highlightedMessageId } = useChatMessage(
         friendId || "",
         token || ""
     );
@@ -498,7 +498,6 @@ export const ChatScreen = ({
         error,
         typingUsers,
         hasMoreMessages,
-        highlightedMessageId,
     } = state;
 
     const renderableMessages = useMemo(

@@ -17,8 +17,6 @@ export interface UseChatMessageState {
     pinnedMessages: MessagePayload[];
     pinnedMessageIndex: number;
     replyingTo: MessagePayload | null;
-    /** ID of the message currently lit up after a scroll-to, or null */
-    highlightedMessageId: string | null;
 }
 
 export interface UseChatMessageActions {
@@ -48,6 +46,8 @@ export interface UseChatMessageReturn {
     actions: UseChatMessageActions;
     /** Ref to attach to the <FlatList> so scrollToMessage can control it */
     flatListRef: ReturnType<typeof useScrollToMessage>["flatListRef"];
+    /** ID of the message currently lit up after a scroll-to, or null */
+    highlightedMessageId: string | null;
 }
 
 const MESSAGE_LIMIT = 30;
@@ -193,7 +193,6 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         pinnedMessages: [],
         pinnedMessageIndex: 0,
         replyingTo: null,
-        highlightedMessageId: null,
     });
 
     const fetchMissingMessage = useCallback(async (messageId: string): Promise<boolean> => {
@@ -1279,7 +1278,10 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             navigatePinnedMessages,
             setReplyingTo,
             retryLoadConversation,
+            scrollToMessage,
         },
+        flatListRef,
+        highlightedMessageId,
     };
 };
 
