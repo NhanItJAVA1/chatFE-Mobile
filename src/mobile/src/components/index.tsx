@@ -12,3 +12,4 @@ export { ReplyPreview } from "./ReplyPreview";
 export { QuotedMessageBlock } from "./QuotedMessageBlock";
 export { PinnedMessagesBar } from "./PinnedMessagesBar";
 export { HighlightableMessage } from "./HighlightableMessage";
+export { AnimatedEmojiMessage, JUMBO_EMOJI_ASSETS } from "./AnimatedEmojiMessage";
