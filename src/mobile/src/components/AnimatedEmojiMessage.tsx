@@ -18,6 +18,7 @@ export const JUMBO_EMOJI_ASSETS: Record<string, string> = {
 interface Props {
   emoji: string;
   isMine?: boolean;
+  isNew?: boolean;
 }
 
 export const AnimatedEmojiMessage = ({ emoji, isMine = true }: Props) => {
