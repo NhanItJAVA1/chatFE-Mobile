@@ -1131,13 +1131,13 @@ export const GroupChatScreen: React.FC<{
                                 {/* Quoted message block if this is a reply */}
                                 {(() => {
                                     const hasQuoted = resolvedQuotedMessage || item.quotedMessageId;
-                                    if (hasQuoted) {
-                                        console.log('[GroupMessageBubble] Message has quoted content:', {
-                                            hasResolvedQuotedMessage: !!resolvedQuotedMessage,
-                                            hasQuotedMessageId: !!item.quotedMessageId,
-                                            quotedMessageData: resolvedQuotedMessage,
-                                        });
-                                    }
+                                    // if (hasQuoted) {
+                                    //     console.log('[GroupMessageBubble] Message has quoted content:', {
+                                    //         hasResolvedQuotedMessage: !!resolvedQuotedMessage,
+                                    //         hasQuotedMessageId: !!item.quotedMessageId,
+                                    //         quotedMessageData: resolvedQuotedMessage,
+                                    //     });
+                                    // }
                                     return resolvedQuotedMessage ? (
                                         <QuotedMessageBlock
                                             quotedMessage={resolvedQuotedMessage}
