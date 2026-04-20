@@ -120,11 +120,11 @@ const MessageBubble: React.FC<{
           {(() => {
             const hasQuoted = resolvedQuotedMessage || message.quotedMessageId;
             if (hasQuoted) {
-              console.log("[MessageBubble] Message has quoted content:", {
-                hasResolvedQuotedMessage: !!resolvedQuotedMessage,
-                hasQuotedMessageId: !!message.quotedMessageId,
-                quotedMessageData: resolvedQuotedMessage,
-              });
+              // console.log("[MessageBubble] Message has quoted content:", {
+              //   hasResolvedQuotedMessage: !!resolvedQuotedMessage,
+              //   hasQuotedMessageId: !!message.quotedMessageId,
+              //   quotedMessageData: resolvedQuotedMessage,
+              // });
             }
             return resolvedQuotedMessage ? (
               <QuotedMessageBlock
@@ -167,16 +167,16 @@ const GALLERY_GROUP_WINDOW_MS = 5000;
 
 type RenderableChatItem =
   | {
-      kind: "message";
-      key: string;
-      message: MessagePayload;
-    }
+    kind: "message";
+    key: string;
+    message: MessagePayload;
+  }
   | {
-      kind: "gallery";
-      key: string;
-      messages: MessagePayload[];
-      isOwn: boolean;
-    };
+    kind: "gallery";
+    key: string;
+    messages: MessagePayload[];
+    isOwn: boolean;
+  };
 
 type DraftMediaAsset = {
   id: string;
@@ -231,7 +231,7 @@ const groupMessagesForGallery = (messages: MessagePayload[], currentUserId: stri
           !isImageMessage(nextMessage) ||
           nextMessage.senderId !== currentMessage.senderId ||
           Math.abs(getMessageCreatedAtMs(nextMessage) - getMessageCreatedAtMs(previousMessage)) >
-            GALLERY_GROUP_WINDOW_MS
+          GALLERY_GROUP_WINDOW_MS
         ) {
           break;
         }
@@ -430,7 +430,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       }
 
       if (recordingRef.current) {
-        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+        recordingRef.current.stopAndUnloadAsync().catch(() => { });
         recordingRef.current = null;
       }
     };
@@ -985,7 +985,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         await Audio.setAudioModeAsync({
           allowsRecordingIOS: false,
           playsInSilentModeIOS: true,
-        }).catch(() => {});
+        }).catch(() => { });
       }
     },
     [conversation, messageText, recordingSeconds],
@@ -1012,7 +1012,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         },
         onPanResponderRelease: async () => {
           if (recordingStartPromiseRef.current) {
-            await recordingStartPromiseRef.current.catch(() => {});
+            await recordingStartPromiseRef.current.catch(() => { });
             recordingStartPromiseRef.current = null;
           }
 
@@ -1022,7 +1022,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         },
         onPanResponderTerminate: async () => {
           if (recordingStartPromiseRef.current) {
-            await recordingStartPromiseRef.current.catch(() => {});
+            await recordingStartPromiseRef.current.catch(() => { });
             recordingStartPromiseRef.current = null;
           }
 
@@ -1217,7 +1217,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
     if (!chatUser?.id) return;
 
     Alert.alert("Hủy kết bạn", `Xác nhận hủy kết bạn với ${truncateName(userName)}?`, [
-      { text: "Hủy", onPress: () => {}, style: "cancel" },
+      { text: "Hủy", onPress: () => { }, style: "cancel" },
       {
         text: "Xác nhận",
         onPress: async () => {
