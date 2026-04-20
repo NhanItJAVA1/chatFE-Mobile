@@ -116,13 +116,11 @@ const MessageBubble: React.FC<{
                     {/* Quoted message block if this is a reply */}
                     {(() => {
                         const hasQuoted = resolvedQuotedMessage || message.quotedMessageId;
-                        if (hasQuoted) {
-                            console.log('[MessageBubble] Message has quoted content:', {
-                                hasResolvedQuotedMessage: !!resolvedQuotedMessage,
-                                hasQuotedMessageId: !!message.quotedMessageId,
-                                quotedMessageData: resolvedQuotedMessage,
-                            });
-                        }
+                        // if (hasQuoted) {
+                        //     console.log('[MessageBubble] Message has quoted content:', {
+
+                        //     });
+                        // }
                         return resolvedQuotedMessage ? (
                             <QuotedMessageBlock
                                 quotedMessage={resolvedQuotedMessage}
