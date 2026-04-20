@@ -47,6 +47,10 @@ type Gradients = {
     profile: string[];
 };
 
+type Assets = {
+    chatBackground: any;
+};
+
 export const colors: Colors = {
     background: "#000000",
     surface: "#111111",
@@ -94,4 +98,8 @@ export const colors: Colors = {
 export const gradients: Gradients = {
     auth: ["#050505", "#111827", "#7c3aed"],
     profile: ["#0b0b0b", "#000000"],
+};
+
+export const assets: Assets = {
+    chatBackground: require("../../shared/background/telegram-background.png"),
 };

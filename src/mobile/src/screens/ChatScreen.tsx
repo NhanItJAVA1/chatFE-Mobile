@@ -16,6 +16,7 @@ import {
     Alert,
     Modal,
     Dimensions,
+    ImageBackground,
 } from "react-native";
 import { Audio } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
@@ -23,7 +24,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { useChatMessage } from "../../../shared/hooks/useChat";
 import { useAuth } from "../../../shared/hooks";
 import { Avatar, ForwardDialog, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage } from "../components";
-import { colors } from "../theme";
+import { colors, assets } from "../theme";
 import { buildMessageActionSheetOptions } from "../../../shared/utils";
 import MediaMessage from "../components/MediaMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
@@ -1530,7 +1531,11 @@ export const ChatScreen = ({
 
             {/* Messages List or Empty State - always show when not loading OR when messages exist */}
             {!isLoading && (
-                <>
+                <ImageBackground
+                    source={assets.chatBackground}
+                    style={styles.chatBackground}
+                    resizeMode="cover"
+                >
                     {/* Pinned Message Header */}
                     {state.pinnedMessages.length > 0 && (
                         <PinnedMessageHeader
@@ -1605,7 +1610,7 @@ export const ChatScreen = ({
                             <TypingIndicator typingUsers={typingUsers} />
                         }
                     />
-                </>
+                </ImageBackground>
             )}
 
             {/* Upload progress bar */}
@@ -2663,5 +2668,9 @@ const styles = StyleSheet.create({
     },
     menuItemTextDanger: {
         color: colors.dangerStrong,
+    },
+    chatBackground: {
+        flex: 1,
+        width: "100%",
     },
 });

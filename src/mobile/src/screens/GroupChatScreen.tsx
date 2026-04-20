@@ -14,6 +14,7 @@ import {
     ScrollView,
     Modal,
     Dimensions,
+    ImageBackground,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -28,7 +29,7 @@ import chatMediaService from "../../../shared/services/chatMediaService";
 import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage } from "../components";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import MediaMessage from "../components/MediaMessage";
-import { colors } from "../theme";
+import { colors, assets } from "../theme";
 import { buildMessageActionSheetOptions } from "../../../shared/utils";
 
 /**
@@ -1299,7 +1300,11 @@ export const GroupChatScreen: React.FC<{
 
             {/* Messages List */}
             {!chatState.isLoading && (
-                <>
+                <ImageBackground
+                    source={assets.chatBackground}
+                    style={styles.chatBackground}
+                    resizeMode="cover"
+                >
                     {/* Pinned Message Header */}
                     {chatState.pinnedMessages.length > 0 && (
                         <PinnedMessageHeader
@@ -1373,7 +1378,7 @@ export const GroupChatScreen: React.FC<{
                             )
                         }
                     />
-                </>
+                </ImageBackground>
             )}
 
             {/* Upload progress bar */}
@@ -1921,10 +1926,14 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     typingDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: colors.textMuted,
+        width: 4,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: colors.accent,
+    },
+    chatBackground: {
+        flex: 1,
+        width: "100%",
     },
 
     // Message Composer
