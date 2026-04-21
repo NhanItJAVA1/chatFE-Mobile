@@ -7,6 +7,8 @@ export const useExplosion = () => useContext(ExplosionContext);
 
 export const EXPLOSION_EMOJI_ASSETS: Record<string, string> = {
   "❤️": "https://chatchitcnm.s3.ap-southeast-1.amazonaws.com/Heart-Detach.json",
+  "👻": "https://chatchitcnm.s3.ap-southeast-1.amazonaws.com/Ghost-Detach.json",
+  "🔥": "https://chatchitcnm.s3.ap-southeast-1.amazonaws.com/Fire-Detach.json",
 };
 
 interface ExplosionItem {
@@ -22,7 +24,12 @@ let idCounter = 0;
 export const ExplosionProvider = ({ children }: any) => {
   const [explosions, setExplosions] = useState<ExplosionItem[]>([]);
 
-  const triggerExplosion = (emoji: string, top: number, left: number, isMine: boolean) => {
+  const triggerExplosion = (
+    emoji: string,
+    top: number,
+    left: number,
+    isMine: boolean,
+  ) => {
     if (!EXPLOSION_EMOJI_ASSETS[emoji]) return;
 
     const id = idCounter++;

@@ -26,7 +26,8 @@ import { useAuth } from "../../../shared/hooks";
 import { GroupChatService } from "../../../shared/services/groupChatService";
 import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
-import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage } from "../components";
+import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage } from "../components";
+import { JUMBO_EMOJI_ASSETS } from "../components/AnimatedEmojiMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import MediaMessage from "../components/MediaMessage";
 import { colors, assets } from "../theme";
@@ -1154,12 +1155,24 @@ export const GroupChatScreen: React.FC<{
                                         />
                                     ) : null;
                                 })()}
-                                <Text style={[
-                                    styles.messageText,
-                                    isOwn ? styles.messageTextOwn : styles.messageTextOther,
-                                ]}>
-                                    {item.text}
-                                </Text>
+                                {(() => {
+                                    const trimmedText = item.text ? item.text.trim() : "";
+                                    const isJumboEmoji = !!JUMBO_EMOJI_ASSETS[trimmedText] && item.text.replace(/\s+/g, "") === trimmedText;
+                                    const isNewMsg = item.createdAt
+                                      ? new Date().getTime() - new Date(item.createdAt).getTime() < 5000
+                                      : false;
+
+                                    return isJumboEmoji ? (
+                                      <AnimatedEmojiMessage emoji={trimmedText} isNew={isNewMsg} isMine={isOwn} />
+                                    ) : (
+                                      <Text style={[
+                                        styles.messageText,
+                                        isOwn ? styles.messageTextOwn : styles.messageTextOther,
+                                      ]}>
+                                        {item.text}
+                                      </Text>
+                                    );
+                                  })()}
                                 <Text style={styles.messageTime}>
                                     {new Date(item.createdAt).toLocaleTimeString(
                                         "vi-VN",
