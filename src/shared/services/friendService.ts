@@ -156,6 +156,7 @@ export const getReceivedRequests = getReceivedFriendRequests;
  */
 export const getSentFriendRequests = async (): Promise<FriendRequest[]> => {
     try {
+        console.trace("[API] Calling /friend-requests/sent");
         const response = await api.get("/friend-requests/sent");
 
         // Extract data from response

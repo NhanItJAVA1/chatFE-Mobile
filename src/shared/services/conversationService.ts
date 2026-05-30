@@ -138,6 +138,7 @@ export class ConversationService {
         limit: number = 20
     ): Promise<Conversation[]> {
         try {
+            console.trace(`[API] Calling /conversations?page=${page}&limit=${limit}`);
             const response = await api.get("/conversations", {
                 params: { page, limit },
             });
