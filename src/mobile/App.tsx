@@ -2,9 +2,12 @@ import React, { FC } from "react";
 import { SafeAreaView, StyleSheet } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StatusBar } from "expo-status-bar";
-import { AuthProvider, configureRuntime, configureStorage } from "../shared";
+import { registerGlobals } from "@livekit/react-native";
+import { AuthProvider, CallProvider, configureRuntime, configureStorage } from "../shared";
 import AppShell from "./src/AppShell";
 import { ExplosionProvider } from "./src/components/ExplosionProvider";
+
+registerGlobals();
 
 interface RuntimeConfig {
   apiUrl: string;
@@ -29,12 +32,14 @@ configureStorage({
 const App: FC = () => {
   return (
     <AuthProvider>
-      <SafeAreaView style={styles.root}>
-        <StatusBar style="light" />
-        <ExplosionProvider>
-          <AppShell />
-        </ExplosionProvider>
-      </SafeAreaView>
+      <CallProvider>
+        <SafeAreaView style={styles.root}>
+          <StatusBar style="light" />
+          <ExplosionProvider>
+            <AppShell />
+          </ExplosionProvider>
+        </SafeAreaView>
+      </CallProvider>
     </AuthProvider>
   );
 };

@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "ChatChit Mobile",
+    "slug": "chatchit-mobile",
+    "version": "1.0.0",
+    "sdkVersion": "54.0.0",
+    "orientation": "portrait",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "useFrameworks": "static",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Cho phép ChatChit sử dụng camera cho cuộc gọi video.",
+        "NSMicrophoneUsageDescription": "Cho phép ChatChit sử dụng microphone cho cuộc gọi."
+      }
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.anonymous.chatchitmobile",
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.CAMERA",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Cho phép truy cập thư viện ảnh",
+          "cameraPermission": "Cho phép truy cập camera"
+        }
+      ],
+      [
+        "@livekit/react-native-expo-plugin",
+        {
+          "android": {
+            "audioType": "communication"
+          },
+          "ios": {
+            "enableMultitaskingCameraAccess": false
+          }
+        }
+      ],
+      "@config-plugins/react-native-webrtc",
+      "expo-font"
+    ]
+  }
+}

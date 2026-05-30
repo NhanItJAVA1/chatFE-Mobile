@@ -502,9 +502,6 @@ export const useFriendship = (
                     console.log('[useFriendship] After filtering, sentRequests count:', filtered.length);
                     return filtered;
                 });
-
-                // Force sync with server in case payload misses mapping fields
-                loadSentRequests();
             };
 
             // Handle request accepted by receiver (someone accepts your sent request)
@@ -641,10 +638,6 @@ export const useFriendship = (
                 });
             };
 
-            FriendSocketService.onFriendRequestRejected(handleRejectedRequest);
-            FriendSocketService.onFriendRequestAccepted(handleAcceptedRequest);
-            FriendSocketService.onFriendRequestCanceled(handleSenderCanceledRequest);
-
             const handleUnfriended = (notification: FriendshipNotification): void => {
                 const unfriendedUserId = notification.data.friendId || notification.data.userId;
                 if (!unfriendedUserId) {
@@ -662,6 +655,9 @@ export const useFriendship = (
                 });
             };
 
+            FriendSocketService.onFriendRequestRejected(handleRejectedRequest);
+            FriendSocketService.onFriendRequestAccepted(handleAcceptedRequest);
+            FriendSocketService.onFriendRequestCanceled(handleSenderCanceledRequest);
             FriendSocketService.onFriendshipUnfriended(handleUnfriended);
 
             // Cleanup
@@ -681,24 +677,13 @@ export const useFriendship = (
         if (autoLoad) {
             loadFriends();
             loadReceivedRequests();
-            loadSentRequests();
+            // Removed: loadSentRequests() - fetch only when user uses add friend feature
         }
-    }, [autoLoad, loadFriends, loadReceivedRequests, loadSentRequests]);
+    }, [autoLoad, loadFriends, loadReceivedRequests]);
 
-    // Fallback sync: keep sent requests fresh in case socket event is missed on some clients (e.g. web tab idle/network hiccup)
-    useEffect(() => {
-        if (!autoLoad || !currentUserId || !token) {
-            return;
-        }
-
-        const intervalId = setInterval(() => {
-            loadSentRequests();
-        }, 5000);
-
-        return () => {
-            clearInterval(intervalId);
-        };
-    }, [autoLoad, currentUserId, token, loadSentRequests]);
+    // Note: Removed 5-second polling interval for sent requests
+    // Socket events handle real-time updates; no need for periodic fallback polling
+    // This reduces API spam from ~48 calls/minute to just initial load on mount
 
     const state: UseFriendshipState = {
         friends,
