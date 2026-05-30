@@ -606,7 +606,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         };
     }, [token, user?.id, (user as any)?._id, dedupeConversations, updateConversationLastMessage]);
 
-    // Fallback refresh when backend does not emit socket events.
+    // Refresh conversations when app returns to foreground
     useEffect(() => {
         if (!token) {
             return;
@@ -625,7 +625,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }
         };
 
-        const interval = setInterval(refreshConversations, 8000);
+        // Only refresh when app returns to foreground, no polling interval
         const appStateSub = AppState.addEventListener("change", (nextState) => {
             if (nextState === "active") {
                 refreshConversations();
@@ -634,7 +634,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
         return () => {
             isMounted = false;
-            clearInterval(interval);
             appStateSub.remove();
         };
     }, [token, dedupeConversations]);
