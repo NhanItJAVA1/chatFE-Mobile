@@ -55,7 +55,7 @@ export const authService = {
     getProfile: async (token?: string): Promise<User> => {
         try {
             if (token) {
-                const url = `${getApiBaseUrl()}/users/profile`;
+                const url = `${getApiBaseUrl()}/users/me/profile`;
                 const response = await fetch(url, {
                     method: "GET",
                     headers: {
@@ -77,7 +77,7 @@ export const authService = {
                 return profile;
             }
 
-            const response = await api.get("/users/profile");
+            const response = await api.get("/users/me/profile");
             let profile = response;
 
             if (
@@ -138,7 +138,7 @@ export const authService = {
     },
 
     updatePassword: async (payload: any): Promise<any> => {
-        const responseData = await api.patch("/auth/update-password", payload);
+        const responseData = await api.post("/auth/change-password", payload);
         return responseData;
     },
 
@@ -161,10 +161,14 @@ export const authService = {
             }
 
             const response = await api.post("/auth/refresh", { refreshToken });
-            const newToken = response?.accessToken || response?.token;
+            const payload = response?.data || response;
+            const newToken = payload?.accessToken || payload?.token;
 
             if (newToken) {
                 await authStorage.setItem("token", newToken);
+                if (payload?.refreshToken) {
+                    await authStorage.setItem("refreshToken", payload.refreshToken);
+                }
                 return newToken;
             }
 

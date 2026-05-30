@@ -44,11 +44,11 @@ class FriendRequestService {
 
     /**
      * Get user info để lấy senderInfo
-     * Calls: GET /v1/users/{userId}
+     * Calls: GET /v1/users/{userId}/public
      */
     private async getUserInfo(userId: string): Promise<User> {
         try {
-            const response = await api.get(`/users/${userId}`);
+            const response = await api.get(`/users/${userId}/public`);
             // Extract data từ response wrapper
             return response.data || response;
         } catch (error) {
@@ -59,21 +59,23 @@ class FriendRequestService {
 
     /**
      * Transform single friend request item
-     * API trả về: { id, senderId, status: "pending", createdAt }
+     * API trả về: { id, fromUserId, status: "pending", createdAt }
      * Expected: { _id, senderId, senderInfo, status: "PENDING", createdAt }
      */
     private async transformRequestItem(item: any): Promise<FriendRequestTransformed> {
+        const senderId = item.senderId || item.fromUserId || item.requesterId || "";
+
         try {
             // Fetch sender user info
-            const sender = await this.getUserInfo(item.senderId);
+            const sender = await this.getUserInfo(senderId);
 
             return {
                 _id: item.id || item._id,  // Transform: id → _id hoặc keep _id
-                senderId: item.senderId,
+                senderId,
                 senderInfo: {
                     displayName: sender.displayName || "Unknown User",
                     phoneNumber: sender.phone || sender.phoneNumber || "",
-                    avatar: sender.avatar || "",
+                    avatar: sender.avatar || sender.avatarUrl || "",
                     status: (sender.status || "offline") as "online" | "offline",
                 },
                 status: this.normalizeRequestStatus(item.status),
@@ -81,17 +83,17 @@ class FriendRequestService {
             };
         } catch (error) {
             console.error(
-                `[friendRequestService] Error transforming request for ${item.senderId}:`,
+                `[friendRequestService] Error transforming request for ${senderId}:`,
                 error
             );
 
             // Fallback nếu fetch user info fail
             return {
                 _id: item.id || item._id,
-                senderId: item.senderId,
+                senderId,
                 senderInfo: {
                     displayName: "Unknown User",
-                    phoneNumber: item.senderId,
+                    phoneNumber: senderId,
                     avatar: "",
                     status: "offline",
                 },
@@ -143,35 +145,21 @@ class FriendRequestService {
 
     /**
      * Get a single received request by ID with full sender info
-     * Fallback: If specific endpoint doesn't exist, reload all received requests
      */
     async getSingleReceivedRequest(requestId: string): Promise<FriendRequestTransformed> {
         try {
-            // Try the specific endpoint first
-            const response = await api.get(`/friend-requests/received/${requestId}`);
-            const item = response.data || response;
-            return await this.transformRequestItem(item);
-        } catch (error: any) {
-            // If single-request endpoint doesn't exist, reload all requests
-            // This ensures we get the newly arrived request with all details
-            console.warn(
-                `[friendRequestService] Single request endpoint not available, reloading all requests for ${requestId}`
-            );
+            const result = await this.getReceivedRequests(1, 50);
+            const foundRequest = result.items.find((req) => req._id === requestId);
 
-            try {
-                const result = await this.getReceivedRequests(1, 50);
-                const foundRequest = result.items.find((req) => req._id === requestId);
-
-                if (foundRequest) {
-                    return foundRequest;
-                }
-
-                throw new Error(`Request ${requestId} not found in received requests`);
-            } catch (reloadError: any) {
-                throw new Error(
-                    reloadError.message || "Failed to load request details"
-                );
+            if (foundRequest) {
+                return foundRequest;
             }
+
+            throw new Error(`Request ${requestId} not found in received requests`);
+        } catch (reloadError: any) {
+            throw new Error(
+                reloadError.message || "Failed to load request details"
+            );
         }
     }
 

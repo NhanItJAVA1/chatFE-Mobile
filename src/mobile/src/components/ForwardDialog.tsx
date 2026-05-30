@@ -117,7 +117,7 @@ const ForwardDialog: React.FC<ForwardDialogProps> = ({
                         let user = userCache.get(otherUserId);
                         if (!user) {
                             try {
-                                const response = await api.get(`/users/${otherUserId}`);
+                                const response = await api.get(`/users/${otherUserId}/public`);
                                 user = response?.data || response;
                                 userCache.set(otherUserId, user);
                             } catch {

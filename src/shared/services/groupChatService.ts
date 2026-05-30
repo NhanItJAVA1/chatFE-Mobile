@@ -156,7 +156,7 @@ export class GroupChatService {
                 `/groups/${groupId}/members/pending`
             );
             const data = response.data || response;
-            const members = data.data?.pendingMembers || [];
+            const members = data.pendingMembers || data.items || data.data || data;
             return Array.isArray(members) ? members : [];
         } catch (error: any) {
             throw new Error(
@@ -203,7 +203,7 @@ export class GroupChatService {
                 memberIds,
             });
             const data = response.data || response;
-            const newMembers = data.data?.newMembers || [];
+            const newMembers = data.newMembers || data.data || data;
             return Array.isArray(newMembers) ? newMembers : [];
         } catch (error: any) {
             throw new Error(
@@ -314,7 +314,7 @@ export class GroupChatService {
                 settings
             );
             const data = response.data || response;
-            return data.data?.settings || data.settings || settings;
+            return data.data?.settings || data.settings || data.conversation?.settings || settings;
         } catch (error: any) {
             throw new Error(
                 error.response?.data?.msg ||
@@ -336,7 +336,7 @@ export class GroupChatService {
                 {}
             );
             const data = response.data || response;
-            return data.data?.member || data.member;
+            return data.member || data.data || data;
         } catch (error: any) {
             throw new Error(
                 error.response?.data?.msg ||

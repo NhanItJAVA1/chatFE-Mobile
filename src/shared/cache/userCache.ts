@@ -50,7 +50,7 @@ export const fetchUserById = async (id: string): Promise<User | null> => {
     // 3. Perform API call
     pendingRequests[id] = (async () => {
         try {
-            const res = await api.get(`/users/${id}`);
+            const res = await api.get(`/users/${id}/public`);
             const userData = res?.data?.data || res?.data || res;
             
             if (userData) {

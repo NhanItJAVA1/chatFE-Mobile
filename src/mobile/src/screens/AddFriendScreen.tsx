@@ -21,6 +21,7 @@ import type { UseFriendshipState, UseFriendshipActions } from "../../../shared/h
 interface AddFriendScreenProps {
     state: UseFriendshipState;
     actions: UseFriendshipActions;
+    onChatPress?: (user: User) => void;
 }
 
 /**
@@ -32,7 +33,7 @@ interface AddFriendScreenProps {
  * - Send friend request
  * - View mutual friends count
  */
-export const AddFriendScreen = ({ state, actions }: AddFriendScreenProps) => {
+export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreenProps) => {
     const [searchQuery, setSearchQuery] = useState("");
 
     // Store mapping of userId -> full request object for quick lookup during cancel
@@ -157,7 +158,8 @@ export const AddFriendScreen = ({ state, actions }: AddFriendScreenProps) => {
 
     // Render user search result
     const renderUserCard = (user: User) => {
-        console.log('[AddFriendScreen] renderUserCard for user:', user.id);
+        const userId = user.id || (user as any)._id;
+        console.log('[AddFriendScreen] renderUserCard for user:', userId);
 
         // Log all sentRequests with details
         console.log('[AddFriendScreen] Total sentRequests:', state.sentRequests.length);
@@ -168,21 +170,21 @@ export const AddFriendScreen = ({ state, actions }: AddFriendScreenProps) => {
         // Check if already sent request
         const sentRequest = state.sentRequests.find(
             (r) => {
-                console.log('[AddFriendScreen] Comparing - r.receiverId:', r.receiverId, 'user.id:', user.id, 'match:', r.receiverId === user.id);
-                return r.receiverId === user.id;
+                console.log('[AddFriendScreen] Comparing - r.receiverId:', r.receiverId, 'user.id:', userId, 'match:', r.receiverId === userId);
+                return r.receiverId === userId;
             }
         );
         console.log('[AddFriendScreen] Found sentRequest for user:', sentRequest?._id);
 
-        const isFriend = state.friends.some((f) => f.friendId === user.id);
-        const status = state.friendshipStatuses.get(user.id);
+        const isFriend = state.friends.some((f) => f.friendId === userId);
+        const status = state.friendshipStatuses.get(userId);
         console.log('[AddFriendScreen] Status for user:', status);
         console.log('[AddFriendScreen] Button condition check - sentRequest:', !!sentRequest, 'status.status:', status?.status);
 
         let buttonText = "Gửi lời mời";
         let isDisabledState = false;
         let buttonVariant: "primary" | "secondary" = "primary";
-        let buttonAction = () => handleSendRequest(user.id);
+        let buttonAction = () => handleSendRequest(userId);
 
         if (isFriend || status?.status === "accepted") {
             buttonText = "Đã là bạn bè";
@@ -192,18 +194,18 @@ export const AddFriendScreen = ({ state, actions }: AddFriendScreenProps) => {
             buttonText = "Hủy lời mời";
             isDisabledState = false;
             buttonVariant = "secondary";
-            buttonAction = () => handleCancelRequest(user.id);
-            console.log('[AddFriendScreen] BUTTON SET TO CANCEL for user:', user.id);
+            buttonAction = () => handleCancelRequest(userId);
+            console.log('[AddFriendScreen] BUTTON SET TO CANCEL for user:', userId);
         }
 
         console.log('[AddFriendScreen] Button final state - text:', buttonText, 'disabled:', isDisabledState);
 
         return (
-            <Card key={user.id} style={styles.userCard}>
+            <Card key={userId} style={styles.userCard}>
                 <View style={styles.userHeader}>
-                    {user.avatar ? (
+                    {user.avatar || user.avatarUrl ? (
                         <Image
-                            source={{ uri: user.avatar }}
+                            source={{ uri: user.avatar || user.avatarUrl }}
                             style={styles.avatar}
                         />
                     ) : (
@@ -250,19 +252,34 @@ export const AddFriendScreen = ({ state, actions }: AddFriendScreenProps) => {
 
                 <View style={styles.divider} />
 
-                <PrimaryButton
-                    label={buttonText}
-                    onPress={() => {
-                        console.log('[AddFriendScreen] Button pressed - buttonText:', buttonText, 'isDisabled:', isDisabledState);
-                        if (!isDisabledState) {
-                            console.log('[AddFriendScreen] Calling buttonAction');
-                            buttonAction();
-                        } else {
-                            console.log('[AddFriendScreen] Button disabled, skipping action');
-                        }
-                    }}
-                    variant={buttonVariant}
-                />
+                <View style={styles.actionRow}>
+                    <View style={styles.friendAction}>
+                        <PrimaryButton
+                            label={buttonText}
+                            onPress={() => {
+                                console.log('[AddFriendScreen] Button pressed - buttonText:', buttonText, 'isDisabled:', isDisabledState);
+                                if (!isDisabledState) {
+                                    console.log('[AddFriendScreen] Calling buttonAction');
+                                    buttonAction();
+                                } else {
+                                    console.log('[AddFriendScreen] Button disabled, skipping action');
+                                }
+                            }}
+                            variant={buttonVariant}
+                        />
+                    </View>
+                    <Pressable
+                        onPress={() => onChatPress?.({ ...user, id: userId })}
+                        style={({ pressed }) => [
+                            styles.chatButton,
+                            pressed && styles.chatButtonPressed,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Bắt đầu chat"
+                    >
+                        <Ionicons name="chatbubble-ellipses" size={22} color={colors.textOnAccent} />
+                    </Pressable>
+                </View>
             </Card>
         );
     };
@@ -467,6 +484,25 @@ const styles = StyleSheet.create({
         height: 1,
         backgroundColor: colors.border,
         marginVertical: 12,
+    },
+    actionRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    friendAction: {
+        flex: 1,
+    },
+    chatButton: {
+        width: 48,
+        height: 48,
+        borderRadius: 8,
+        backgroundColor: colors.accent,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    chatButtonPressed: {
+        opacity: 0.75,
     },
     centerContent: {
         alignItems: "center",

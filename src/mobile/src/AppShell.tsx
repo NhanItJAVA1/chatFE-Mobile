@@ -187,7 +187,25 @@ const MainShell = () => {
         }
 
         if (activeTab === "addFriend") {
-            return <AddFriendScreen state={friendshipResult.state} actions={friendshipResult.actions} />;
+            return (
+                <AddFriendScreen
+                    state={friendshipResult.state}
+                    actions={friendshipResult.actions}
+                    onChatPress={(user) => {
+                        setSelectedChat({
+                            id: user.id || (user as any)._id,
+                            displayName: user.displayName || user.name || "Người dùng",
+                            avatar: user.avatar || user.avatarUrl,
+                            avatarUrl: user.avatarUrl || user.avatar,
+                            phone: user.phone || (user as any).phoneNumber,
+                            status: user.status,
+                            conversationType: "PRIVATE",
+                            relationship: "stranger",
+                        });
+                        setActiveTab("chat");
+                    }}
+                />
+            );
         }
 
         if (activeTab === "requests") {

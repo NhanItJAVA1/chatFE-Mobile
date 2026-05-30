@@ -6,7 +6,13 @@ import type { FriendRequest, Friend, FriendshipStatus, User } from "@/types";
  */
 export const searchUsers = async (query: string): Promise<User[]> => {
     try {
-        const response = await api.get("/users/search", { params: { phone: query } });
+        const trimmedQuery = query.trim();
+        const digitsOnly = trimmedQuery.replace(/[\s().-]/g, "");
+        const looksLikePhone = /^\+?\d{8,15}$/.test(digitsOnly);
+
+        const response = looksLikePhone
+            ? await api.get("/users/search-by-phone", { params: { phone: digitsOnly } })
+            : await api.get("/users/search", { params: { q: trimmedQuery } });
 
         // Extract data from response
         let data = response.data || response;
@@ -44,7 +50,7 @@ export const searchUsers = async (query: string): Promise<User[]> => {
 export const searchUserByPhone = async (phone: string): Promise<any> => {
     try {
         console.log("[friendService] Searching user by phone:", phone);
-        const response = await api.get("/users/search", { params: { phone: phone } });
+        const response = await api.get("/users/search-by-phone", { params: { phone } });
 
         // Extract data from response
         let data = response.data || response;
@@ -244,9 +250,7 @@ export const declineFriendRequest = rejectFriendRequest;
  */
 export const cancelFriendRequest = async (requestId: string): Promise<boolean> => {
     try {
-        const response = await api.patch(`/friend-requests/${requestId}`, {
-            status: "canceled",
-        });
+        const response = await api.delete(`/friend-requests/${requestId}`);
         console.log('[friendService] cancelFriendRequest response:', response);
 
         // Handle null/undefined response (204 No Content)
@@ -297,7 +301,7 @@ export const cancelFriendRequest = async (requestId: string): Promise<boolean> =
  */
 const getUserInfo = async (userId: string): Promise<User> => {
     try {
-        const response = await api.get(`/users/${userId}`);
+        const response = await api.get(`/users/${userId}/public`);
         return response.data || response;
     } catch (error: any) {
         console.error(`[friendService] Error fetching user ${userId}:`, error);
@@ -469,7 +473,7 @@ export const getMutualFriends = async (userId: string): Promise<User[]> => {
 export const getFriendSuggestions = async (): Promise<User[]> => {
     try {
         console.log("[friendService] Loading friend suggestions...");
-        const response = await api.get("/users/suggestions");
+        const response = await api.get("/friends/suggestions");
         console.log("[friendService] Friend suggestions:", response);
 
         // Extract data from response

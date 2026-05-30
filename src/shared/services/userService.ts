@@ -4,8 +4,8 @@ import type { User } from "@/types";
 
 export const getProfile = async (): Promise<User> => {
     try {
-        const response = await api.get("/users/profile");
-        return response;
+        const response = await api.get("/users/me/profile");
+        return response.data || response;
     } catch (error: any) {
         throw new Error(error.message || "Failed to fetch profile");
     }
@@ -13,7 +13,7 @@ export const getProfile = async (): Promise<User> => {
 
 export const getUserById = async (userId: string): Promise<any> => {
     try {
-        const response = await api.get(`/users/${userId}`);
+        const response = await api.get(`/users/${userId}/public`);
 
         // Response wrapped: { status, msg, data: { avatarUrl, displayName, ... } }
         // response.data is the wrapper object, need response.data.data for actual user
@@ -51,13 +51,13 @@ export const updateProfile = async (profileData: any): Promise<User> => {
             }
         });
 
-        const response = await api.patch("/users/profile", updateData);
+        const response = await api.patch("/users/me/profile", updateData);
         console.log(
-            "[userService] PATCH /users/profile request data:",
+            "[userService] PATCH /users/me/profile request data:",
             JSON.stringify(updateData, null, 2)
         );
         console.log(
-            "[userService] PATCH /users/profile response:",
+            "[userService] PATCH /users/me/profile response:",
             JSON.stringify(response, null, 2)
         );
 
@@ -141,7 +141,12 @@ export const updatePassword = async (password: string): Promise<User> => {
 };
 
 export const updatePrivacy = async (privacy: any): Promise<User> => {
-    return updateProfile({ privacy });
+    try {
+        const response = await api.patch("/users/me/privacy", privacy);
+        return response.data || response;
+    } catch (error: any) {
+        throw new Error(error.message || "Failed to update privacy");
+    }
 };
 
 export const userService = {

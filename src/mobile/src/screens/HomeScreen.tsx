@@ -155,6 +155,117 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return conversation.id || conversation._id;
     };
 
+    const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+
+    const getConversationType = (conversation: Conversation): string => {
+        return String(conversation.type || "").toUpperCase();
+    };
+
+    const isSelfConversation = useCallback(
+        (conversation: Conversation): boolean => {
+            const pairKey = String(conversation.pairKey || "");
+
+            if (currentUserId && pairKey === `self_${currentUserId}`) {
+                return true;
+            }
+
+            return (
+                getConversationType(conversation) === "PRIVATE" &&
+                String(conversation.name || "").toLowerCase() === "my document"
+            );
+        },
+        [currentUserId]
+    );
+
+    const getOtherMemberId = useCallback(
+        (conversation: Conversation): string | undefined => {
+            if (isSelfConversation(conversation)) {
+                return currentUserId || undefined;
+            }
+
+            const explicitOtherUserId =
+                (conversation as any)?.otherUser?.id ||
+                (conversation as any)?.otherUser?._id ||
+                (conversation as any)?.targetUserId;
+
+            if (explicitOtherUserId) {
+                return String(explicitOtherUserId);
+            }
+
+            if (conversation.pairKey && currentUserId) {
+                const ids = conversation.pairKey.split("_");
+                const otherId = ids.find((id) => id && id !== currentUserId && id !== "self");
+                if (otherId) {
+                    return otherId;
+                }
+            }
+
+            return conversation.members?.find((memberId) => String(memberId) !== currentUserId);
+        },
+        [currentUserId, isSelfConversation]
+    );
+
+    const getConversationDisplayInfo = useCallback(
+        (conversation: Conversation) => {
+            const conversationType = getConversationType(conversation);
+            const otherMemberId = getOtherMemberId(conversation);
+            const otherUser =
+                (conversation as any)?.otherUser ||
+                (conversation as any)?.targetUser ||
+                (conversation as any)?.user;
+            const friend = otherMemberId
+                ? state?.friends?.find((f) => f.friendId === otherMemberId)
+                : undefined;
+
+            if (isSelfConversation(conversation)) {
+                return {
+                    displayName: "My Document",
+                    displayAvatar: conversation.avatarUrl,
+                    otherMemberId: currentUserId,
+                    searchText: "my document tài liệu lưu trữ",
+                };
+            }
+
+            if (conversationType === "GROUP") {
+                const displayName = conversation.name || "Nhóm";
+                return {
+                    displayName,
+                    displayAvatar: conversation.avatarUrl,
+                    otherMemberId: undefined,
+                    searchText: displayName,
+                };
+            }
+
+            const displayName =
+                friend?.friendInfo?.displayName ||
+                otherUser?.displayName ||
+                otherUser?.name ||
+                conversation.name ||
+                "Người dùng";
+            const displayAvatar =
+                friend?.friendInfo?.avatar ||
+                otherUser?.avatarUrl ||
+                otherUser?.avatar ||
+                conversation.avatarUrl;
+
+            return {
+                displayName,
+                displayAvatar,
+                otherMemberId,
+                searchText: [
+                    displayName,
+                    friend?.friendInfo?.phoneNumber,
+                    otherUser?.phoneNumber,
+                    otherUser?.phone,
+                    otherMemberId,
+                ]
+                    .filter(Boolean)
+                    .join(" "),
+            };
+        },
+        [currentUserId, getOtherMemberId, isSelfConversation, state?.friends]
+    );
+
     const getLastMessageId = (conversation?: Conversation): string | undefined => {
         if (!conversation?.lastMessage) return undefined;
         const lastMessage = conversation.lastMessage as any;
@@ -528,32 +639,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         };
     }, [token, dedupeConversations]);
 
-    const conversationByFriendId = useMemo(() => {
-        const map = new Map<string, Conversation>();
-        const currentUserId = user?.id || (user as any)?._id;
-
-        conversations.forEach((conversation) => {
-            let otherMemberId: string | undefined;
-
-            // Preferred mapping for private chats from BE: pairKey = "userA_userB"
-            if (conversation.pairKey && currentUserId) {
-                const ids = conversation.pairKey.split("_");
-                otherMemberId = ids.find((id) => id && id !== currentUserId);
-            }
-
-            // Fallback mapping if members array is present
-            if (!otherMemberId) {
-                otherMemberId = conversation.members?.find((memberId) => memberId !== currentUserId);
-            }
-
-            if (otherMemberId) {
-                map.set(otherMemberId, conversation);
-            }
-        });
-
-        return map;
-    }, [conversations, user]);
-
     const filteredConversations = useMemo(() => {
         const needle = query.trim().toLowerCase();
 
@@ -568,22 +653,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             return sorted;
         }
 
-        // Filter by conversation name or member names
         return sorted.filter((conv) => {
-            // For GROUP chats, search by name
-            if (conv.type === "GROUP") {
-                return conv.name?.toLowerCase().includes(needle);
-            }
-            // For PRIVATE chats, search by friend name
-            const friend = state?.friends?.find((f) =>
-                conversationByFriendId.get(f.friendId)?._id === conv._id
-            );
-            return (
-                friend?.friendInfo?.displayName?.toLowerCase().includes(needle) ||
-                friend?.friendInfo?.phoneNumber?.toLowerCase().includes(needle)
-            );
+            const displayInfo = getConversationDisplayInfo(conv);
+            return displayInfo.searchText.toLowerCase().includes(needle);
         });
-    }, [conversations, query, state?.friends, conversationByFriendId]);
+    }, [conversations, query, getConversationDisplayInfo]);
 
     /**
      * Handle friend press - navigate to chat
@@ -620,7 +694,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             pairKey: conversation.pairKey,
         });
 
-        const conversationType = String(conversation.type || "").toUpperCase();
+        const conversationType = getConversationType(conversation);
         if (conversationType === "GROUP") {
             console.log('[HomeScreen] Group chat clicked:', conversation._id);
             if (onGroupPress) {
@@ -634,25 +708,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             return;
         }
 
-        // For PRIVATE chats, extract friendId from pairKey directly
-        // Don't use conversationByFriendId map (it can be overwritten with multiple conversations)
-        let otherMemberId: string | undefined;
-        if (conversation.pairKey) {
-            const currentUserId = user?.id || (user as any)?._id;
-            const ids = conversation.pairKey.split("_");
-            otherMemberId = ids.find((id) => id && id !== currentUserId);
-        }
-
-        // Fallback to members array if pairKey not available
-        if (!otherMemberId && conversation.members) {
-            const currentUserId = user?.id || (user as any)?._id;
-            otherMemberId = conversation.members.find((m) => m !== currentUserId);
-        }
-
-        console.log('[HomeScreen] Extracted otherMemberId:', otherMemberId);
-
-        // Now find the friend with this ID
-        const friend = state?.friends?.find((f) => f.friendId === otherMemberId);
+        const displayInfo = getConversationDisplayInfo(conversation);
+        const otherMemberId = displayInfo.otherMemberId;
+        const friend = otherMemberId
+            ? state?.friends?.find((f) => f.friendId === otherMemberId)
+            : undefined;
 
         console.log('[HomeScreen] Found friend:', {
             friendId: friend?.friendId,
@@ -665,9 +725,27 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 displayName: friend.friendInfo?.displayName,
             });
             handleFriendPress(friend);
-        } else {
-            console.warn("[HomeScreen] Friend not found for otherMemberId:", otherMemberId);
+            return;
         }
+
+        if (!otherMemberId) {
+            console.warn("[HomeScreen] Cannot open private conversation without target user id:", {
+                conversationId: conversation._id || conversation.id,
+                pairKey: conversation.pairKey,
+            });
+            return;
+        }
+
+        onFriendPress?.({
+            id: otherMemberId,
+            displayName: displayInfo.displayName,
+            avatar: displayInfo.displayAvatar,
+            avatarUrl: displayInfo.displayAvatar,
+            conversationId: conversation._id || conversation.id,
+            conversationType: "PRIVATE",
+            isSelfChat: isSelfConversation(conversation),
+            relationship: isSelfConversation(conversation) ? "self" : "stranger",
+        });
     };
 
     return (
@@ -755,22 +833,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             const timeText = formatChatTime(getLastMessageCreatedAt(conversation));
                             const previewText = getLastMessagePreview(conversation);
 
-                            // Get display info based on conversation type
-                            let displayName = conversation.name || "Unknown";
-                            let displayAvatar = conversation.avatarUrl;
-
-                            if (conversation.type === "PRIVATE") {
-                                // For private chats, get friend info
-                                const friendId = conversation.members?.find((m) => {
-                                    const currentUserId = user?.id || (user as any)?._id;
-                                    return m !== currentUserId;
-                                });
-                                const friend = state?.friends?.find((f) => f.friendId === friendId);
-                                if (friend) {
-                                    displayName = friend.friendInfo?.displayName || "Unknown";
-                                    displayAvatar = friend.friendInfo?.avatar;
-                                }
-                            }
+                            const conversationType = getConversationType(conversation);
+                            const { displayName, displayAvatar } = getConversationDisplayInfo(conversation);
 
                             return (
                                 <View
@@ -813,13 +877,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                                                     numberOfLines={1}
                                                 >
                                                     {truncateName(displayName)}
-                                                    {conversation.type === "GROUP" && " (Nhóm)"}
+                                                    {conversationType === "GROUP" && " (Nhóm)"}
                                                 </Text>
                                                 <View
                                                     style={[
                                                         styles.statusDot,
                                                         {
-                                                            backgroundColor: conversation.type === "GROUP" ? "#8b5cf6" : "#ef4444",
+                                                            backgroundColor: conversationType === "GROUP" ? "#8b5cf6" : "#ef4444",
                                                         },
                                                     ]}
                                                 />

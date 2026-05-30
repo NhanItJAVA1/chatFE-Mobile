@@ -247,23 +247,21 @@ export class ConversationService {
     ): Promise<MessagePage> {
         try {
             const response = await api.get(
-                `/conversations/${conversationId}/messages/search`,
+                `/conversations/${conversationId}/search`,
                 {
-                    params: { q: query, page },
+                    params: { query, limit: 20 },
                 }
             );
 
             const data = response.data || response;
-
-            if (data?.data) {
-                return data.data;
-            }
+            const payload = data?.data || data;
+            const messages = payload?.messages || payload?.items || [];
 
             return {
-                items: [],
-                nextCursor: null,
-                limit: 20,
-                hasMore: false,
+                items: Array.isArray(messages) ? messages : [],
+                nextCursor: payload?.nextCursor ?? null,
+                limit: payload?.limit || 20,
+                hasMore: !!payload?.hasMore,
             };
         } catch (error: any) {
             return {
@@ -284,13 +282,7 @@ export class ConversationService {
             const data = response.data || response;
             return data.data?.totalUnread || data.totalUnread || data.data?.count || data.count || 0;
         } catch (error: any) {
-            try {
-                const fallbackResponse = await api.get("/conversations/unread/count");
-                const fallbackData = fallbackResponse.data || fallbackResponse;
-                return fallbackData.data?.count || fallbackData.count || 0;
-            } catch {
-                return 0;
-            }
+            return 0;
         }
     }
 
@@ -306,11 +298,7 @@ export class ConversationService {
                 ...(lastSeenMessageId && { lastSeenMessageId }),
             });
         } catch (error: any) {
-            try {
-                await api.post(`/conversations/${conversationId}/mark-read`);
-            } catch {
-                // Silently fail
-            }
+            // Silently fail
         }
     }
 
@@ -322,7 +310,7 @@ export class ConversationService {
         updates: any
     ): Promise<Conversation> {
         try {
-            const response = await api.patch(`/conversations/${conversationId}`, updates);
+            const response = await api.put(`/groups/${conversationId}`, updates);
             const data = response.data || response;
             return data.data || data;
         } catch (error: any) {
@@ -336,7 +324,7 @@ export class ConversationService {
     static async addMembers(conversationId: string, memberIds: string[]): Promise<any> {
         try {
             const response = await api.post(
-                `/conversations/${conversationId}/members`,
+                `/groups/${conversationId}/members`,
                 { memberIds }
             );
             return response.data || response;
@@ -354,7 +342,7 @@ export class ConversationService {
     ): Promise<any> {
         try {
             const response = await api.delete(
-                `/conversations/${conversationId}/members/${memberId}`
+                `/groups/${conversationId}/members/${memberId}`
             );
             return response.data || response;
         } catch (error: any) {
@@ -367,7 +355,7 @@ export class ConversationService {
      */
     static async deleteConversation(conversationId: string): Promise<void> {
         try {
-            await api.delete(`/conversations/${conversationId}`);
+            await api.delete(`/groups/${conversationId}`);
         } catch (error: any) {
             console.error("[ConversationService] Error deleting conversation:", error);
             throw error;
@@ -394,10 +382,9 @@ export class ConversationService {
         mute: boolean
     ): Promise<any> {
         try {
-            const response = await api.post(
-                `/conversations/${conversationId}/mute`,
-                { mute }
-            );
+            const response = mute
+                ? await api.post(`/conversations/${conversationId}/mute`, {})
+                : await api.delete(`/conversations/${conversationId}/mute`);
             return response.data || response;
         } catch (error: any) {
 
