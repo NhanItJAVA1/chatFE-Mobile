@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
     Ionicons,
 } from "@expo/vector-icons";
@@ -40,6 +40,11 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
     const sentRequestMapRef = useRef<Map<string, any>>(new Map());
     // Track the last userId we sent a request to (for matching with incomplete API response)
     const lastSentUserIdRef = useRef<string | null>(null);
+
+    // Load sent requests when component mounts (on AddFriend screen enter)
+    useEffect(() => {
+        actions.loadSentRequests();
+    }, []); // Only run on mount, not on actions change
 
     // Handle search
     const handleSearch = async () => {

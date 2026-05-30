@@ -23,6 +23,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useChatMessage } from "../../../shared/hooks/useChat";
 import { useAuth } from "../../../shared/hooks";
+import { useCall } from "../../../shared/context";
 import {
   Avatar,
   ForwardDialog,
@@ -369,6 +370,7 @@ const TypingIndicator: React.FC<{ typingUsers: Set<string> }> = ({ typingUsers }
  */
 export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) => {
   const authContext = useAuth();
+  const callContext = useCall();
   const currentUser = authContext.user;
   const token = authContext.token;
   const [messageText, setMessageText] = React.useState("");
@@ -477,6 +479,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   }, [friendId, chatUser?.name, onBackPress]);
 
   const { conversation, messages, isLoading, isSending, error, typingUsers, hasMoreMessages } = state;
+  const conversationId = conversation?._id || conversation?.id || chatUser?.conversationId || "";
+  const isSelfChat = chatUser?.isSelfChat || chatUser?.relationship === "self";
 
   const renderableMessages = useMemo(
     () => groupMessagesForGallery(messages, currentUser?.id || currentUserId),
@@ -551,6 +555,18 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   const userColor = chatUser?.color || colors.accentStrong;
   const hasDraftMedia = draftMedia.length > 0;
   const hasSendableContent = hasDraftMedia || messageText.trim().length > 0;
+
+  const handleStartAudioCall = useCallback(() => {
+    if (isSelfChat) {
+      Alert.alert("Không thể gọi", "My Document là nơi lưu trữ cá nhân nên không hỗ trợ cuộc gọi.");
+      return;
+    }
+    if (!conversationId) {
+      Alert.alert("Không thể gọi", "Cuộc trò chuyện chưa sẵn sàng.");
+      return;
+    }
+    void callContext.startCall(conversationId, "audio");
+  }, [callContext, conversationId, isSelfChat]);
 
   const appendDraftMedia = useCallback((assets: any[]) => {
     setDraftMedia((prev) => {
@@ -1442,6 +1458,13 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           </Text>
           <Text style={styles.chatHeaderSubtitle}>{typingUsers.size > 0 ? "đang gõ..." : "trực tuyến"}</Text>
         </View>
+        <Pressable
+          style={[styles.headerIconButton, isSelfChat && styles.headerIconButtonDisabled]}
+          onPress={handleStartAudioCall}
+          disabled={isSelfChat}
+        >
+          <Ionicons name="call" size={21} color={isSelfChat ? colors.textMuted : colors.text} />
+        </Pressable>
         <Pressable style={styles.headerAvatarWrap} onPress={() => setShowAvatarMenu(true)}>
           {userAvatar ? (
             <Image
@@ -1949,6 +1972,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: "center",
+  },
+  headerIconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.surfaceTransparent,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerIconButtonDisabled: {
+    opacity: 0.45,
   },
   chatHeaderTitle: {
     color: colors.text,
