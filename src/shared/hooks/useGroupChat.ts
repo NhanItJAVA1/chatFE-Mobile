@@ -2,11 +2,13 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import {
     GroupChatService,
     SocketService,
-    type GroupEventData,
-    type GroupMemberEvent,
-    type GroupAdminEvent,
-    type GroupOwnerTransferEvent,
 } from "../services";
+import type {
+    GroupEventData,
+    GroupMemberEvent,
+    GroupAdminEvent,
+    GroupOwnerTransferEvent,
+} from "../services/socketService";
 import {
     Group,
     GroupMember,

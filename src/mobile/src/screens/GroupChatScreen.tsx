@@ -23,6 +23,7 @@ import { useChatMessage } from "../../../shared/hooks/useChat";
 import { useGroupChatMessage } from "../../../shared/hooks/useGroupChatMessage";
 import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { useAuth } from "../../../shared/hooks";
+import { useCall } from "../../../shared/context";
 import { GroupChatService } from "../../../shared/services/groupChatService";
 import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
@@ -175,6 +176,7 @@ export const GroupChatScreen: React.FC<{
 
     // Highlight state is managed inside useScrollToMessage (via useGroupChatMessage)
     const { state: groupState, actions: groupActions } = useGroupChat();
+    const { startCall, state: callState } = useCall();
     const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
 
     // Local state
@@ -198,6 +200,7 @@ export const GroupChatScreen: React.FC<{
     const imageViewerScrollRef = useRef<FlatList>(null);
     const actionsRef = useRef(chatActions);
     const kickedOutRef = useRef(false);
+    const onBackPressRef = useRef(onBackPress);
 
     const scrollToLatestMessage = useCallback((animated = true) => {
         // For inverted FlatList, latest message is at offset 0.
@@ -208,6 +211,10 @@ export const GroupChatScreen: React.FC<{
     useEffect(() => {
         actionsRef.current = chatActions;
     }, [chatActions]);
+
+    useEffect(() => {
+        onBackPressRef.current = onBackPress;
+    }, [onBackPress]);
 
     // Load group and messages on mount
     useEffect(() => {
@@ -385,7 +392,7 @@ export const GroupChatScreen: React.FC<{
                             {
                                 text: "OK",
                                 onPress: () => {
-                                    onBackPress?.();
+                                    onBackPressRef.current?.();
                                 },
                             },
                         ]
@@ -397,13 +404,13 @@ export const GroupChatScreen: React.FC<{
         };
 
         verifyMembership();
-        const interval = setInterval(verifyMembership, 5000);
+        const interval = setInterval(verifyMembership, 30000);
 
         return () => {
             isMounted = false;
             clearInterval(interval);
         };
-    }, [groupId, user?.id, (user as any)?._id, token, onBackPress]);
+    }, [groupId, user?.id, (user as any)?._id, (user as any)?.userId, token]);
 
     const loadGroupData = useCallback(async () => {
         try {
@@ -924,6 +931,20 @@ export const GroupChatScreen: React.FC<{
         );
     }, [groupId]);
 
+    const handleStartGroupCall = useCallback(async () => {
+        if (!groupId) {
+            Alert.alert("Không thể gọi", "Nhóm chưa sẵn sàng.");
+            return;
+        }
+
+        await startCall({
+            conversationId: String(groupId),
+            conversationType: "GROUP",
+            type: "audio",
+            inviteAll: true,
+        });
+    }, [groupId, startCall]);
+
     const getAllUserImages = useCallback((senderId: string, firstImageUri?: string) => {
         const userMessagesWithImages = chatState.messages.filter(
             (message) =>
@@ -1278,6 +1299,18 @@ export const GroupChatScreen: React.FC<{
                     </Text>
                 </View>
                 <View style={styles.headerIconGroup}>
+                    <Pressable
+                        style={styles.headerIconButton}
+                        onPress={handleStartGroupCall}
+                        disabled={callState.status !== "idle"}
+                        hitSlop={8}
+                    >
+                        <Ionicons
+                            name="call-outline"
+                            size={24}
+                            color={callState.status === "idle" ? colors.text : colors.textMuted}
+                        />
+                    </Pressable>
                     <Pressable
                         style={styles.headerIconButton}
                         onPress={onAddMembersPress}

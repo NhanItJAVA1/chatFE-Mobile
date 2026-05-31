@@ -12,6 +12,11 @@ export const getProfile = async (): Promise<User> => {
 };
 
 export const getUserById = async (userId: string): Promise<any> => {
+    if (!userId || userId === "undefined" || userId === "null") {
+        console.warn("[userService] Skipping fetch user: invalid userId", userId);
+        return null;
+    }
+
     try {
         const response = await api.get(`/users/${userId}/public`);
 

@@ -40,6 +40,7 @@ export const CreateGroupScreen: React.FC<CreateGroupScreenProps> = ({
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
     const [isCreating, setIsCreating] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const canCreateGroup = groupName.trim().length > 0 && selectedMembers.size >= 2 && !isCreating;
 
     // Load friends on mount
     useEffect(() => {
@@ -90,6 +91,11 @@ export const CreateGroupScreen: React.FC<CreateGroupScreenProps> = ({
                 name: groupName.trim(),
                 memberIds,
             });
+            const groupId = group._id || (group as any).id;
+
+            if (!groupId) {
+                throw new Error("Không tìm thấy ID nhóm sau khi tạo");
+            }
 
             // Success - navigate to group chat
             Alert.alert("Thành công", "Nhóm đã được tạo", [
@@ -97,12 +103,13 @@ export const CreateGroupScreen: React.FC<CreateGroupScreenProps> = ({
                     text: "OK",
                     onPress: () => {
                         if (onGroupCreated) {
-                            onGroupCreated(group._id, group);
+                            onGroupCreated(groupId, group);
                         }
                     },
                 },
             ]);
         } catch (err: any) {
+            setError(err.message || "Failed to create group");
             Alert.alert("Lỗi", err.message || "Failed to create group");
         } finally {
             setIsCreating(false);
@@ -239,13 +246,14 @@ export const CreateGroupScreen: React.FC<CreateGroupScreenProps> = ({
                             isCreating
                                 ? "Đang tạo..."
                                 : selectedMembers.size >= 2
-                                    ? `Tạo nhóm (${selectedMembers.size} thành viên)`
+                                    ? groupName.trim()
+                                        ? `Tạo nhóm (${selectedMembers.size} thành viên)`
+                                        : "Nhập tên nhóm"
                                     : "Chọn ít nhất 2 thành viên"
                         }
                         onPress={handleCreateGroup}
-                        loading={isCreating ||
-                            selectedMembers.size < 2 ||
-                            !groupName.trim()}
+                        loading={isCreating}
+                        disabled={!canCreateGroup}
                     />
                 </View>
             </ScrollView>

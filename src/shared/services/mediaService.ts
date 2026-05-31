@@ -47,7 +47,8 @@ const normalizeReactNativeFile = async (file: any): Promise<File> => {
 
         // If it's a Blob, convert to File
         if (file instanceof Blob) {
-            return new File([file], file.name || 'unnamed', { type: file.type });
+            const fileName = (file as any).name || 'unnamed';
+            return new File([file], fileName, { type: file.type });
         }
 
         throw new Error('Invalid file type');
@@ -298,7 +299,7 @@ export const uploadMedia = async (file: any, onProgress?: (progress: number) => 
             // Ensure clean URL without query params
             url: cleanUrl,
             fileId: presignedData.fileId,
-            filename: presignedData.filename,
+            filename: (presignedData as any).filename,
             // Spread confirmResponse data but exclude url (we've already cleaned it)
             ...(confirmResponse?.data ? {
                 ...confirmResponse.data,

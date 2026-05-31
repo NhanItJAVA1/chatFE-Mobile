@@ -301,14 +301,33 @@ export const cancelFriendRequest = async (requestId: string): Promise<boolean> =
  * Calls: GET /users/{userId}
  */
 const getUserInfo = async (userId: string): Promise<User> => {
+    if (!userId || userId === "undefined" || userId === "null") {
+        return { id: "", email: "", displayName: "Unknown User", avatar: "" };
+    }
+
     try {
         const response = await api.get(`/users/${userId}/public`);
-        return response.data || response;
+        return response.data?.data || response.data || response;
     } catch (error: any) {
         console.error(`[friendService] Error fetching user ${userId}:`, error);
         // Return minimal user object on error
         return { id: userId, email: "", displayName: "Unknown User", avatar: "" };
     }
+};
+
+const normalizeUserId = (value: any): string | undefined => {
+    if (!value) return undefined;
+
+    if (typeof value === "string") {
+        const id = value.trim();
+        return id && id !== "undefined" && id !== "null" ? id : undefined;
+    }
+
+    if (typeof value === "object") {
+        return normalizeUserId(value.id || value._id || value.userId);
+    }
+
+    return undefined;
 };
 
 /**
@@ -318,8 +337,39 @@ const getUserInfo = async (userId: string): Promise<User> => {
  */
 const enrichFriendship = async (friendship: any, currentUserId: string): Promise<Friend | null> => {
     try {
-        // Determine which user is the friend (not the current user)
-        const friendId = friendship.userA === currentUserId ? friendship.userB : friendship.userA;
+        const directFriendId = normalizeUserId(
+            friendship.userId || friendship.friendId || friendship.friend?.id || friendship.friend?._id
+        );
+
+        // Current backend shape: { id, userId, displayName, username, avatarUrl, status, createdAt }
+        if (directFriendId) {
+            return {
+                _id: friendship.id || friendship._id || directFriendId,
+                friendId: directFriendId,
+                friendInfo: {
+                    displayName:
+                        friendship.displayName ||
+                        friendship.name ||
+                        friendship.username ||
+                        friendship.friend?.displayName ||
+                        "Unknown User",
+                    phoneNumber: friendship.phone || friendship.phoneNumber || friendship.friend?.phone || "",
+                    avatar: friendship.avatarUrl || friendship.avatar || friendship.friend?.avatarUrl || friendship.friend?.avatar || "",
+                    status: (friendship.presenceStatus || friendship.onlineStatus || "offline") as "online" | "offline",
+                },
+                status: "accepted",
+                createdAt: friendship.createdAt,
+            };
+        }
+
+        const userA = normalizeUserId(friendship.userA);
+        const userB = normalizeUserId(friendship.userB);
+        const friendId = userA === currentUserId ? userB : userA;
+
+        if (!friendId) {
+            console.warn("[friendService] Skipping friendship with missing friend id:", friendship);
+            return null;
+        }
 
         // Fetch friend's user info
         const friendUser = await getUserInfo(friendId);

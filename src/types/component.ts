@@ -27,6 +27,7 @@ export type PrimaryButtonProps = {
     label: string;
     onPress: () => void;
     loading?: boolean;
+    disabled?: boolean;
     variant?: "primary" | "secondary";
     style?: ViewStyle | ViewStyle[];
 };

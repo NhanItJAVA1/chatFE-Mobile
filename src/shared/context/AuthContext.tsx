@@ -1,4 +1,5 @@
 import React, { createContext, useEffect, useState, ReactNode } from "react";
+import { DeviceEventEmitter } from "react-native";
 import { authService } from "../services/authService";
 import { updateProfile as updateProfileAPI } from "../services/userService";
 import type { User, AuthContextType, AuthProviderProps } from "@/types";
@@ -48,9 +49,18 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                         }
 
                         console.error(
-                            "[AuthContext] Profile fetch failed during restore, using saved user"
+                            "[AuthContext] Profile fetch failed during restore:",
+                            err.message
                         );
-                        if (savedUser) {
+
+                        // If token is invalid or user not found, log out instead of falling back
+                        if (err.message?.includes("401") || err.message?.includes("404") || err.message?.includes("403")) {
+                            console.error("[AuthContext] Token invalid or user not found, logging out...");
+                            await authService.logout();
+                            setToken(null);
+                            setUser(null);
+                        } else if (savedUser) {
+                            console.log("[AuthContext] Network or generic error, using saved user");
                             setUser(savedUser);
                         }
                     }
@@ -72,8 +82,15 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
         restoreSession();
 
+        const logoutSub = DeviceEventEmitter.addListener("forceLogout", () => {
+            console.log("[AuthContext] forceLogout event received");
+            setToken(null);
+            setUser(null);
+        });
+
         return () => {
             isActive = false;
+            logoutSub.remove();
         };
     }, []);
 

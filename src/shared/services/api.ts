@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from "../runtime/config";
 import { authStorage } from "../runtime/storage";
+import { DeviceEventEmitter } from "react-native";
 import type { ApiCallOptions } from "@/types";
 
 const buildUrl = (endpoint: string): string => {
@@ -43,6 +44,7 @@ const clearTokens = async (): Promise<void> => {
     await authStorage.removeItem("refreshToken");
     await authStorage.removeItem("user");
     console.log("[API] Tokens cleared (logout)");
+    DeviceEventEmitter.emit("forceLogout");
 };
 
 const refreshAccessToken = async (): Promise<boolean> => {

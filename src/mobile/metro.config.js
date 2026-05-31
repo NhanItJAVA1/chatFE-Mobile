@@ -5,6 +5,7 @@ const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, "..", "..");
 const sharedRoot = path.resolve(workspaceRoot, "src", "shared");
 
+/** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(projectRoot);
 
 // Watch both shared and mobile folders

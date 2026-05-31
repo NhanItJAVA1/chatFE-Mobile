@@ -47,10 +47,14 @@ class FriendRequestService {
      * Calls: GET /v1/users/{userId}/public
      */
     private async getUserInfo(userId: string): Promise<User> {
+        if (!userId || userId === "undefined" || userId === "null") {
+            return { id: "", email: "", displayName: "Unknown User", avatar: "" };
+        }
+
         try {
             const response = await api.get(`/users/${userId}/public`);
             // Extract data từ response wrapper
-            return response.data || response;
+            return response.data?.data || response.data || response;
         } catch (error) {
             console.error(`[friendRequestService] Error fetching user ${userId}:`, error);
             throw error;

@@ -24,6 +24,15 @@ import { callService, type CallSession, type CallType } from "../services/callSe
 import { callSocket, type CallSocketPayload } from "../services/callSocket";
 
 type CallStatus = "idle" | "calling" | "incoming" | "active" | "ending";
+type CallConversationType = "PRIVATE" | "GROUP";
+
+interface StartCallOptions {
+    conversationId: string;
+    type?: CallType;
+    conversationType?: CallConversationType;
+    inviteAll?: boolean;
+    inviteeIds?: string[];
+}
 
 interface CallState {
     status: CallStatus;
@@ -31,11 +40,12 @@ interface CallState {
     conversationId: string | null;
     callerId: string | null;
     type: CallType;
+    conversationType: CallConversationType;
     error: string | null;
 }
 
 type CallAction =
-    | { type: "CALLING"; call: CallSession }
+    | { type: "CALLING"; call: CallSession; conversationType: CallConversationType }
     | { type: "INCOMING"; payload: CallSocketPayload }
     | { type: "ACTIVE" }
     | { type: "ENDING" }
@@ -48,6 +58,7 @@ const initialState: CallState = {
     conversationId: null,
     callerId: null,
     type: "audio",
+    conversationType: "PRIVATE",
     error: null,
 };
 
@@ -60,15 +71,20 @@ const callReducer = (state: CallState, action: CallAction): CallState => {
                 conversationId: action.call.conversationId,
                 callerId: action.call.callerId,
                 type: action.call.type,
+                conversationType: action.conversationType,
                 error: null,
             };
         case "INCOMING":
+            const conversationType =
+                action.payload.conversationType ||
+                (action.payload.isGroup ? "GROUP" : "PRIVATE");
             return {
                 status: "incoming",
                 callId: action.payload.callId,
                 conversationId: action.payload.conversationId,
                 callerId: action.payload.callerId || null,
                 type: action.payload.type || "audio",
+                conversationType,
                 error: null,
             };
         case "ACTIVE":
@@ -86,7 +102,7 @@ const callReducer = (state: CallState, action: CallAction): CallState => {
 
 interface CallContextValue {
     state: CallState;
-    startCall: (conversationId: string, type?: CallType) => Promise<void>;
+    startCall: (conversationIdOrOptions: string | StartCallOptions, type?: CallType) => Promise<void>;
     acceptCall: () => Promise<void>;
     rejectCall: () => Promise<void>;
     endCall: () => Promise<void>;
@@ -177,7 +193,15 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
     );
 
     const startCall = useCallback(
-        async (conversationId: string, type: CallType = "audio") => {
+        async (conversationIdOrOptions: string | StartCallOptions, fallbackType: CallType = "audio") => {
+            const options: StartCallOptions =
+                typeof conversationIdOrOptions === "string"
+                    ? { conversationId: conversationIdOrOptions, type: fallbackType, conversationType: "PRIVATE" }
+                    : conversationIdOrOptions;
+            const conversationId = options.conversationId;
+            const type = options.type || fallbackType;
+            const conversationType = options.conversationType || "PRIVATE";
+
             if (!conversationId) {
                 Alert.alert("Không thể gọi", "Cuộc trò chuyện chưa sẵn sàng.");
                 return;
@@ -188,9 +212,14 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             }
 
             try {
-                const created = await callService.createCall({ conversationId, type });
+                const created = await callService.createCall({
+                    conversationId,
+                    type,
+                    ...(conversationType === "GROUP" ? { inviteAll: options.inviteAll ?? true } : {}),
+                    ...(options.inviteeIds?.length ? { inviteeIds: options.inviteeIds } : {}),
+                });
                 currentCallIdRef.current = created.call.callId;
-                dispatch({ type: "CALLING", call: created.call });
+                dispatch({ type: "CALLING", call: created.call, conversationType });
                 await joinAndConnect(created.call.callId, type);
             } catch (error) {
                 const message = getErrorMessage(error, "Không thể bắt đầu cuộc gọi");
@@ -332,13 +361,20 @@ const CallOverlay = () => {
                     </View>
                     <Text style={styles.title}>
                         {isIncoming
-                            ? "Cuộc gọi đến"
+                            ? state.conversationType === "GROUP"
+                                ? "Cuộc gọi nhóm"
+                                : "Cuộc gọi đến"
                             : state.status === "active"
-                                ? "Đang trong cuộc gọi"
-                                : "Đang gọi..."}
+                                ? state.conversationType === "GROUP"
+                                    ? "Đang trong cuộc gọi nhóm"
+                                    : "Đang trong cuộc gọi"
+                                : state.conversationType === "GROUP"
+                                    ? "Đang gọi nhóm..."
+                                    : "Đang gọi..."}
                     </Text>
                     <Text style={styles.subtitle}>
-                        {state.type === "video" ? "Video call" : "Audio call"}
+                        {state.conversationType === "GROUP" ? "Group " : ""}
+                        {state.type === "video" ? "video call" : "audio call"}
                     </Text>
 
                     {isBusy && state.status !== "active" ? (

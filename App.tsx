@@ -1,1 +1,1 @@
-export { default } from './src/mobile/App.tsx';
+export { default } from './src/mobile/App';

@@ -28,6 +28,7 @@ export type {
     BottomTabBarProps,
     TabItem,
     ChatScreenProps,
+    FriendRequestsScreenProps,
     EditData,
 } from "./component";
 
