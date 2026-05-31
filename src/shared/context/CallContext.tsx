@@ -654,80 +654,88 @@ const CallOverlay = () => {
                             ) : null}
                         </View>
                     ) : null}
-                    <View style={styles.iconWrap}>
-                        <Ionicons name={hasVideo ? "videocam" : "call"} size={28} color="#FFFFFF" />
-                    </View>
-                    <Text style={styles.title}>
-                        {isIncoming
-                            ? state.conversationType === "GROUP"
-                                ? "Cuộc gọi nhóm"
-                                : "Cuộc gọi đến"
-                            : state.status === "active"
-                                ? state.conversationType === "GROUP"
-                                    ? "Đang trong cuộc gọi nhóm"
-                                    : "Đang trong cuộc gọi"
-                                : state.conversationType === "GROUP"
-                                    ? "Đang gọi nhóm..."
-                                    : "Đang gọi..."}
-                    </Text>
-                    <Text style={styles.subtitle}>
-                        {state.conversationType === "GROUP" ? "Group " : ""}
-                        {hasVideo ? "video call" : "audio call"}
-                    </Text>
-
-                    {isBusy && state.status !== "active" ? (
-                        <ActivityIndicator color="#FFFFFF" style={styles.loader} />
-                    ) : null}
-
-                    <View style={styles.actions}>
-                        {isIncoming ? (
+                    <View style={[styles.callControls, isActive && hasVideo && styles.videoCallControls]}>
+                        {!(isActive && hasVideo) ? (
+                            <View style={styles.iconWrap}>
+                                <Ionicons name={hasVideo ? "videocam" : "call"} size={28} color="#FFFFFF" />
+                            </View>
+                        ) : null}
+                        {!(isActive && hasVideo) ? (
                             <>
-                                <Pressable style={[styles.actionButton, styles.reject]} onPress={rejectCall}>
-                                    <Ionicons name="call" size={24} color="#FFFFFF" />
-                                </Pressable>
-                                <Pressable style={[styles.actionButton, styles.accept]} onPress={acceptCall}>
-                                    <Ionicons name="call" size={24} color="#FFFFFF" />
-                                </Pressable>
+                                <Text style={styles.title}>
+                                    {isIncoming
+                                        ? state.conversationType === "GROUP"
+                                            ? "Cuộc gọi nhóm"
+                                            : "Cuộc gọi đến"
+                                        : state.status === "active"
+                                            ? state.conversationType === "GROUP"
+                                                ? "Đang trong cuộc gọi nhóm"
+                                                : "Đang trong cuộc gọi"
+                                            : state.conversationType === "GROUP"
+                                                ? "Đang gọi nhóm..."
+                                                : "Đang gọi..."}
+                                </Text>
+                                <Text style={styles.subtitle}>
+                                    {state.conversationType === "GROUP" ? "Group " : ""}
+                                    {hasVideo ? "video call" : "audio call"}
+                                </Text>
                             </>
-                        ) : (
-                            <>
-                                {isActive ? (
-                                    <>
-                                        <Pressable
-                                            style={[
-                                                styles.actionButton,
-                                                styles.secondaryAction,
-                                                !isMicrophoneEnabled && styles.secondaryActionOff,
-                                            ]}
-                                            onPress={toggleMicrophone}
-                                        >
-                                            <Ionicons
-                                                name={isMicrophoneEnabled ? "mic" : "mic-off"}
-                                                size={24}
-                                                color="#FFFFFF"
-                                            />
-                                        </Pressable>
-                                        <Pressable
-                                            style={[
-                                                styles.actionButton,
-                                                styles.secondaryAction,
-                                                isCameraEnabled && styles.cameraActionOn,
-                                            ]}
-                                            onPress={toggleCamera}
-                                        >
-                                            <Ionicons
-                                                name={isCameraEnabled ? "videocam" : "videocam-off"}
-                                                size={24}
-                                                color="#FFFFFF"
-                                            />
-                                        </Pressable>
-                                    </>
-                                ) : null}
-                                <Pressable style={[styles.actionButton, styles.reject]} onPress={endCall}>
-                                    <Ionicons name="call" size={24} color="#FFFFFF" />
-                                </Pressable>
-                            </>
-                        )}
+                        ) : null}
+
+                        {isBusy && state.status !== "active" ? (
+                            <ActivityIndicator color="#FFFFFF" style={styles.loader} />
+                        ) : null}
+
+                        <View style={[styles.actions, isActive && hasVideo && styles.videoActions]}>
+                            {isIncoming ? (
+                                <>
+                                    <Pressable style={[styles.actionButton, styles.reject]} onPress={rejectCall}>
+                                        <Ionicons name="call" size={24} color="#FFFFFF" />
+                                    </Pressable>
+                                    <Pressable style={[styles.actionButton, styles.accept]} onPress={acceptCall}>
+                                        <Ionicons name="call" size={24} color="#FFFFFF" />
+                                    </Pressable>
+                                </>
+                            ) : (
+                                <>
+                                    {isActive ? (
+                                        <>
+                                            <Pressable
+                                                style={[
+                                                    styles.actionButton,
+                                                    styles.secondaryAction,
+                                                    !isMicrophoneEnabled && styles.secondaryActionOff,
+                                                ]}
+                                                onPress={toggleMicrophone}
+                                            >
+                                                <Ionicons
+                                                    name={isMicrophoneEnabled ? "mic" : "mic-off"}
+                                                    size={24}
+                                                    color="#FFFFFF"
+                                                />
+                                            </Pressable>
+                                            <Pressable
+                                                style={[
+                                                    styles.actionButton,
+                                                    styles.secondaryAction,
+                                                    isCameraEnabled && styles.cameraActionOn,
+                                                ]}
+                                                onPress={toggleCamera}
+                                            >
+                                                <Ionicons
+                                                    name={isCameraEnabled ? "videocam" : "videocam-off"}
+                                                    size={24}
+                                                    color="#FFFFFF"
+                                                />
+                                            </Pressable>
+                                        </>
+                                    ) : null}
+                                    <Pressable style={[styles.actionButton, styles.reject]} onPress={endCall}>
+                                        <Ionicons name="call" size={24} color="#FFFFFF" />
+                                    </Pressable>
+                                </>
+                            )}
+                        </View>
                     </View>
                 </View>
             </View>
@@ -829,15 +837,30 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         marginBottom: 16,
     },
+    callControls: {
+        alignItems: "center",
+        width: "100%",
+    },
+    videoCallControls: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: 26,
+        paddingHorizontal: 16,
+        zIndex: 40,
+    },
     title: {
         color: "#FFFFFF",
         fontSize: 22,
         fontWeight: "800",
+        textAlign: "center",
+        paddingHorizontal: 8,
     },
     subtitle: {
         color: "rgba(255,255,255,0.72)",
         fontSize: 14,
         marginTop: 6,
+        textAlign: "center",
     },
     loader: {
         marginTop: 18,
@@ -848,6 +871,10 @@ const styles = StyleSheet.create({
         marginTop: 28,
         alignItems: "center",
         justifyContent: "center",
+    },
+    videoActions: {
+        marginTop: 18,
+        gap: 22,
     },
     actionButton: {
         width: 60,
