@@ -45,7 +45,7 @@ const normalizeCall = (raw: any): CallSession => {
 
 export const callService = {
     async createCall(payload: CreateCallPayload) {
-        const response = await api.post("/calls", payload);
+        const response = await api.post("/calls", payload, { suppressErrorLog: true });
         const data = unwrapData<any>(response);
         return {
             call: normalizeCall(data?.call ?? data),

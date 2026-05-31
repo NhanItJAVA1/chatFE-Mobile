@@ -101,6 +101,7 @@ export const apiCall = async (
 ): Promise<any> => {
     const url = buildUrl(endpoint);
     let token = await getAuthToken();
+    const { suppressErrorLog, ...fetchOptions } = options as ApiCallOptions & { suppressErrorLog?: boolean };
 
     try {
         const headers: Record<string, string> = {
@@ -117,7 +118,7 @@ export const apiCall = async (
 
         let response = await fetch(url, {
             headers,
-            ...options,
+            ...fetchOptions,
         });
 
         // Handle 401 - try to refresh token and retry
@@ -164,7 +165,7 @@ export const apiCall = async (
 
                 response = await fetch(url, {
                     headers: newHeaders,
-                    ...options,
+                    ...fetchOptions,
                 });
             } else {
                 console.error("[API] Token refresh failed, user needs to login again");
@@ -186,8 +187,10 @@ export const apiCall = async (
                 errorDetails = "Unable to read response body";
             }
             const errorMsg = `API error: ${response.status} ${response.statusText}`;
-            console.error(`[API] ${errorMsg} on ${options.method || "GET"} ${endpoint}`);
-            console.error(`[API] Response body:`, errorDetails);
+            if (!suppressErrorLog) {
+                console.error(`[API] ${errorMsg} on ${options.method || "GET"} ${endpoint}`);
+                console.error(`[API] Response body:`, errorDetails);
+            }
             throw new Error(errorMsg);
         }
 
@@ -197,7 +200,9 @@ export const apiCall = async (
 
         return await response.json();
     } catch (error: any) {
-        console.error(`[API] Call failed for ${options.method || "GET"} ${endpoint}:`, error.message);
+        if (!suppressErrorLog) {
+            console.error(`[API] Call failed for ${options.method || "GET"} ${endpoint}:`, error.message);
+        }
         throw error;
     }
 };

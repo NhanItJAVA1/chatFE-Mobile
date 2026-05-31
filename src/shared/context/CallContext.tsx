@@ -6,6 +6,7 @@ import React, {
     useMemo,
     useReducer,
     useRef,
+    useState,
 } from "react";
 import {
     ActivityIndicator,
@@ -16,8 +17,8 @@ import {
     Text,
     View,
 } from "react-native";
-import { AudioSession } from "@livekit/react-native";
-import { Room, RoomEvent } from "livekit-client";
+import { AudioSession, VideoView } from "@livekit/react-native";
+import { Room, RoomEvent, Track, type VideoTrack as LiveKitVideoTrack } from "livekit-client";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../hooks/useAuth";
 import { callService, type CallSession, type CallType } from "../services/callService";
@@ -42,6 +43,13 @@ interface CallState {
     type: CallType;
     conversationType: CallConversationType;
     error: string | null;
+}
+
+interface CallVideoTile {
+    id: string;
+    participantIdentity: string;
+    track: LiveKitVideoTrack;
+    isLocal: boolean;
 }
 
 type CallAction =
@@ -102,10 +110,15 @@ const callReducer = (state: CallState, action: CallAction): CallState => {
 
 interface CallContextValue {
     state: CallState;
+    videoTiles: CallVideoTile[];
+    isCameraEnabled: boolean;
+    isMicrophoneEnabled: boolean;
     startCall: (conversationIdOrOptions: string | StartCallOptions, type?: CallType) => Promise<void>;
     acceptCall: () => Promise<void>;
     rejectCall: () => Promise<void>;
     endCall: () => Promise<void>;
+    toggleCamera: () => Promise<void>;
+    toggleMicrophone: () => Promise<void>;
 }
 
 const CallContext = createContext<CallContextValue | null>(null);
@@ -115,9 +128,50 @@ const getErrorMessage = (error: unknown, fallback: string) => {
     return fallback;
 };
 
+const isActiveCallConflict = (error: unknown) => {
+    return error instanceof Error && error.message.includes("409");
+};
+
+const collectVideoTiles = (room: Room | null): CallVideoTile[] => {
+    if (!room) return [];
+
+    const tiles: CallVideoTile[] = [];
+
+    const localCamera = room.localParticipant.getTrackPublication(Track.Source.Camera);
+    if (localCamera?.videoTrack && !localCamera.isMuted) {
+        tiles.push({
+            id: `local-${localCamera.trackSid || "camera"}`,
+            participantIdentity: room.localParticipant.identity || "Bạn",
+            track: localCamera.videoTrack,
+            isLocal: true,
+        });
+    }
+
+    room.remoteParticipants.forEach((participant) => {
+        const camera = participant.getTrackPublication(Track.Source.Camera);
+        if (!camera?.videoTrack || camera.isMuted) return;
+
+        tiles.push({
+            id: `${participant.sid || participant.identity}-${camera.trackSid || "camera"}`,
+            participantIdentity: participant.name || participant.identity || "Người tham gia",
+            track: camera.videoTrack,
+            isLocal: false,
+        });
+    });
+
+    return tiles;
+};
+
 export const CallProvider = ({ children }: { children: React.ReactNode }) => {
     const { user, token } = useAuth();
+    const currentUserId = useMemo(
+        () => String(user?.id || (user as any)?._id || (user as any)?.userId || ""),
+        [user],
+    );
     const [state, dispatch] = useReducer(callReducer, initialState);
+    const [videoTiles, setVideoTiles] = useState<CallVideoTile[]>([]);
+    const [isCameraEnabled, setIsCameraEnabled] = useState(false);
+    const [isMicrophoneEnabled, setIsMicrophoneEnabled] = useState(false);
     const roomRef = useRef<Room | null>(null);
     const currentCallIdRef = useRef<string | null>(null);
     const incomingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -129,11 +183,20 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
         }
     }, []);
 
+    const syncRoomMediaState = useCallback((room: Room | null = roomRef.current) => {
+        setVideoTiles(collectVideoTiles(room));
+        setIsCameraEnabled(Boolean(room?.localParticipant.isCameraEnabled));
+        setIsMicrophoneEnabled(Boolean(room?.localParticipant.isMicrophoneEnabled));
+    }, []);
+
     const cleanupRoom = useCallback(async () => {
         if (roomRef.current) {
             roomRef.current.disconnect();
             roomRef.current = null;
         }
+        setVideoTiles([]);
+        setIsCameraEnabled(false);
+        setIsMicrophoneEnabled(false);
         try {
             await AudioSession.stopAudioSession();
         } catch {
@@ -147,6 +210,23 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
         currentCallIdRef.current = null;
         dispatch({ type: "RESET" });
     }, [cleanupRoom, clearIncomingTimer]);
+
+    const showIncomingCall = useCallback(
+        (payload: CallSocketPayload) => {
+            if (!payload.callId || payload.callerId === currentUserId) return;
+            if (currentCallIdRef.current && currentCallIdRef.current !== payload.callId) return;
+
+            currentCallIdRef.current = payload.callId;
+            dispatch({ type: "INCOMING", payload });
+            clearIncomingTimer();
+            incomingTimerRef.current = setTimeout(() => {
+                if (payload.callId === currentCallIdRef.current) {
+                    void callService.missedCall(payload.callId).finally(resetCall);
+                }
+            }, 30000);
+        },
+        [clearIncomingTimer, currentUserId, resetCall],
+    );
 
     const connectToLiveKit = useCallback(
         async (tokenValue: string, wsUrl: string, roomName: string, callType: CallType) => {
@@ -164,6 +244,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             roomRef.current = room;
 
             room.on(RoomEvent.Connected, () => {
+                syncRoomMediaState(room);
                 dispatch({ type: "ACTIVE" });
             });
             room.on(RoomEvent.Disconnected, () => {
@@ -172,15 +253,28 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             room.on(RoomEvent.MediaDevicesError, () => {
                 Alert.alert("Lỗi cuộc gọi", "Không thể truy cập microphone/camera.");
             });
+            [
+                RoomEvent.ParticipantConnected,
+                RoomEvent.ParticipantDisconnected,
+                RoomEvent.TrackSubscribed,
+                RoomEvent.TrackUnsubscribed,
+                RoomEvent.TrackMuted,
+                RoomEvent.TrackUnmuted,
+                RoomEvent.LocalTrackPublished,
+                RoomEvent.LocalTrackUnpublished,
+            ].forEach((eventName) => {
+                room.on(eventName, () => syncRoomMediaState(room));
+            });
 
             await room.connect(wsUrl, tokenValue);
             await room.localParticipant.setMicrophoneEnabled(true);
             if (callType === "video") {
                 await room.localParticipant.setCameraEnabled(true);
             }
+            syncRoomMediaState(room);
             dispatch({ type: "ACTIVE" });
         },
-        [cleanupRoom, resetCall],
+        [cleanupRoom, resetCall, syncRoomMediaState],
     );
 
     const joinAndConnect = useCallback(
@@ -222,6 +316,27 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                 dispatch({ type: "CALLING", call: created.call, conversationType });
                 await joinAndConnect(created.call.callId, type);
             } catch (error) {
+                if (isActiveCallConflict(error)) {
+                    try {
+                        const activeCall = await callService.getActiveByConversation(conversationId);
+                        if (!activeCall?.callId) {
+                            throw new Error("Không tìm thấy cuộc gọi đang hoạt động.");
+                        }
+
+                        const activeType = activeCall.type || type;
+                        currentCallIdRef.current = activeCall.callId;
+                        dispatch({ type: "CALLING", call: activeCall, conversationType });
+                        await joinAndConnect(activeCall.callId, activeType);
+                        return;
+                    } catch (joinError) {
+                        const message = getErrorMessage(joinError, "Không thể tham gia cuộc gọi đang hoạt động");
+                        dispatch({ type: "ERROR", error: message });
+                        Alert.alert("Không thể tham gia cuộc gọi", message);
+                        await resetCall();
+                        return;
+                    }
+                }
+
                 const message = getErrorMessage(error, "Không thể bắt đầu cuộc gọi");
                 dispatch({ type: "ERROR", error: message });
                 Alert.alert("Không thể gọi", message);
@@ -267,8 +382,38 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
         }
     }, [resetCall, state.callId]);
 
+    const toggleCamera = useCallback(async () => {
+        const room = roomRef.current;
+        if (!room || state.status !== "active") return;
+
+        try {
+            const nextEnabled = !room.localParticipant.isCameraEnabled;
+            await room.localParticipant.setCameraEnabled(nextEnabled);
+            syncRoomMediaState(room);
+        } catch (error) {
+            const message = getErrorMessage(error, "Không thể bật camera");
+            Alert.alert("Lỗi camera", message);
+            syncRoomMediaState(room);
+        }
+    }, [state.status, syncRoomMediaState]);
+
+    const toggleMicrophone = useCallback(async () => {
+        const room = roomRef.current;
+        if (!room || state.status !== "active") return;
+
+        try {
+            const nextEnabled = !room.localParticipant.isMicrophoneEnabled;
+            await room.localParticipant.setMicrophoneEnabled(nextEnabled);
+            syncRoomMediaState(room);
+        } catch (error) {
+            const message = getErrorMessage(error, "Không thể đổi trạng thái microphone");
+            Alert.alert("Lỗi microphone", message);
+            syncRoomMediaState(room);
+        }
+    }, [state.status, syncRoomMediaState]);
+
     useEffect(() => {
-        if (!user?.id || !token) return;
+        if (!currentUserId || !token) return;
 
         let mounted = true;
         const cleanups: Array<() => void> = [];
@@ -278,17 +423,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
 
             cleanups.push(
                 callSocket.on<CallSocketPayload>("call:incoming", (payload) => {
-                    if (!payload.callId || payload.callerId === user.id) return;
-                    if (currentCallIdRef.current && currentCallIdRef.current !== payload.callId) return;
-
-                    currentCallIdRef.current = payload.callId;
-                    dispatch({ type: "INCOMING", payload });
-                    clearIncomingTimer();
-                    incomingTimerRef.current = setTimeout(() => {
-                        if (payload.callId === currentCallIdRef.current) {
-                            void callService.missedCall(payload.callId).finally(resetCall);
-                        }
-                    }, 30000);
+                    showIncomingCall(payload);
                 }),
                 callSocket.on<CallSocketPayload>("call:ended", (payload) => {
                     if (payload.callId === currentCallIdRef.current) {
@@ -321,11 +456,33 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             cleanups.forEach((cleanup) => cleanup());
             clearIncomingTimer();
         };
-    }, [clearIncomingTimer, resetCall, token, user?.id]);
+    }, [clearIncomingTimer, currentUserId, resetCall, showIncomingCall, token]);
 
     const value = useMemo(
-        () => ({ state, startCall, acceptCall, rejectCall, endCall }),
-        [acceptCall, endCall, rejectCall, startCall, state],
+        () => ({
+            state,
+            videoTiles,
+            isCameraEnabled,
+            isMicrophoneEnabled,
+            startCall,
+            acceptCall,
+            rejectCall,
+            endCall,
+            toggleCamera,
+            toggleMicrophone,
+        }),
+        [
+            acceptCall,
+            endCall,
+            isCameraEnabled,
+            isMicrophoneEnabled,
+            rejectCall,
+            startCall,
+            state,
+            toggleCamera,
+            toggleMicrophone,
+            videoTiles,
+        ],
     );
 
     return (
@@ -348,16 +505,75 @@ const CallOverlay = () => {
     const context = useContext(CallContext);
     if (!context || context.state.status === "idle") return null;
 
-    const { state, acceptCall, rejectCall, endCall } = context;
+    const {
+        state,
+        videoTiles,
+        isCameraEnabled,
+        isMicrophoneEnabled,
+        acceptCall,
+        rejectCall,
+        endCall,
+        toggleCamera,
+        toggleMicrophone,
+    } = context;
     const isIncoming = state.status === "incoming";
     const isBusy = state.status === "calling" || state.status === "ending";
+    const isActive = state.status === "active";
+    const hasVideo = videoTiles.length > 0;
+    const localVideoTile = videoTiles.find((tile) => tile.isLocal);
+    const remoteVideoTiles = videoTiles.filter((tile) => !tile.isLocal);
+    const stageVideoTiles = (remoteVideoTiles.length > 0 ? remoteVideoTiles : localVideoTile ? [localVideoTile] : []).slice(0, 4);
 
     return (
         <Modal transparent animationType="fade" visible>
             <View style={styles.overlay}>
-                <View style={styles.card}>
+                <View style={[styles.card, isActive && hasVideo && styles.videoCard]}>
+                    {isActive && hasVideo ? (
+                        <View style={styles.videoStage}>
+                            {stageVideoTiles.map((tile, index) => (
+                                <View
+                                    key={tile.id}
+                                    style={[
+                                        styles.videoTile,
+                                        stageVideoTiles.length === 1 && styles.singleVideoTile,
+                                        stageVideoTiles.length === 2 && styles.twoVideoTile,
+                                        stageVideoTiles.length > 2 && styles.gridVideoTile,
+                                    ]}
+                                >
+                                    <VideoView
+                                        style={styles.videoView}
+                                        videoTrack={tile.track}
+                                        objectFit="cover"
+                                        mirror={tile.isLocal}
+                                        zOrder={index}
+                                    />
+                                    <View style={styles.videoNameBadge}>
+                                        <Text style={styles.videoName} numberOfLines={1}>
+                                            {tile.isLocal ? "Bạn" : tile.participantIdentity}
+                                        </Text>
+                                    </View>
+                                </View>
+                            ))}
+                            {localVideoTile && remoteVideoTiles.length > 0 ? (
+                                <View style={[styles.videoTile, styles.pipVideoTile]}>
+                                    <VideoView
+                                        style={styles.videoView}
+                                        videoTrack={localVideoTile.track}
+                                        objectFit="cover"
+                                        mirror
+                                        zOrder={10}
+                                    />
+                                    <View style={styles.videoNameBadge}>
+                                        <Text style={styles.videoName} numberOfLines={1}>
+                                            Bạn
+                                        </Text>
+                                    </View>
+                                </View>
+                            ) : null}
+                        </View>
+                    ) : null}
                     <View style={styles.iconWrap}>
-                        <Ionicons name={state.type === "video" ? "videocam" : "call"} size={28} color="#FFFFFF" />
+                        <Ionicons name={hasVideo ? "videocam" : "call"} size={28} color="#FFFFFF" />
                     </View>
                     <Text style={styles.title}>
                         {isIncoming
@@ -374,7 +590,7 @@ const CallOverlay = () => {
                     </Text>
                     <Text style={styles.subtitle}>
                         {state.conversationType === "GROUP" ? "Group " : ""}
-                        {state.type === "video" ? "video call" : "audio call"}
+                        {hasVideo ? "video call" : "audio call"}
                     </Text>
 
                     {isBusy && state.status !== "active" ? (
@@ -392,9 +608,43 @@ const CallOverlay = () => {
                                 </Pressable>
                             </>
                         ) : (
-                            <Pressable style={[styles.actionButton, styles.reject]} onPress={endCall}>
-                                <Ionicons name="call" size={24} color="#FFFFFF" />
-                            </Pressable>
+                            <>
+                                {isActive ? (
+                                    <>
+                                        <Pressable
+                                            style={[
+                                                styles.actionButton,
+                                                styles.secondaryAction,
+                                                !isMicrophoneEnabled && styles.secondaryActionOff,
+                                            ]}
+                                            onPress={toggleMicrophone}
+                                        >
+                                            <Ionicons
+                                                name={isMicrophoneEnabled ? "mic" : "mic-off"}
+                                                size={24}
+                                                color="#FFFFFF"
+                                            />
+                                        </Pressable>
+                                        <Pressable
+                                            style={[
+                                                styles.actionButton,
+                                                styles.secondaryAction,
+                                                isCameraEnabled && styles.cameraActionOn,
+                                            ]}
+                                            onPress={toggleCamera}
+                                        >
+                                            <Ionicons
+                                                name={isCameraEnabled ? "videocam" : "videocam-off"}
+                                                size={24}
+                                                color="#FFFFFF"
+                                            />
+                                        </Pressable>
+                                    </>
+                                ) : null}
+                                <Pressable style={[styles.actionButton, styles.reject]} onPress={endCall}>
+                                    <Ionicons name="call" size={24} color="#FFFFFF" />
+                                </Pressable>
+                            </>
                         )}
                     </View>
                 </View>
@@ -419,6 +669,70 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: "rgba(255,255,255,0.12)",
         alignItems: "center",
+    },
+    videoCard: {
+        flex: 1,
+        width: "100%",
+        borderRadius: 0,
+        paddingHorizontal: 16,
+        paddingTop: 44,
+        paddingBottom: 32,
+        backgroundColor: "#050505",
+        borderWidth: 0,
+        justifyContent: "flex-end",
+    },
+    videoStage: {
+        ...StyleSheet.absoluteFillObject,
+        flexDirection: "row",
+        flexWrap: "wrap",
+        backgroundColor: "#000000",
+    },
+    videoTile: {
+        overflow: "hidden",
+        backgroundColor: "#111827",
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.08)",
+    },
+    videoView: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    singleVideoTile: {
+        width: "100%",
+        height: "100%",
+    },
+    twoVideoTile: {
+        width: "100%",
+        height: "50%",
+    },
+    gridVideoTile: {
+        width: "50%",
+        height: "50%",
+    },
+    pipVideoTile: {
+        position: "absolute",
+        right: 16,
+        top: 52,
+        width: 116,
+        height: 164,
+        borderRadius: 16,
+        borderWidth: 2,
+        borderColor: "rgba(255,255,255,0.72)",
+        zIndex: 20,
+    },
+    videoNameBadge: {
+        position: "absolute",
+        left: 10,
+        bottom: 10,
+        maxWidth: "72%",
+        borderRadius: 14,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        backgroundColor: "rgba(0,0,0,0.52)",
+    },
+    videoName: {
+        color: "#FFFFFF",
+        fontSize: 12,
+        fontWeight: "700",
     },
     iconWrap: {
         width: 72,
@@ -446,6 +760,8 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         gap: 28,
         marginTop: 28,
+        alignItems: "center",
+        justifyContent: "center",
     },
     actionButton: {
         width: 60,
@@ -456,6 +772,17 @@ const styles = StyleSheet.create({
     },
     accept: {
         backgroundColor: "#16A34A",
+    },
+    secondaryAction: {
+        backgroundColor: "rgba(255,255,255,0.18)",
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.16)",
+    },
+    secondaryActionOff: {
+        backgroundColor: "rgba(220,38,38,0.72)",
+    },
+    cameraActionOn: {
+        backgroundColor: "rgba(37,99,235,0.86)",
     },
     reject: {
         backgroundColor: "#DC2626",
