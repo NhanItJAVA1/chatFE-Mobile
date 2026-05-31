@@ -9,7 +9,7 @@ export interface UseScrollToMessageOptions {
 export const useScrollToMessage = (options?: UseScrollToMessageOptions) => {
     const flatListRef = useRef<FlatList<any>>(null);
     const messageIndexMapRef = useRef<Map<string, number>>(new Map());
-    
+
     // External states for highlighting and pending jumps
     const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
     const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
@@ -52,6 +52,11 @@ export const useScrollToMessage = (options?: UseScrollToMessageOptions) => {
             const id = msg._id || msg.id;
             if (id) {
                 map.set(id, idx);
+            }
+
+            const pollId = msg?.poll?.id || msg?.pollId || msg?.poll?._id;
+            if (pollId) {
+                map.set(`poll-${pollId}`, idx);
             }
         });
         messageIndexMapRef.current = map;
