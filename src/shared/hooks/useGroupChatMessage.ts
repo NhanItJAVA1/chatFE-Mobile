@@ -143,6 +143,44 @@ const createPollMessage = (poll: Poll, conversationId: string): MessagePayload =
     };
 };
 
+const getPinnedPollId = (pin: any): string => {
+    const msg = pin?.message || pin;
+    return msg?.poll?.id
+        || msg?.pollId
+        || msg?.poll?._id
+        || pin?.poll?.id
+        || pin?.pollId
+        || pin?.poll?._id
+        || "";
+};
+
+const upsertPinnedPollMessage = (
+    pinnedMessages: MessagePayload[],
+    poll: Poll,
+    conversationId: string
+): MessagePayload[] => {
+    if (!poll?.id) return pinnedMessages;
+
+    const pinnedPollMessage = {
+        ...createPollMessage(poll, conversationId),
+        poll: { ...poll, pinned: true, isPinned: true },
+        pinned: true,
+        pinnedAt: (poll as any).pinnedAt || new Date().toISOString(),
+    } as MessagePayload;
+
+    const existingIndex = pinnedMessages.findIndex((message) => getPinnedPollId(message) === poll.id);
+    if (existingIndex >= 0) {
+        return pinnedMessages.map((message, index) => index === existingIndex ? { ...message, ...pinnedPollMessage } : message);
+    }
+
+    return [pinnedPollMessage, ...pinnedMessages];
+};
+
+const removePinnedPollMessage = (pinnedMessages: MessagePayload[], pollId: string): MessagePayload[] => {
+    if (!pollId) return pinnedMessages;
+    return pinnedMessages.filter((message) => getPinnedPollId(message) !== pollId);
+};
+
 const normalizePollActivityMessage = (event: any, conversationId: string): MessagePayload | null => {
     const raw = event?.systemMessage || event?.activityMessage || event?.message;
     if (!raw) return null;
@@ -459,11 +497,34 @@ export const normalizePinnedMessages = (
     return rawPinnedMessages.map((pin) => {
         // Handle BE format {conversationId, message: {...}} vs raw message payload
         const msg = pin.message || pin;
+        const poll = msg.poll || pin.poll;
+        const pollId = getPinnedPollId(pin);
+        if (pollId) {
+            return {
+                ...msg,
+                _id: `poll-${pollId}`,
+                id: `poll-${pollId}`,
+                text: poll?.question || msg.text || msg.content || "Bình chọn",
+                senderId: poll?.creatorId || poll?.createdBy || msg.senderId || "system",
+                senderName: poll?.creatorName || msg.senderName || "Bình chọn",
+                createdAt: poll?.createdAt || msg.createdAt || pin.createdAt,
+                media: msg.media || [],
+                type: "poll",
+                messageType: "poll",
+                pollId,
+                poll,
+                pinnedAt: pin.pinnedAt || msg.pinnedAt,
+                pinnedByName: pin.pinnedByName || msg.pinnedByName,
+            } as any;
+        }
+
         const senderId = msg.senderId;
         
         const resolvedName = (senderId ? userMap[senderId] : undefined) || "Unknown";
 
         return {
+            ...msg,
+            _id: msg._id || msg.id || "",
             id: msg._id || msg.id || "",
             text: msg.text || "",
             senderId: senderId,
@@ -499,6 +560,30 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     });
 
     const fetchMissingMessage = useCallback(async (messageId: string): Promise<boolean> => {
+        if (messageId.startsWith("poll-")) {
+            const pollId = messageId.slice("poll-".length);
+            if (!pollId) return false;
+
+            try {
+                const poll = await PollService.getPoll(groupId, pollId);
+                if (!poll?.id) return false;
+
+                setState((prev) => {
+                    const conversationId = prev.conversation?._id || prev.conversation?.id || groupId;
+                    const nextPolls = mergePolls([poll], prev.polls);
+                    return {
+                        ...prev,
+                        polls: nextPolls,
+                        messages: collapsePollMessages(mergePollMessagesIntoFeed(prev.messages, nextPolls, conversationId)),
+                    };
+                });
+                return true;
+            } catch (error) {
+                console.error("Failed to fetch target poll:", error);
+                return false;
+            }
+        }
+
         try {
             const message = await ConversationService.getMessageById(messageId);
             if (message && message._id) {
@@ -517,7 +602,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             console.error("Failed to fetch target reply message:", error);
             return false;
         }
-    }, []);
+    }, [groupId]);
 
     const {
         flatListRef,
@@ -692,7 +777,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 messages: nextMessages,
             };
         });
-    }, [groupId]);
+    }, []);
 
     const removePollFromState = useCallback((pollId: string) => {
         if (!pollId) return;
@@ -743,6 +828,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     const pinPoll = useCallback(async (pollId: string) => {
         setState((prev) => {
             const poll = prev.polls.find((candidate) => candidate.id === pollId);
+            const conversationId = prev.conversation?._id || prev.conversation?.id || groupId;
             return poll ? {
                 ...prev,
                 polls: mergePolls([{ ...poll, pinned: true, isPinned: true }], prev.polls),
@@ -751,10 +837,21 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                         ? { ...message, poll: { ...message.poll, pinned: true, isPinned: true } }
                         : message
                 ),
+                pinnedMessages: upsertPinnedPollMessage(prev.pinnedMessages, { ...poll, pinned: true, isPinned: true }, conversationId),
+                pinnedMessageIndex: 0,
             } : prev;
         });
         const poll = await PollService.pin(groupId, pollId);
-        upsertPollInState(poll);
+        setState((prev) => ({
+            ...prev,
+            pinnedMessages: upsertPinnedPollMessage(
+                prev.pinnedMessages,
+                { ...poll, pinned: true, isPinned: true },
+                prev.conversation?._id || prev.conversation?.id || groupId
+            ),
+            pinnedMessageIndex: 0,
+        }));
+        upsertPollInState({ ...poll, pinned: true, isPinned: true });
     }, [groupId, upsertPollInState]);
 
     const unpinPoll = useCallback(async (pollId: string) => {
@@ -768,10 +865,20 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                         ? { ...message, poll: { ...message.poll, pinned: false, isPinned: false } }
                         : message
                 ),
+                pinnedMessages: removePinnedPollMessage(prev.pinnedMessages, pollId),
+                pinnedMessageIndex: 0,
             } : prev;
         });
         const poll = await PollService.unpin(groupId, pollId);
-        upsertPollInState(poll);
+        setState((prev) => {
+            const nextPinnedMessages = removePinnedPollMessage(prev.pinnedMessages, pollId);
+            return {
+                ...prev,
+                pinnedMessages: nextPinnedMessages,
+                pinnedMessageIndex: Math.min(prev.pinnedMessageIndex, Math.max(0, nextPinnedMessages.length - 1)),
+            };
+        });
+        upsertPollInState({ ...poll, pinned: false, isPinned: false });
     }, [groupId, upsertPollInState]);
 
     const deletePoll = useCallback(async (pollId: string) => {
@@ -1494,10 +1601,57 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     }
 
                     if (event.poll) {
-                        upsertPollInState(event.poll, conversationId);
+                        if (event.type === "poll:pinned") {
+                            setState((prev) => ({
+                                ...prev,
+                                pinnedMessages: upsertPinnedPollMessage(
+                                    prev.pinnedMessages,
+                                    { ...event.poll, pinned: true, isPinned: true },
+                                    conversationId
+                                ),
+                                pinnedMessageIndex: 0,
+                            }));
+                        } else if (event.type === "poll:unpinned") {
+                            const eventPollId = getSocketPollId(event);
+                            setState((prev) => {
+                                const nextPinnedMessages = removePinnedPollMessage(prev.pinnedMessages, eventPollId);
+                                return {
+                                    ...prev,
+                                    pinnedMessages: nextPinnedMessages,
+                                    pinnedMessageIndex: Math.min(prev.pinnedMessageIndex, Math.max(0, nextPinnedMessages.length - 1)),
+                                };
+                            });
+                        }
+                        upsertPollInState({
+                            ...event.poll,
+                            pinned: event.type === "poll:unpinned" ? false : event.type === "poll:pinned" ? true : event.poll.pinned,
+                            isPinned: event.type === "poll:unpinned" ? false : event.type === "poll:pinned" ? true : event.poll.isPinned,
+                        }, conversationId);
                     } else if (pollId) {
                         PollService.getPoll(groupId, pollId)
-                            .then((poll) => upsertPollInState(poll, conversationId))
+                            .then((poll) => {
+                                if (event.type === "poll:pinned") {
+                                    setState((prev) => ({
+                                        ...prev,
+                                        pinnedMessages: upsertPinnedPollMessage(
+                                            prev.pinnedMessages,
+                                            { ...poll, pinned: true, isPinned: true },
+                                            conversationId
+                                        ),
+                                        pinnedMessageIndex: 0,
+                                    }));
+                                } else if (event.type === "poll:unpinned") {
+                                    setState((prev) => {
+                                        const nextPinnedMessages = removePinnedPollMessage(prev.pinnedMessages, pollId);
+                                        return {
+                                            ...prev,
+                                            pinnedMessages: nextPinnedMessages,
+                                            pinnedMessageIndex: Math.min(prev.pinnedMessageIndex, Math.max(0, nextPinnedMessages.length - 1)),
+                                        };
+                                    });
+                                }
+                                upsertPollInState(poll, conversationId);
+                            })
                             .catch((error: any) => {
                                 console.warn("[useGroupChatMessage] Failed to refresh poll event:", error?.message);
                             });

@@ -1506,8 +1506,22 @@ export const GroupChatScreen: React.FC<{
                                 }
                             }}
                             onUnpin={async () => {
-                                const msgId = chatState.pinnedMessages[chatState.pinnedMessageIndex]?._id
-                                    || chatState.pinnedMessages[chatState.pinnedMessageIndex]?.id;
+                                const pinnedMsg = chatState.pinnedMessages[chatState.pinnedMessageIndex];
+                                const pinnedPollId = pinnedMsg?.poll?.id
+                                    || pinnedMsg?.pollId
+                                    || (String(pinnedMsg?._id || pinnedMsg?.id || "").startsWith("poll-")
+                                        ? String(pinnedMsg?._id || pinnedMsg?.id).slice("poll-".length)
+                                        : "");
+                                if (pinnedPollId && chatActions.unpinPoll) {
+                                    try {
+                                        await chatActions.unpinPoll(pinnedPollId);
+                                    } catch (error: any) {
+                                        Alert.alert("Lỗi", error.message || "Không thể bỏ ghim bình chọn");
+                                    }
+                                    return;
+                                }
+
+                                const msgId = pinnedMsg?._id || pinnedMsg?.id;
                                 if (msgId && chatActions.unpinMessage) {
                                     try {
                                         await chatActions.unpinMessage(msgId);
@@ -1519,7 +1533,8 @@ export const GroupChatScreen: React.FC<{
                             onPress={() => {
                                 // Scroll to pinned message and highlight it
                                 const pinnedMsg = chatState.pinnedMessages[chatState.pinnedMessageIndex];
-                                const pinnedMsgId = pinnedMsg?._id || pinnedMsg?.id;
+                                const pinnedPollId = pinnedMsg?.poll?.id || pinnedMsg?.pollId;
+                                const pinnedMsgId = pinnedPollId ? `poll-${pinnedPollId}` : (pinnedMsg?._id || pinnedMsg?.id);
                                 if (pinnedMsgId && chatActions.scrollToMessage) {
                                     chatActions.scrollToMessage(pinnedMsgId);
                                 }
