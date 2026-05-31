@@ -11,14 +11,17 @@ import React, {
 import {
     ActivityIndicator,
     Alert,
+    type LayoutChangeEvent,
     Modal,
     Pressable,
     StyleSheet,
     Text,
     View,
+    type ViewStyle,
 } from "react-native";
-import { AudioSession, VideoView } from "@livekit/react-native";
-import { Room, RoomEvent, Track, type VideoTrack as LiveKitVideoTrack } from "livekit-client";
+import { AudioSession } from "@livekit/react-native";
+import { RTCView } from "@livekit/react-native-webrtc";
+import { LocalVideoTrack, Room, RoomEvent, Track, TrackEvent, type VideoTrack as LiveKitVideoTrack } from "livekit-client";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../hooks/useAuth";
 import { callService, type CallSession, type CallType } from "../services/callService";
@@ -501,6 +504,89 @@ export const useCall = () => {
     return context;
 };
 
+const ROTATED_VIDEO_DIRECTION = "-90deg";
+
+const CallVideoRenderer = ({
+    track,
+    mirror,
+    zOrder,
+}: {
+    track: LiveKitVideoTrack;
+    mirror?: boolean;
+    zOrder: number;
+}) => {
+    const [mediaStream, setMediaStream] = useState(track.mediaStream);
+    const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+    const [videoSize, setVideoSize] = useState({ width: 0, height: 0 });
+
+    useEffect(() => {
+        setMediaStream(track.mediaStream);
+
+        if (track instanceof LocalVideoTrack) {
+            const handleRestarted = (nextTrack: Track | null) => {
+                setMediaStream(nextTrack?.mediaStream);
+            };
+
+            track.on(TrackEvent.Restarted, handleRestarted);
+            return () => {
+                track.off(TrackEvent.Restarted, handleRestarted);
+            };
+        }
+
+        return undefined;
+    }, [track]);
+
+    const handleLayout = useCallback((event: LayoutChangeEvent) => {
+        const { width, height } = event.nativeEvent.layout;
+        setContainerSize((current) => (
+            current.width === width && current.height === height
+                ? current
+                : { width, height }
+        ));
+    }, []);
+
+    const handleDimensionsChange = useCallback((event: { nativeEvent: { width: number; height: number } }) => {
+        const { width, height } = event.nativeEvent;
+        setVideoSize((current) => (
+            current.width === width && current.height === height
+                ? current
+                : { width, height }
+        ));
+    }, []);
+
+    const videoStyle = useMemo<ViewStyle>(() => {
+        const isContainerPortrait = containerSize.height > containerSize.width;
+        const isVideoLandscape = videoSize.width > videoSize.height;
+        const shouldRotate = isContainerPortrait && isVideoLandscape;
+
+        if (!shouldRotate || !containerSize.width || !containerSize.height) {
+            return styles.videoView;
+        }
+
+        return {
+            position: "absolute",
+            width: containerSize.height,
+            height: containerSize.width,
+            left: (containerSize.width - containerSize.height) / 2,
+            top: (containerSize.height - containerSize.width) / 2,
+            transform: [{ rotate: ROTATED_VIDEO_DIRECTION }],
+        };
+    }, [containerSize.height, containerSize.width, videoSize.height, videoSize.width]);
+
+    return (
+        <View style={styles.videoRenderer} onLayout={handleLayout}>
+            <RTCView
+                style={videoStyle}
+                streamURL={(mediaStream as any)?.toURL?.() ?? ""}
+                objectFit="cover"
+                mirror={mirror}
+                zOrder={zOrder}
+                onDimensionsChange={handleDimensionsChange}
+            />
+        </View>
+    );
+};
+
 const CallOverlay = () => {
     const context = useContext(CallContext);
     if (!context || context.state.status === "idle") return null;
@@ -540,10 +626,8 @@ const CallOverlay = () => {
                                         stageVideoTiles.length > 2 && styles.gridVideoTile,
                                     ]}
                                 >
-                                    <VideoView
-                                        style={styles.videoView}
-                                        videoTrack={tile.track}
-                                        objectFit="cover"
+                                    <CallVideoRenderer
+                                        track={tile.track}
                                         mirror={tile.isLocal}
                                         zOrder={index}
                                     />
@@ -556,10 +640,8 @@ const CallOverlay = () => {
                             ))}
                             {localVideoTile && remoteVideoTiles.length > 0 ? (
                                 <View style={[styles.videoTile, styles.pipVideoTile]}>
-                                    <VideoView
-                                        style={styles.videoView}
-                                        videoTrack={localVideoTile.track}
-                                        objectFit="cover"
+                                    <CallVideoRenderer
+                                        track={localVideoTile.track}
                                         mirror
                                         zOrder={10}
                                     />
@@ -692,6 +774,10 @@ const styles = StyleSheet.create({
         backgroundColor: "#111827",
         borderWidth: 1,
         borderColor: "rgba(255,255,255,0.08)",
+    },
+    videoRenderer: {
+        ...StyleSheet.absoluteFillObject,
+        overflow: "hidden",
     },
     videoView: {
         ...StyleSheet.absoluteFillObject,
