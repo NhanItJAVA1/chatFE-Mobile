@@ -59,6 +59,7 @@ const MainShell = () => {
     const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
     const [createdGroupId, setCreatedGroupId] = useState<string | null>(null);
     const [createdGroupData, setCreatedGroupData] = useState<any>(null);
+    const [groupChatVersion, setGroupChatVersion] = useState(0);
     const { isAuthenticated } = useAuth();
     const {
         requests,
@@ -113,6 +114,7 @@ const MainShell = () => {
                         },
                     }}
                     onBackPress={() => {
+                        setGroupChatVersion((version) => version + 1);
                         setActiveTab("chat");
                     }}
                 />
@@ -155,6 +157,7 @@ const MainShell = () => {
                 }
                 return (
                     <GroupChatScreen
+                        key={`${groupId}-${groupChatVersion}`}
                         route={{ params: { groupId } }}
                         navigation={{}}
                         onBackPress={() => {

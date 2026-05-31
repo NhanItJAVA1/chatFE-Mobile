@@ -363,6 +363,15 @@ export const useGroupChat = (): UseGroupChatReturn => {
                 setState((prev) => ({
                     ...prev,
                     settings: updated,
+                    group: prev.group
+                        ? {
+                            ...prev.group,
+                            settings: {
+                                ...prev.group.settings,
+                                ...updated,
+                            },
+                        }
+                        : prev.group,
                     isLoading: false,
                 }));
             } catch (err: any) {
@@ -504,9 +513,19 @@ export const useGroupChat = (): UseGroupChatReturn => {
             if (!data?.conversationId) return;
             setState((prev) => {
                 if (prev.group?._id !== data.conversationId) return prev;
+                const nextSettings = data.settings || prev.settings;
                 return {
                     ...prev,
-                    settings: data.settings || prev.settings,
+                    settings: nextSettings,
+                    group: prev.group
+                        ? {
+                            ...prev.group,
+                            settings: {
+                                ...prev.group.settings,
+                                ...(nextSettings || {}),
+                            },
+                        }
+                        : prev.group,
                 };
             });
         });

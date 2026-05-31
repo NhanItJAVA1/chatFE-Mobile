@@ -146,6 +146,11 @@ export type GroupSettings = {
     allowSendLink: boolean;
     requireApproval: boolean;
     allowMemberInvite: boolean;
+    utilityPermissions?: {
+        poll?: "all" | "admins";
+        notes?: "all" | "admins";
+        [key: string]: any;
+    };
 };
 
 export type Group = {
@@ -182,5 +187,69 @@ export type GroupResponse = {
         members?: GroupMember[];
         systemMessage?: any;
     };
+};
+
+// =====================================================
+// GROUP POLL TYPES
+// =====================================================
+
+export type PollStatus = "open" | "closed" | "expired" | "deleted";
+
+export type PollOption = {
+    id: string;
+    text: string;
+    voteCount: number;
+    votedUserIds?: string[];
+    createdBy?: string;
+    createdAt?: string;
+};
+
+export type Poll = {
+    id: string;
+    conversationId?: string;
+    groupId?: string;
+    question: string;
+    options: PollOption[];
+    totalVotes: number;
+    isMultipleChoice: boolean;
+    allowAddOption: boolean;
+    allowChangeVote?: boolean;
+    status?: PollStatus | string;
+    isClosed?: boolean;
+    pinned?: boolean;
+    isPinned?: boolean;
+    creatorId?: string;
+    createdBy?: string;
+    creatorName?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    expiresAt?: string | null;
+    lastVoteActivityMessageId?: string;
+};
+
+export type CreatePollRequest = {
+    question: string;
+    options: string[];
+    isMultipleChoice?: boolean;
+    allowAddOption?: boolean;
+    allowChangeVote?: boolean;
+    expiresAt?: string;
+};
+
+export type VotePollRequest = {
+    optionIds: string[];
+};
+
+export type AddPollOptionRequest = {
+    text: string;
+};
+
+export type PollSocketEvent = {
+    conversationId?: string;
+    groupId?: string;
+    pollId?: string;
+    userId?: string;
+    poll?: Poll;
+    [key: string]: any;
 };
 

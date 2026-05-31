@@ -258,4 +258,5 @@ export const tokenManager = {
     clearTokens,
     getAccessToken: getAuthToken,
     getRefreshToken,
+    refreshAccessToken,
 };

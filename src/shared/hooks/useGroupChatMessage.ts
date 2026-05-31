@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ConversationService, Conversation } from "../services/conversationService";
 import { SocketService, MessagePayload, TypingData } from "../services/socketService";
+import { PollService } from "../services/pollService";
 import { useAuth } from "./useAuth";
 import { saveMessagesToCache, loadMessagesFromCache } from "../utils/cacheUtils";
 import { useScrollToMessage } from "./useScrollToMessage";
+import type { AddPollOptionRequest, CreatePollRequest, Poll, VotePollRequest } from "@/types";
 
 const getMessageId = (message: MessagePayload): string => {
     return message._id || message.id || `${message.senderId}-${message.createdAt}`;
@@ -12,6 +14,170 @@ const getMessageId = (message: MessagePayload): string => {
 const getMessageTimestamp = (message: MessagePayload): number => {
     const parsedTime = Date.parse(message.updatedAt || message.createdAt || "");
     return Number.isFinite(parsedTime) ? parsedTime : 0;
+};
+
+const getPollId = (poll?: Poll | null): string => {
+    return poll?.id || "";
+};
+
+const isPollMessage = (message: MessagePayload): boolean => {
+    return message.type === "poll" || String(message.messageType || "").toLowerCase() === "poll" || !!message.pollId || !!message.poll;
+};
+
+const getMessagePollId = (message: MessagePayload): string => {
+    return message.poll?.id || message.pollId || (message as any).poll?._id || "";
+};
+
+const getSocketPollId = (event: any): string => {
+    return event?.pollId || event?.id || event?.poll?.id || event?.poll?._id || event?.data?.pollId || event?.data?.poll?.id || "";
+};
+
+const mergePolls = (incoming: Poll[], existing: Poll[]): Poll[] => {
+    const byId = new Map<string, Poll>();
+    existing.forEach((poll) => {
+        const id = getPollId(poll);
+        if (id) byId.set(id, poll);
+    });
+    incoming.forEach((poll) => {
+        const id = getPollId(poll);
+        if (id) byId.set(id, { ...(byId.get(id) || {}), ...poll });
+    });
+
+    return Array.from(byId.values()).sort((left, right) => {
+        const leftTime = Date.parse(left.updatedAt || left.createdAt || "");
+        const rightTime = Date.parse(right.updatedAt || right.createdAt || "");
+        return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+    });
+};
+
+const attachPollsToMessages = (messages: MessagePayload[], polls: Poll[]): MessagePayload[] => {
+    if (!messages.length || !polls.length) return messages;
+
+    const pollsById = new Map<string, Poll>();
+    polls.forEach((poll) => {
+        if (poll.id) pollsById.set(poll.id, poll);
+    });
+
+    return messages.map((message) => {
+        if (!isPollMessage(message)) return message;
+
+        const pollId = getMessagePollId(message);
+        const poll = pollId ? pollsById.get(pollId) : message.poll;
+        if (!poll) return message;
+
+        return {
+            ...message,
+            type: "poll",
+            messageType: "poll",
+            pollId: poll.id,
+            poll,
+        };
+    });
+};
+
+const mergePollMessagesIntoFeed = (
+    messages: MessagePayload[],
+    polls: Poll[],
+    conversationId: string
+): MessagePayload[] => {
+    const activePollIds = new Set(polls.map((poll) => poll.id).filter(Boolean));
+    const messagesWithoutStalePolls = messages.filter((message) => {
+        const pollId = getMessagePollId(message);
+        return !pollId || activePollIds.has(pollId);
+    });
+    const attached = attachPollsToMessages(messagesWithoutStalePolls, polls);
+    const existingPollIds = new Set(attached.map(getMessagePollId).filter(Boolean));
+    const missingPollMessages = polls
+        .filter((poll) => poll.id && !existingPollIds.has(poll.id))
+        .map((poll) => createPollMessage(poll, conversationId));
+
+    return missingPollMessages.length > 0
+        ? mergeUniqueMessages(missingPollMessages, attached)
+        : attached;
+};
+
+const collapsePollMessages = (messages: MessagePayload[]): MessagePayload[] => {
+    const seenPollIds = new Set<string>();
+
+    return messages.filter((message) => {
+        const pollId = getMessagePollId(message);
+        if (!pollId) return true;
+
+        if (seenPollIds.has(pollId)) {
+            return false;
+        }
+
+        seenPollIds.add(pollId);
+        return true;
+    });
+};
+
+const upsertMessage = (messages: MessagePayload[], incoming: MessagePayload): MessagePayload[] => {
+    const incomingId = getMessageId(incoming);
+    const exists = messages.some((message) => getMessageId(message) === incomingId);
+
+    return exists
+        ? messages.map((message) => getMessageId(message) === incomingId ? { ...message, ...incoming } : message)
+        : mergeUniqueMessages([incoming], messages);
+};
+
+const createPollMessage = (poll: Poll, conversationId: string): MessagePayload => {
+    const createdAt = poll.createdAt || new Date().toISOString();
+    const messageId = `poll-${poll.id}`;
+
+    return {
+        _id: messageId,
+        id: messageId,
+        conversationId: poll.conversationId || poll.groupId || conversationId,
+        senderId: poll.creatorId || poll.createdBy || "system",
+        senderName: poll.creatorName || "Bình chọn",
+        senderAvatar: "",
+        text: poll.question,
+        status: "sent",
+        createdAt,
+        updatedAt: poll.updatedAt || createdAt,
+        type: "poll",
+        messageType: "poll",
+        pollId: poll.id,
+        poll,
+    };
+};
+
+const normalizePollActivityMessage = (event: any, conversationId: string): MessagePayload | null => {
+    const raw = event?.systemMessage || event?.activityMessage || event?.message;
+    if (!raw) return null;
+
+    const messageId = raw._id || raw.id || raw.messageId;
+    const text = raw.text || raw.content || raw.message || raw.textPreview || "";
+    if (!messageId && !text) return null;
+
+    const createdAt = raw.createdAt || event?.createdAt || new Date().toISOString();
+
+    return {
+        ...raw,
+        _id: messageId || `poll-activity-${event?.pollId || event?.poll?.id || "unknown"}-${createdAt}`,
+        id: messageId || `poll-activity-${event?.pollId || event?.poll?.id || "unknown"}-${createdAt}`,
+        conversationId: raw.conversationId || event?.conversationId || conversationId,
+        senderId: raw.senderId || raw.userId || event?.userId || "system",
+        senderName: raw.senderName || raw.userName || event?.userName || "System",
+        senderAvatar: raw.senderAvatar || "",
+        text,
+        status: raw.status || "sent",
+        createdAt,
+        updatedAt: raw.updatedAt || createdAt,
+        type: "system" as const,
+    };
+};
+
+const upsertActivityMessage = (
+    messages: MessagePayload[],
+    message: MessagePayload
+): MessagePayload[] => {
+    return collapsePollMessages(enrichMessagesWithQuotedData(upsertMessage(messages, {
+        ...message,
+        type: (message.type || "system") as any,
+        text: message.text || (message as any).content || (message as any).message || "",
+    })));
 };
 
 const mergeUniqueMessages = (
@@ -211,6 +377,8 @@ export interface UseChatMessageState {
     pinnedMessages: MessagePayload[];
     pinnedMessageIndex: number;
     replyingTo: MessagePayload | null;
+    polls: Poll[];
+    pollsLoading: boolean;
 }
 
 export interface UseChatMessageActions {
@@ -230,6 +398,14 @@ export interface UseChatMessageActions {
     unpinMessage: (messageId: string) => Promise<void>;
     navigatePinnedMessages: (direction: "prev" | "next") => void;
     setReplyingTo: (message: MessagePayload | null) => void;
+    loadPolls: () => Promise<void>;
+    createPoll: (payload: CreatePollRequest) => Promise<Poll>;
+    votePoll: (pollId: string, payload: VotePollRequest) => Promise<void>;
+    lockPoll: (pollId: string) => Promise<void>;
+    pinPoll: (pollId: string) => Promise<void>;
+    unpinPoll: (pollId: string) => Promise<void>;
+    deletePoll: (pollId: string) => Promise<void>;
+    addPollOption: (pollId: string, payload: AddPollOptionRequest) => Promise<void>;
     retryLoadConversation: () => Promise<void>;
     /** Scroll the FlatList to the given message and briefly highlight it */
     scrollToMessage: (messageId: string) => Promise<boolean>;
@@ -318,6 +494,8 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
         pinnedMessages: [],
         pinnedMessageIndex: 0,
         replyingTo: null,
+        polls: [],
+        pollsLoading: false,
     });
 
     const fetchMissingMessage = useCallback(async (messageId: string): Promise<boolean> => {
@@ -483,6 +661,137 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             return newState;
         });
     }, [buildMessageIndexMap]);
+
+    const upsertPollInState = useCallback((poll: Poll, conversationId?: string) => {
+        if (!poll?.id) return;
+
+        setState((prev) => {
+            const convId = conversationId || prev.conversation?._id || prev.conversation?.id || groupId;
+            const nextPolls = mergePolls([poll], prev.polls);
+            const hasPollMessage = prev.messages.some((message) => getMessagePollId(message) === poll.id);
+            const updatedMessages: MessagePayload[] = prev.messages.map((message): MessagePayload => {
+                if (getMessagePollId(message) !== poll.id) return message;
+                return {
+                    ...message,
+                    type: "poll" as const,
+                    messageType: "poll",
+                    pollId: poll.id,
+                    poll,
+                    text: poll.question,
+                    updatedAt: poll.updatedAt || message.updatedAt,
+                };
+            });
+
+            const nextMessages = hasPollMessage
+                ? collapsePollMessages(mergeUniqueMessages([], updatedMessages))
+                : collapsePollMessages(mergeUniqueMessages([createPollMessage(poll, convId)], updatedMessages));
+
+            return {
+                ...prev,
+                polls: nextPolls,
+                messages: nextMessages,
+            };
+        });
+    }, [groupId]);
+
+    const removePollFromState = useCallback((pollId: string) => {
+        if (!pollId) return;
+
+        setState((prev) => ({
+            ...prev,
+            polls: prev.polls.filter((poll) => poll.id !== pollId),
+            messages: prev.messages.filter((message) => getMessagePollId(message) !== pollId),
+        }));
+    }, []);
+
+    const loadPolls = useCallback(async () => {
+        setState((prev) => ({ ...prev, pollsLoading: true }));
+        try {
+            const polls = await PollService.getPolls(groupId);
+            setState((prev) => {
+                const nextPolls = mergePolls(polls, prev.polls);
+                const conversationId = prev.conversation?._id || prev.conversation?.id || groupId;
+                return {
+                    ...prev,
+                    polls: nextPolls,
+                    messages: collapsePollMessages(mergePollMessagesIntoFeed(prev.messages, nextPolls, conversationId)),
+                    pollsLoading: false,
+                };
+            });
+        } catch (error: any) {
+            console.warn("[useGroupChatMessage] Failed to load polls:", error?.message);
+            setState((prev) => ({ ...prev, pollsLoading: false }));
+        }
+    }, [groupId]);
+
+    const createPoll = useCallback(async (payload: CreatePollRequest): Promise<Poll> => {
+        const poll = await PollService.createPoll(groupId, payload);
+        upsertPollInState(poll);
+        return poll;
+    }, [groupId, upsertPollInState]);
+
+    const votePoll = useCallback(async (pollId: string, payload: VotePollRequest) => {
+        const poll = await PollService.vote(groupId, pollId, payload);
+        upsertPollInState(poll);
+    }, [groupId, upsertPollInState]);
+
+    const lockPoll = useCallback(async (pollId: string) => {
+        const poll = await PollService.lock(groupId, pollId);
+        upsertPollInState(poll);
+    }, [groupId, upsertPollInState]);
+
+    const pinPoll = useCallback(async (pollId: string) => {
+        setState((prev) => {
+            const poll = prev.polls.find((candidate) => candidate.id === pollId);
+            return poll ? {
+                ...prev,
+                polls: mergePolls([{ ...poll, pinned: true, isPinned: true }], prev.polls),
+                messages: prev.messages.map((message) =>
+                    getMessagePollId(message) === pollId && message.poll
+                        ? { ...message, poll: { ...message.poll, pinned: true, isPinned: true } }
+                        : message
+                ),
+            } : prev;
+        });
+        const poll = await PollService.pin(groupId, pollId);
+        upsertPollInState(poll);
+    }, [groupId, upsertPollInState]);
+
+    const unpinPoll = useCallback(async (pollId: string) => {
+        setState((prev) => {
+            const poll = prev.polls.find((candidate) => candidate.id === pollId);
+            return poll ? {
+                ...prev,
+                polls: mergePolls([{ ...poll, pinned: false, isPinned: false }], prev.polls),
+                messages: prev.messages.map((message) =>
+                    getMessagePollId(message) === pollId && message.poll
+                        ? { ...message, poll: { ...message.poll, pinned: false, isPinned: false } }
+                        : message
+                ),
+            } : prev;
+        });
+        const poll = await PollService.unpin(groupId, pollId);
+        upsertPollInState(poll);
+    }, [groupId, upsertPollInState]);
+
+    const deletePoll = useCallback(async (pollId: string) => {
+        try {
+            await PollService.delete(groupId, pollId);
+            removePollFromState(pollId);
+        } catch (error: any) {
+            const message = String(error?.message || "").toLowerCase();
+            if (message.includes("404") || message.includes("not found")) {
+                removePollFromState(pollId);
+                return;
+            }
+            throw error;
+        }
+    }, [groupId, removePollFromState]);
+
+    const addPollOption = useCallback(async (pollId: string, payload: AddPollOptionRequest) => {
+        const poll = await PollService.addOption(groupId, pollId, payload);
+        upsertPollInState(poll);
+    }, [groupId, upsertPollInState]);
 
     // Keep scroll-index map fresh whenever messages change
     useEffect(() => {
@@ -1009,11 +1318,28 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     isLoading: false,
                 });
 
+                PollService.getPolls(groupId).then((polls) => {
+                    setState((prev) => {
+                        const nextPolls = mergePolls(polls, prev.polls);
+                        return {
+                            ...prev,
+                            polls: nextPolls,
+                            messages: collapsePollMessages(mergePollMessagesIntoFeed(prev.messages, nextPolls, conversationId)),
+                            pollsLoading: false,
+                        };
+                    });
+                }).catch((error: any) => {
+                    console.warn("[useGroupChatMessage] Failed to load polls:", error?.message);
+                });
+
                 // Setup socket listeners for group messages
                 SocketService.onMessage((message: MessagePayload) => {
                     if ((message.conversationId === conversationId || message.conversationId === groupId) && messagesStateRef.current) {
                         const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
-                        const enriched = enrichMessagesWithQuotedData(merged);
+                    const enriched = collapsePollMessages(attachPollsToMessages(
+                        enrichMessagesWithQuotedData(merged),
+                        messagesStateRef.current.polls
+                    ));
                         console.log('[useGroupChatMessage] onMessage - enriched quoted fields:', {
                             quotedMessageId: message.quotedMessageId,
                             quotedMessageSenderName: message.quotedMessageSenderName,
@@ -1034,14 +1360,23 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                         !!currentUserId &&
                         (message as any).deletedForUserIds.includes(currentUserId);
 
+                    const messageExists = messagesStateRef.current.messages.some((msg) => getMessageId(msg) === messageId);
+                    const isDeletedEvent = (message as any).status === "deleted" || !!(message as any).deletedAt;
                     const updatedMessages = deletedForMe
                         ? messagesStateRef.current.messages.filter((msg) => getMessageId(msg) !== messageId)
-                        : messagesStateRef.current.messages.map((msg) =>
-                            getMessageId(msg) !== messageId ? msg : { ...msg, ...message }
-                        );
+                        : messageExists
+                            ? messagesStateRef.current.messages.map((msg) =>
+                                getMessageId(msg) !== messageId ? msg : { ...msg, ...message }
+                            )
+                            : isDeletedEvent
+                                ? messagesStateRef.current.messages
+                                : mergeUniqueMessages([message], messagesStateRef.current.messages);
 
                     // Re-enrich in case quoted data was updated
-                    const enriched = enrichMessagesWithQuotedData(updatedMessages);
+                    const enriched = collapsePollMessages(attachPollsToMessages(
+                        enrichMessagesWithQuotedData(updatedMessages),
+                        messagesStateRef.current.polls
+                    ));
 
                     updateStateAndCache({ messages: enriched });
                 });
@@ -1056,7 +1391,10 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     if (messagesStateRef.current) {
                         console.log('[useGroupChatMessage] onMessageQuoted - adding and enriching');
                         const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
-                        const enriched = enrichMessagesWithQuotedData(merged);
+                        const enriched = collapsePollMessages(attachPollsToMessages(
+                            enrichMessagesWithQuotedData(merged),
+                            messagesStateRef.current.polls
+                        ));
                         updateStateAndCache({ messages: enriched });
                     }
                 });
@@ -1116,6 +1454,56 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     });
                 });
 
+                SocketService.onPollEvent((event) => {
+                    const incomingConvId = String(event.conversationId || event.groupId || event.poll?.conversationId || event.poll?.groupId || "");
+                    if (incomingConvId && incomingConvId !== String(conversationId) && incomingConvId !== String(groupId)) {
+                        return;
+                    }
+
+                    const activityMessage = normalizePollActivityMessage(event, conversationId);
+                    if (activityMessage) {
+                        setState((prev) => {
+                            return {
+                                ...prev,
+                                messages: upsertActivityMessage(prev.messages, activityMessage),
+                            };
+                        });
+                    } else if (event.type === "poll:vote" && event.poll?.lastVoteActivityMessageId) {
+                        ConversationService.getMessageById(event.poll.lastVoteActivityMessageId)
+                            .then((message) => {
+                                if (!message) return;
+                                setState((prev) => ({
+                                    ...prev,
+                                    messages: upsertActivityMessage(prev.messages, {
+                                        ...message,
+                                        type: (message.type || "system") as any,
+                                    } as MessagePayload),
+                                }));
+                            })
+                            .catch((error: any) => {
+                                console.warn("[useGroupChatMessage] Failed to fetch poll activity message:", error?.message);
+                            });
+                    }
+
+                    const pollId = getSocketPollId(event);
+                    if (event.type === "poll:deleted") {
+                        if (pollId) {
+                            removePollFromState(pollId);
+                        }
+                        return;
+                    }
+
+                    if (event.poll) {
+                        upsertPollInState(event.poll, conversationId);
+                    } else if (pollId) {
+                        PollService.getPoll(groupId, pollId)
+                            .then((poll) => upsertPollInState(poll, conversationId))
+                            .catch((error: any) => {
+                                console.warn("[useGroupChatMessage] Failed to refresh poll event:", error?.message);
+                            });
+                    }
+                });
+
                 // Load pinned messages
                 try {
                     const pinnedMsgs = await SocketService.getPinnedMessages(conversationId);
@@ -1149,8 +1537,9 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             SocketService.offTyping();
             SocketService.offPinnedMessage();
             SocketService.offMessageQuoted();
+            SocketService.offPollEvent();
         };
-    }, [groupId, token, user?._id, updateStateAndCache]);
+    }, [groupId, token, user?._id, updateStateAndCache, upsertPollInState, removePollFromState]);
 
     // Keep the scroll-index map in sync whenever messages change
     useEffect(() => {
@@ -1195,6 +1584,14 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             unpinMessage,
             navigatePinnedMessages,
             setReplyingTo,
+            loadPolls,
+            createPoll,
+            votePoll,
+            lockPoll,
+            pinPoll,
+            unpinPoll,
+            deletePoll,
+            addPollOption,
             retryLoadConversation,
             scrollToMessage,
         },

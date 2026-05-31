@@ -1,6 +1,7 @@
 import { io, Socket } from "socket.io-client";
 import { getApiBaseUrl } from "../runtime";
-import { apiCall } from "./api";
+import { apiCall, tokenManager } from "./api";
+import type { Poll, PollSocketEvent } from "@/types";
 
 // Remove /v1 suffix from API URL to get base socket URL
 const SOCKET_URL = getApiBaseUrl().replace("/v1", "");
@@ -30,7 +31,10 @@ export interface MessagePayload {
     status: "sent" | "delivered" | "seen";
     createdAt: string;
     updatedAt: string;
-    type?: "text" | "image" | "file" | "link" | "system";
+    type?: "text" | "image" | "file" | "link" | "system" | "poll";
+    messageType?: string;
+    pollId?: string;
+    poll?: Poll;
     links?: string[];
     deletedForUserIds?: string[];
     deletedBy?: string;
@@ -94,22 +98,27 @@ export interface GroupOwnerTransferEvent extends GroupEventData {
 export class SocketService {
     private static socket: Socket | null = null;
     private static typingTimeout: ReturnType<typeof setTimeout> | null = null;
+    private static currentToken: string | null = null;
+    private static isRefreshingSocketToken = false;
+    private static joinedConversationIds = new Set<string>();
 
-    /**
-     * Connect to Socket.IO server
-     */
-    static connect(token: string): Socket {
-        if (this.socket?.connected) {
-            console.log('[SocketService] Socket already connected');
-            return this.socket;
+    private static isAuthError(error: any): boolean {
+        const message = String(error?.message || error || "").toLowerCase();
+        return message.includes("authentication") || message.includes("invalid token") || message.includes("jwt") || message.includes("unauthorized");
+    }
+
+    private static createSocket(token: string): Socket {
+        this.currentToken = token;
+
+        if (this.socket) {
+            this.socket.removeAllListeners();
+            this.socket.disconnect();
         }
 
-        this.socket = io(SOCKET_URL + SOCKET_NAMESPACE, {
-            // Try Authorization header format first
+        const socket = io(SOCKET_URL + SOCKET_NAMESPACE, {
             extraHeaders: {
                 Authorization: `Bearer ${token}`,
             },
-            // Also try auth object as fallback
             auth: {
                 token,
             },
@@ -120,34 +129,110 @@ export class SocketService {
             reconnectionDelayMax: 5000,
         });
 
-        // Connection events
-        this.socket.on("connect", () => {
-            // Connected
-        });
-        this.socket.on("disconnect", (reason: string) => {
-            console.warn('[SocketService] Socket disconnected:', reason);
-        });
-        this.socket.on("connect_error", (error: any) => {
-            console.error('[SocketService] Socket connection error:', error?.message || error);
+        this.socket = socket;
+
+        socket.on("connect", () => {
+            console.log("[SocketService] Socket connected");
+            this.rejoinKnownConversations();
         });
 
-        // Debug: Log all events received
-        const originalEmit = this.socket.on;
-        const self = this;
-        this.socket.on = function (eventName: string, callback: any) {
+        socket.on("disconnect", (reason: string) => {
+            console.warn("[SocketService] Socket disconnected:", reason);
+        });
+
+        socket.on("connect_error", (error: any) => {
+            console.error("[SocketService] Socket connection error:", error?.message || error);
+            if (this.isAuthError(error)) {
+                this.refreshTokenAndReconnect().catch((refreshError) => {
+                    console.error("[SocketService] Socket token refresh failed:", refreshError?.message || refreshError);
+                });
+            }
+        });
+
+        const originalOn = socket.on;
+        socket.on = function (eventName: string, callback: any) {
             const wrappedCallback = (...args: any[]) => {
                 if (eventName !== "receiveMessage" && eventName !== "messageSeen" && !eventName.includes("reconnect")) {
-                    console.log('[SocketService] EVENT RECEIVED:', eventName, {
+                    console.log("[SocketService] EVENT RECEIVED:", eventName, {
                         argsCount: args.length,
-                        firstArg: typeof args[0] === 'object' ? Object.keys(args[0]).slice(0, 3) : typeof args[0],
+                        firstArg: typeof args[0] === "object" ? Object.keys(args[0]).slice(0, 3) : typeof args[0],
                     });
                 }
                 callback(...args);
             };
-            return originalEmit.call(this, eventName, wrappedCallback);
+            return originalOn.call(this, eventName, wrappedCallback);
         } as any;
 
-        return this.socket;
+        return socket;
+    }
+
+    private static async refreshTokenAndReconnect(): Promise<void> {
+        if (this.isRefreshingSocketToken) {
+            return;
+        }
+
+        this.isRefreshingSocketToken = true;
+
+        try {
+            const storedToken = await tokenManager.getAccessToken();
+            let nextToken = storedToken && storedToken !== this.currentToken ? storedToken : null;
+
+            if (!nextToken) {
+                const refreshed = await tokenManager.refreshAccessToken();
+                if (!refreshed) {
+                    throw new Error("Unable to refresh socket token");
+                }
+                nextToken = await tokenManager.getAccessToken();
+            }
+
+            if (!nextToken) {
+                throw new Error("No refreshed socket token available");
+            }
+
+            console.log("[SocketService] Reconnecting socket with refreshed token");
+            this.currentToken = nextToken;
+            if (this.socket) {
+                this.socket.auth = { token: nextToken };
+                (this.socket.io.opts as any).extraHeaders = {
+                    ...((this.socket.io.opts as any).extraHeaders || {}),
+                    Authorization: `Bearer ${nextToken}`,
+                };
+                this.socket.disconnect();
+                this.socket.connect();
+            } else {
+                this.createSocket(nextToken);
+            }
+        } finally {
+            this.isRefreshingSocketToken = false;
+        }
+    }
+
+    private static rejoinKnownConversations(): void {
+        if (!this.socket?.connected || this.joinedConversationIds.size === 0) {
+            return;
+        }
+
+        this.joinedConversationIds.forEach((conversationId) => {
+            this.socket?.emit("joinGroup", { conversationId }, (response: any) => {
+                if (response?.success) {
+                    console.log("[SocketService] ✓ Rejoined conversation:", conversationId);
+                } else {
+                    console.warn("[SocketService] Failed to rejoin conversation:", conversationId, response?.error);
+                }
+            });
+        });
+    }
+
+    /**
+     * Connect to Socket.IO server
+     */
+    static connect(token: string): Socket {
+        if (this.socket?.connected) {
+            console.log('[SocketService] Socket already connected');
+            return this.socket;
+        }
+
+        return this.createSocket(token);
     }
 
     /**
@@ -157,6 +242,7 @@ export class SocketService {
         if (this.socket) {
             this.socket.disconnect();
             this.socket = null;
+            this.currentToken = null;
             if (this.typingTimeout) {
                 clearTimeout(this.typingTimeout);
             }
@@ -186,29 +272,50 @@ export class SocketService {
         }
 
         return new Promise((resolve, reject) => {
-            if (!this.socket) {
+            const startingSocket = this.socket;
+            if (!startingSocket) {
                 reject(new Error("Socket not initialized"));
                 return;
             }
 
+            let settled = false;
             const timeout = setTimeout(() => {
+                cleanup();
                 reject(new Error("Socket connection timeout"));
-            }, timeoutMs);
+            }, Math.max(timeoutMs, 10000));
 
-            this.socket.once("connect", () => {
+            const cleanup = () => {
+                if (settled) return;
+                settled = true;
                 clearTimeout(timeout);
-                console.log('[SocketService] Resolved connection promise');
+                startingSocket.off("connect", onConnect);
+                startingSocket.off("connect_error", onError);
+                clearInterval(pollInterval);
+            };
+
+            const onConnect = () => {
+                cleanup();
+                console.log("[SocketService] Resolved connection promise");
                 resolve();
-            });
+            };
 
-            // Also reject on connection error
             const onError = (error: any) => {
-                clearTimeout(timeout);
-                this.socket?.removeListener("connect_error", onError);
+                if (this.isAuthError(error)) {
+                    return;
+                }
+                cleanup();
                 reject(new Error(`Socket connection error: ${error?.message || error}`));
             };
 
-            this.socket.on("connect_error", onError);
+            const pollInterval = setInterval(() => {
+                if (this.socket?.connected) {
+                    cleanup();
+                    resolve();
+                }
+            }, 100);
+
+            startingSocket.once("connect", onConnect);
+            startingSocket.on("connect_error", onError);
         });
     }
 
@@ -233,6 +340,7 @@ export class SocketService {
                 this.socket.emit("joinGroup", { conversationId }, (response: any) => {
                     if (response?.success) {
                         console.log('[SocketService] ✓ Joined conversation:', conversationId);
+                        this.joinedConversationIds.add(conversationId);
                         resolve(response);
                     } else {
                         console.error('[SocketService] Failed to join conversation:', response?.error);
@@ -257,8 +365,9 @@ export class SocketService {
             }
 
             this.socket.emit("leaveGroup", { conversationId }, (response: any) => {
-                if (response?.success) {
-                    resolve(response);
+            if (response?.success) {
+                this.joinedConversationIds.delete(conversationId);
+                resolve(response);
                 } else {
                     reject(new Error(response?.error || "Failed to leave"));
                 }
@@ -430,9 +539,11 @@ export class SocketService {
 
         console.log('[SocketService] Setting up "receiveMessage" listener');
         this.socket.on("receiveMessage", (data: any) => {
-            const message = data.message || data;
+            const message = data.message || data.systemMessage || data.activityMessage || data;
             console.log('[SocketService] EVENT FIRED: receiveMessage', {
                 hasMessage: !!data.message,
+                hasSystemMessage: !!data.systemMessage,
+                hasActivityMessage: !!data.activityMessage,
                 hasData: !!data,
                 dataKeys: Object.keys(data || {}),
             });
@@ -1497,6 +1608,50 @@ export class SocketService {
         if (this.socket) {
             this.socket.off("message:pinned");
             this.socket.off("message:unpinned");
+        }
+    }
+
+    /**
+     * Listen for group poll events
+     */
+    static onPollEvent(callback: (event: PollSocketEvent & { type: string }) => void): void {
+        if (!this.socket) {
+            console.warn("[SocketService] Socket not available for onPollEvent");
+            return;
+        }
+
+        const eventNames = [
+            "poll:new",
+            "poll:vote",
+            "poll:closed",
+            "poll:locked",
+            "poll:pinned",
+            "poll:unpinned",
+            "poll:deleted",
+            "poll:option_added",
+        ];
+
+        eventNames.forEach((eventName) => {
+            this.socket?.on(eventName, (data: PollSocketEvent) => {
+                console.log(`[SocketService] RECEIVED ${eventName} event:`, data);
+                callback({ ...data, type: eventName });
+            });
+        });
+    }
+
+    /**
+     * Remove group poll listeners
+     */
+    static offPollEvent(): void {
+        if (this.socket) {
+            this.socket.off("poll:new");
+            this.socket.off("poll:vote");
+            this.socket.off("poll:closed");
+            this.socket.off("poll:locked");
+            this.socket.off("poll:pinned");
+            this.socket.off("poll:unpinned");
+            this.socket.off("poll:deleted");
+            this.socket.off("poll:option_added");
         }
     }
 

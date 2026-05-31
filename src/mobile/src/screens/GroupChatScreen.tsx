@@ -27,7 +27,7 @@ import { useCall } from "../../../shared/context";
 import { GroupChatService } from "../../../shared/services/groupChatService";
 import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
-import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage } from "../components";
+import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage, PollCard, CreatePollModal } from "../components";
 import { JUMBO_EMOJI_ASSETS } from "../components/AnimatedEmojiMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import MediaMessage from "../components/MediaMessage";
@@ -136,6 +136,26 @@ const groupMessagesForGallery = (messages: any[]): any[] => {
     return groupedMessages;
 };
 
+const getRenderablePollId = (message: any): string => {
+    return message?.poll?.id || message?.pollId || message?.poll?._id || "";
+};
+
+const keepLatestPollCards = (messages: any[]): any[] => {
+    const seenPollIds = new Set<string>();
+
+    return messages.filter((message) => {
+        const pollId = getRenderablePollId(message);
+        if (!pollId) return true;
+
+        if (seenPollIds.has(pollId)) {
+            return false;
+        }
+
+        seenPollIds.add(pollId);
+        return true;
+    });
+};
+
 const extractMemberIds = (groupInfo: any): string[] => {
     const rawMembers = groupInfo?.members || [];
 
@@ -194,6 +214,8 @@ export const GroupChatScreen: React.FC<{
     const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
     const [selectedImageIndex, setSelectedImageIndex] = useState(0);
     const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
+    const [showCreatePollModal, setShowCreatePollModal] = useState(false);
+    const [isCreatingPoll, setIsCreatingPoll] = useState(false);
 
     // Refs
     // flatListRef comes from useGroupChatMessage → useScrollToMessage (enables scrollToMessage)
@@ -215,6 +237,43 @@ export const GroupChatScreen: React.FC<{
     useEffect(() => {
         onBackPressRef.current = onBackPress;
     }, [onBackPress]);
+
+    useEffect(() => {
+        if (!groupId || !token) {
+            return;
+        }
+
+        if (!SocketService.isConnected()) {
+            SocketService.connect(token);
+        }
+
+        const socket = SocketService.getSocket();
+        const normalizedGroupId = String(groupId);
+
+        const handleSettingsUpdated = (data: any) => {
+            const conversationId = String(
+                data?.conversationId ||
+                data?.groupId ||
+                data?.conversation?._id ||
+                data?.conversation?.id ||
+                ""
+            );
+
+            if (conversationId !== normalizedGroupId) {
+                return;
+            }
+
+            groupActions.loadGroupInfo(groupId).catch((error: any) => {
+                console.warn("[GroupChatScreen] Failed to refresh group settings:", error?.message);
+            });
+        };
+
+        socket?.on("group:settings_updated", handleSettingsUpdated);
+
+        return () => {
+            socket?.off("group:settings_updated", handleSettingsUpdated);
+        };
+    }, [groupId, token, groupActions]);
 
     // Load group and messages on mount
     useEffect(() => {
@@ -759,6 +818,36 @@ export const GroupChatScreen: React.FC<{
 
     const hasSendableContent = draftMedia.length > 0 || messageText.trim().length > 0;
 
+    const currentUserIds = useMemo(
+        () => [user?.id, (user as any)?._id, (user as any)?.userId]
+            .filter(Boolean)
+            .map((id) => String(id)),
+        [user?.id, (user as any)?._id, (user as any)?.userId]
+    );
+
+    const isCurrentUserOwner = currentUserIds.includes(String(groupState.group?.ownerId || ""));
+    const isCurrentUserAdmin = (groupState.group?.admins || []).some((id: any) => currentUserIds.includes(String(id)));
+    const pollPermission = (groupState.group?.settings as any)?.utilityPermissions?.poll || "all";
+    const canCreatePoll = pollPermission === "all" || isCurrentUserOwner || isCurrentUserAdmin;
+
+    const canManagePoll = useCallback((poll: any) => {
+        const creatorId = String(poll?.creatorId || poll?.createdBy || "");
+        return isCurrentUserOwner || isCurrentUserAdmin || (!!creatorId && currentUserIds.includes(creatorId));
+    }, [currentUserIds, isCurrentUserAdmin, isCurrentUserOwner]);
+
+    const handleCreatePoll = useCallback(async (payload: any) => {
+        try {
+            setIsCreatingPoll(true);
+            await actionsRef.current?.createPoll(payload);
+            setShowCreatePollModal(false);
+            scrollToLatestMessage(true);
+        } catch (error: any) {
+            Alert.alert("Lỗi", error?.message || "Không thể tạo bình chọn");
+        } finally {
+            setIsCreatingPoll(false);
+        }
+    }, [scrollToLatestMessage]);
+
     const handleSendMessage = useCallback(async () => {
         const trimmedText = messageText.trim();
 
@@ -1001,9 +1090,50 @@ export const GroupChatScreen: React.FC<{
 
     const renderMessage = useCallback(
         ({ item }: any) => {
-            // Check if it's a system message
-            if (item.isSystemMessage || item.type === "system") {
-                return <SystemMessageBubble text={item.text} />;
+            const itemType = String(item.type || item.messageType || "").toLowerCase();
+            const pollId = item.poll?.id || item.pollId;
+            const poll = item.poll || chatState.polls.find((candidate: any) => candidate.id === pollId);
+
+            if (itemType === "poll" || poll) {
+                if (!poll) {
+                    return null;
+                }
+
+                const messageId = item._id || item.id || `poll-${poll.id}`;
+                const isHighlighted = !!messageId && messageId === highlightedMessageId;
+
+                return (
+                    <HighlightableMessage
+                        isHighlighted={isHighlighted}
+                        style={[
+                            styles.pollWidgetRow,
+                            isHighlighted && styles.messageHighlighted,
+                        ]}
+                    >
+                        <PollCard
+                            poll={poll}
+                            currentUserId={currentUserId}
+                            canManage={canManagePoll(poll)}
+                            members={groupState.members}
+                            onVote={(targetPollId, optionIds) => actionsRef.current.votePoll(targetPollId, { optionIds })}
+                            onLock={(targetPollId) => actionsRef.current.lockPoll(targetPollId)}
+                            onPin={(targetPollId) => actionsRef.current.pinPoll(targetPollId)}
+                            onUnpin={(targetPollId) => actionsRef.current.unpinPoll(targetPollId)}
+                            onDelete={(targetPollId) => actionsRef.current.deletePoll(targetPollId)}
+                            onAddOption={(targetPollId, text) => actionsRef.current.addPollOption(targetPollId, { text })}
+                        />
+                    </HighlightableMessage>
+                );
+            }
+
+            // Check if it's a system/activity message
+            if (
+                item.isSystemMessage ||
+                itemType === "system" ||
+                itemType === "activity" ||
+                String(item.messageType || "").toLowerCase() === "system"
+            ) {
+                return <SystemMessageBubble text={item.text || item.content || item.message || ""} />;
             }
 
             // Resolve quoted message: use existing quotedMessage OR lookup by quotedMessageId
@@ -1218,7 +1348,7 @@ export const GroupChatScreen: React.FC<{
                 </HighlightableMessage>
             );
         },
-        [user?.id, handleMessageLongPress, groupState.members, openImageViewer, messageMap, highlightedMessageId]
+        [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, groupState.members, openImageViewer, messageMap, highlightedMessageId]
     );
 
     const handleViewableItemsChanged = useCallback(
@@ -1249,7 +1379,7 @@ export const GroupChatScreen: React.FC<{
     });
 
     const renderableMessages = useMemo(
-        () => groupMessagesForGallery(chatState.messages),
+        () => groupMessagesForGallery(keepLatestPollCards(chatState.messages)),
         [chatState.messages]
     );
 
@@ -1311,6 +1441,19 @@ export const GroupChatScreen: React.FC<{
                             color={callState.status === "idle" ? colors.text : colors.textMuted}
                         />
                     </Pressable>
+                    {canCreatePoll && (
+                        <Pressable
+                            style={styles.headerIconButton}
+                            onPress={() => setShowCreatePollModal(true)}
+                            hitSlop={8}
+                        >
+                            <Ionicons
+                                name="stats-chart-outline"
+                                size={24}
+                                color={colors.text}
+                            />
+                        </Pressable>
+                    )}
                     <Pressable
                         style={styles.headerIconButton}
                         onPress={onAddMembersPress}
@@ -1630,6 +1773,13 @@ export const GroupChatScreen: React.FC<{
                 }}
             />
 
+            <CreatePollModal
+                visible={showCreatePollModal}
+                isSubmitting={isCreatingPoll}
+                onDismiss={() => setShowCreatePollModal(false)}
+                onSubmit={handleCreatePoll}
+            />
+
             {allViewerImages.length > 0 && (
                 <Modal
                     visible={allViewerImages.length > 0}
@@ -1829,6 +1979,11 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "flex-end",
         gap: 8,
+    },
+    pollWidgetRow: {
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: 6,
     },
     messageHighlighted: {
         backgroundColor: "rgba(255, 200, 0, 0.18)",
