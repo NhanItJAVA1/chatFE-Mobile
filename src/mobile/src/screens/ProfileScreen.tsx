@@ -57,7 +57,7 @@ export const ProfileScreen = () => {
 
     // Initialize upload hook with callbacks
     const { uploadFile, isUploading, progress, error: uploadError, clearError } = useMediaUpload({
-        onProgress: (event) => {        },
+        onProgress: (event) => { },
         onSuccess: (session) => {            // Update profile with the uploaded URL
             if (session.presignedUrl) {
                 setEditData((current) => ({
@@ -111,7 +111,8 @@ export const ProfileScreen = () => {
             if (!result.canceled) {
                 const imageUri = result.assets[0].uri;
                 setSelectedImage(imageUri);
-                setEditData((current) => ({ ...current, avatarUrl: imageUri }));            }
+                setEditData((current) => ({ ...current, avatarUrl: imageUri }));
+            }
         } catch (error: any) {
             console.error("Failed to pick image:", error);
             Alert.alert("Error", "Failed to pick image");
@@ -123,14 +124,14 @@ export const ProfileScreen = () => {
      */
     const handleUploadImage = async (imageUri: string) => {
         try {
-            setIsCompressing(true);            const imageBlob = await uriToBlob(imageUri);
+            setIsCompressing(true); const imageBlob = await uriToBlob(imageUri);
 
             // Create File object for upload
             const filename = imageUri.split("/").pop() || "avatar.jpg";
             const file = new File([imageBlob], filename, { type: "image/jpeg" });
             // Compress image: 80% quality, max 1920px
             const { compressedFile } = await compressImage(file, 0.8, 1920);
-            setIsCompressing(false);            await uploadFile(compressedFile, "IMAGE");
+            setIsCompressing(false); await uploadFile(compressedFile, "IMAGE");
 
         } catch (error: any) {
             setIsCompressing(false);
@@ -207,7 +208,7 @@ export const ProfileScreen = () => {
 
             if (profileData.avatarUrl) {
                 updateData.avatarUrl = profileData.avatarUrl;
-            }            await updateProfile(updateData);            setIsEditing(false);
+            } await updateProfile(updateData); setIsEditing(false);
             setSelectedImage(null);
             Alert.alert("Success", "Profile updated successfully");
         } catch (err: any) {
@@ -530,7 +531,7 @@ export const ProfileScreen = () => {
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: "transparent",
     },
     profileContent: {
         paddingHorizontal: 16,
@@ -549,9 +550,9 @@ const styles = StyleSheet.create({
         width: 52,
         height: 52,
         borderRadius: 26,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceSoftTransparent,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: colors.overlayWhite10,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -559,9 +560,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 18,
         paddingVertical: 10,
         borderRadius: 20,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceSoftTransparent,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: colors.overlayWhite10,
     },
     profileEditText: {
         color: colors.text,

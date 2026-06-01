@@ -539,30 +539,36 @@ export const GroupChatScreen: React.FC<{
     }, []);
 
     const handlePickImage = useCallback(async () => {
-        try {            const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (!permissionResult.granted) {                Alert.alert(
+        try {
+            const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!permissionResult.granted) {
+                Alert.alert(
                     "Yêu cầu quyền",
                     "Chúng tôi cần quyền truy cập thư viện ảnh. Vui lòng bật nó trong cài đặt."
                 );
                 return;
-            }            try {
+            } try {
                 const result = await ImagePicker.launchImageLibraryAsync({
                     mediaTypes: ['images'],
                     allowsMultipleSelection: true,
                     selectionLimit: 0,
                 } as any);
-                if (result.canceled) {                    return;
+                if (result.canceled) {
+                    return;
                 }
 
-                if (!result.assets || result.assets.length === 0) {                    Alert.alert("Lỗi", "Chưa chọn ảnh");
+                if (!result.assets || result.assets.length === 0) {
+                    Alert.alert("Lỗi", "Chưa chọn ảnh");
                     return;
                 }
 
                 const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
-                if (validAssets.length === 0) {                    Alert.alert("Lỗi", "File ảnh không hợp lệ");
+                if (validAssets.length === 0) {
+                    Alert.alert("Lỗi", "File ảnh không hợp lệ");
                     return;
                 }
-                appendDraftMedia(validAssets);            } catch (pickerError: any) {
+                appendDraftMedia(validAssets);
+            } catch (pickerError: any) {
                 console.error('[GroupChatScreen] Image picker error:', pickerError);
                 const errorMsg = pickerError.message || 'Lỗi không xác định';
                 Alert.alert("Lỗi gửi ảnh", errorMsg);
@@ -576,23 +582,28 @@ export const GroupChatScreen: React.FC<{
     }, [appendDraftMedia]);
 
     const handlePickVideo = useCallback(async () => {
-        try {            const result = await ImagePicker.launchImageLibraryAsync({
+        try {
+            const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['videos'],
                 allowsMultipleSelection: true,
             } as any);
 
-            if (result.canceled) {                return;
+            if (result.canceled) {
+                return;
             }
 
-            if (!result.assets || result.assets.length === 0) {                Alert.alert("Lỗi", "Chưa chọn video");
+            if (!result.assets || result.assets.length === 0) {
+                Alert.alert("Lỗi", "Chưa chọn video");
                 return;
             }
 
             const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
-            if (validAssets.length === 0) {                Alert.alert("Lỗi", "File video không hợp lệ");
+            if (validAssets.length === 0) {
+                Alert.alert("Lỗi", "File video không hợp lệ");
                 return;
             }
-            appendDraftMedia(validAssets);        } catch (pickerError: any) {
+            appendDraftMedia(validAssets);
+        } catch (pickerError: any) {
             console.error('[GroupChatScreen] Video picker error:', pickerError);
             const errorMsg = pickerError.message || 'Lỗi không xác định';
             Alert.alert("Lỗi gửi video", errorMsg);
@@ -602,22 +613,27 @@ export const GroupChatScreen: React.FC<{
     }, [appendDraftMedia]);
 
     const handlePickAudioFile = useCallback(async () => {
-        try {            const result = await DocumentPicker.getDocumentAsync({
+        try {
+            const result = await DocumentPicker.getDocumentAsync({
                 type: ["audio/*"],
             });
 
-            if (result.canceled) {                return;
+            if (result.canceled) {
+                return;
             }
 
-            if (!result.assets || result.assets.length === 0) {                Alert.alert("Lỗi", "Chưa chọn file audio");
+            if (!result.assets || result.assets.length === 0) {
+                Alert.alert("Lỗi", "Chưa chọn file audio");
                 return;
             }
 
             const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
-            if (validAssets.length === 0) {                Alert.alert("Lỗi", "File audio không hợp lệ");
+            if (validAssets.length === 0) {
+                Alert.alert("Lỗi", "File audio không hợp lệ");
                 return;
             }
-            appendDraftMedia(validAssets);        } catch (pickerError: any) {
+            appendDraftMedia(validAssets);
+        } catch (pickerError: any) {
             console.error('[GroupChatScreen] Audio picker error:', pickerError);
             const errorMsg = pickerError.message || 'Lỗi không xác định';
             Alert.alert("Lỗi gửi audio", errorMsg);
@@ -627,7 +643,8 @@ export const GroupChatScreen: React.FC<{
     }, [appendDraftMedia]);
 
     const handlePickDocument = useCallback(async () => {
-        try {            const result = await DocumentPicker.getDocumentAsync({
+        try {
+            const result = await DocumentPicker.getDocumentAsync({
                 type: [
                     "application/pdf",
                     "application/msword",
@@ -642,18 +659,22 @@ export const GroupChatScreen: React.FC<{
                 ],
             });
 
-            if (result.canceled) {                return;
+            if (result.canceled) {
+                return;
             }
 
-            if (!result.assets || result.assets.length === 0) {                Alert.alert("Lỗi", "Chưa chọn tài liệu");
+            if (!result.assets || result.assets.length === 0) {
+                Alert.alert("Lỗi", "Chưa chọn tài liệu");
                 return;
             }
 
             const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
-            if (validAssets.length === 0) {                Alert.alert("Lỗi", "File tài liệu không hợp lệ");
+            if (validAssets.length === 0) {
+                Alert.alert("Lỗi", "File tài liệu không hợp lệ");
                 return;
             }
-            appendDraftMedia(validAssets);        } catch (pickerError: any) {
+            appendDraftMedia(validAssets);
+        } catch (pickerError: any) {
             console.error('[GroupChatScreen] Document picker error:', pickerError);
             const errorMsg = pickerError.message || 'Lỗi không xác định';
             Alert.alert("Lỗi gửi tài liệu", errorMsg);
@@ -1084,7 +1105,7 @@ export const GroupChatScreen: React.FC<{
             if (msgId) {
                 map[msgId] = msg;
             }
-        });        return map;
+        }); return map;
     }, [chatState.messages]);
 
     const renderMessage = useCallback(
@@ -1316,20 +1337,20 @@ export const GroupChatScreen: React.FC<{
                                     const trimmedText = item.text ? item.text.trim() : "";
                                     const isJumboEmoji = !!JUMBO_EMOJI_ASSETS[trimmedText] && item.text.replace(/\s+/g, "") === trimmedText;
                                     const isNewMsg = item.createdAt
-                                      ? new Date().getTime() - new Date(item.createdAt).getTime() < 5000
-                                      : false;
+                                        ? new Date().getTime() - new Date(item.createdAt).getTime() < 5000
+                                        : false;
 
                                     return isJumboEmoji ? (
-                                      <AnimatedEmojiMessage emoji={trimmedText} isNew={isNewMsg} isMine={isOwn} />
+                                        <AnimatedEmojiMessage emoji={trimmedText} isNew={isNewMsg} isMine={isOwn} />
                                     ) : (
-                                      <Text style={[
-                                        styles.messageText,
-                                        isOwn ? styles.messageTextOwn : styles.messageTextOther,
-                                      ]}>
-                                        {item.text}
-                                      </Text>
+                                        <Text style={[
+                                            styles.messageText,
+                                            isOwn ? styles.messageTextOwn : styles.messageTextOther,
+                                        ]}>
+                                            {item.text}
+                                        </Text>
                                     );
-                                  })()}
+                                })()}
                                 <Text style={styles.messageTime}>
                                     {new Date(item.createdAt).toLocaleTimeString(
                                         "vi-VN",
@@ -1938,7 +1959,7 @@ interface DraftMediaAsset {
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: "transparent",
     },
     loadingContainer: {
         flex: 1,
@@ -1965,7 +1986,7 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         backgroundColor: colors.headerBgTransparent,
         borderBottomWidth: 1,
-        borderBottomColor: colors.border,
+        borderBottomColor: colors.overlayWhite10,
         gap: 8,
     },
     backButton: {
@@ -2209,8 +2230,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         paddingVertical: 8,
         gap: 8,
+        backgroundColor: colors.surfaceTransparent,
         borderTopWidth: 1,
-        borderTopColor: colors.border,
+        borderTopColor: colors.overlayWhite10,
     },
     composerIconButton: {
         paddingHorizontal: 8,
@@ -2222,10 +2244,10 @@ const styles = StyleSheet.create({
         flex: 1,
         flexDirection: "row",
         alignItems: "center",
-        backgroundColor: colors.surface,
+        backgroundColor: colors.inputBgTransparent,
         borderRadius: 22,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: colors.overlayWhite10,
         paddingHorizontal: 16,
     },
     composerInput: {
@@ -2250,7 +2272,7 @@ const styles = StyleSheet.create({
         backgroundColor: colors.accentStrong,
     },
     composerMicButton: {
-        backgroundColor: colors.surface,
+        backgroundColor: colors.inputBgTransparent,
     },
     composerActionButtonDisabled: {
         opacity: 0.5,

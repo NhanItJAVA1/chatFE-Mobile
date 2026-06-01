@@ -1000,7 +1000,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     /**
      * Handle friend press - navigate to chat
      */
-    const handleFriendPress = (friend: Friend) => {        if (onFriendPress) {
+    const handleFriendPress = (friend: Friend) => {
+        if (onFriendPress) {
             const chatUserData = {
                 id: friend.friendId,
                 displayName: friend.friendInfo?.displayName,
@@ -1009,12 +1010,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 phone: friend.friendInfo?.phoneNumber,
                 status: friend.friendInfo?.status,
                 _id: friend._id,
-            };            onFriendPress(chatUserData);
+            }; onFriendPress(chatUserData);
         }
     };
 
-    const handleConversationPress = (conversation: Conversation) => {        const conversationType = getConversationType(conversation);
-        if (conversationType === "GROUP") {            if (onGroupPress) {                onGroupPress(conversation);
+    const handleConversationPress = (conversation: Conversation) => {
+        const conversationType = getConversationType(conversation);
+        if (conversationType === "GROUP") {
+            if (onGroupPress) {
+                onGroupPress(conversation);
             }
             return;
         }
@@ -1024,7 +1028,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         const friend = otherMemberId
             ? state?.friends?.find((f) => f.friendId === otherMemberId)
             : undefined;
-        if (friend) {            handleFriendPress(friend);
+        if (friend) {
+            handleFriendPress(friend);
             return;
         }
 
@@ -1451,7 +1456,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: "transparent",
     },
     homeContent: {
         padding: 16,
@@ -1468,7 +1473,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 8,
         alignSelf: "center",
-        backgroundColor: "#143f7f",
+        backgroundColor: colors.surfaceSoftTransparent,
+        borderWidth: 1,
+        borderColor: colors.overlayWhite10,
         paddingHorizontal: 14,
         paddingVertical: 8,
         borderRadius: 999,
@@ -1482,22 +1489,27 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceElevated,
         borderWidth: 1,
         borderColor: colors.border,
         alignItems: "center",
         justifyContent: "center",
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.2,
+        shadowRadius: 10,
+        elevation: 4,
     },
     searchBar: {
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceSoftTransparent,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: colors.overlayWhite10,
         borderRadius: 22,
         paddingHorizontal: 14,
-        height: 50,
+        height: 52,
     },
     searchInput: {
         flex: 1,
@@ -1509,16 +1521,16 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     filterChip: {
-        backgroundColor: colors.surface,
-        borderColor: colors.border,
+        backgroundColor: colors.surfaceSoftTransparent,
+        borderColor: colors.overlayWhite10,
         borderWidth: 1,
         borderRadius: 999,
         paddingHorizontal: 14,
         paddingVertical: 9,
     },
     filterChipActive: {
-        backgroundColor: "rgba(59,130,246,0.18)",
-        borderColor: "rgba(59,130,246,0.32)",
+        backgroundColor: "rgba(79, 140, 255, 0.18)",
+        borderColor: "rgba(79, 140, 255, 0.4)",
     },
     filterText: {
         color: colors.textSoft,
@@ -1562,6 +1574,7 @@ const styles = StyleSheet.create({
         padding: 14,
         alignItems: "center",
         justifyContent: "space-between",
+        backgroundColor: colors.surfaceSoftTransparent,
     },
     chatRowContent: {
         flex: 1,
@@ -1570,18 +1583,18 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     chatRowPressed: {
-        backgroundColor: "rgba(59,130,246,0.08)",
+        backgroundColor: "rgba(79, 140, 255, 0.12)",
     },
     chatIconButton: {
         width: 40,
         height: 40,
         borderRadius: 20,
-        backgroundColor: "rgba(59,130,246,0.1)",
+        backgroundColor: "rgba(79, 140, 255, 0.12)",
         alignItems: "center",
         justifyContent: "center",
     },
     chatIconButtonPressed: {
-        backgroundColor: "rgba(59,130,246,0.2)",
+        backgroundColor: "rgba(79, 140, 255, 0.22)",
     },
     rowDivider: {
         borderBottomWidth: StyleSheet.hairlineWidth,
@@ -1656,6 +1669,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         padding: 14,
         gap: 12,
+        backgroundColor: colors.surfaceSoftTransparent,
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: colors.border,
     },
@@ -1688,7 +1702,7 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         paddingHorizontal: 16,
         paddingVertical: 12,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceTransparent,
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: colors.border,
     },

@@ -58,14 +58,16 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
     // Handle send friend request
     const handleSendRequest = async (userId: string) => {
-        try {            lastSentUserIdRef.current = userId;
+        try {
+            lastSentUserIdRef.current = userId;
 
             // Capture the returned request object
             const sentRequest = await actions.sendRequest(userId);
             if (sentRequest) {
                 // Store the full request object for use during cancel
                 sentRequestMapRef.current.set(userId, sentRequest);
-                const requestId = (sentRequest as any).id || sentRequest._id;            }
+                const requestId = (sentRequest as any).id || sentRequest._id;
+            }
 
             Alert.alert("Success", "Lời mời kết bạn đã được gửi!");
         } catch (error: any) {
@@ -79,21 +81,25 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
         let requestId: string | undefined;
         let storedRequest = sentRequestMapRef.current.get(userId);
 
-        if (storedRequest) {            requestId = (storedRequest as any).id || storedRequest._id;        } else {            const sentRequest = state.sentRequests.find(r => {
+        if (storedRequest) { requestId = (storedRequest as any).id || storedRequest._id; } else {
+            const sentRequest = state.sentRequests.find(r => {
                 const receiverId = r.receiverId || (r as any).toUserId;
                 const matches = receiverId === userId;
-                if (matches)                return matches;
+                if (matches) return matches;
             });
 
             if (sentRequest) {
-                requestId = (sentRequest as any).id || sentRequest._id;            }
+                requestId = (sentRequest as any).id || sentRequest._id;
+            }
         }
         if (!requestId) {
             console.warn('[AddFriendScreen] Could not find requestId for userId:', userId);
             Alert.alert("Error", "Không tìm thấy lời mời để hủy");
             return;
         }
-        const onConfirm = async () => {            try {                await actions.cancelRequest(requestId);              actions.removeSentRequest(requestId);
+        const onConfirm = async () => {
+            try {
+                await actions.cancelRequest(requestId); actions.removeSentRequest(requestId);
 
                 // Reset the friendship status to NONE (redundant but ensures status is correct)
                 (actions as any).resetFriendshipStatus(userId);
@@ -128,15 +134,16 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
     // Render user search result
     const renderUserCard = (user: User) => {
-        const userId = user.id || (user as any)._id;      if (state.sentRequests.length > 0) {        }
+        const userId = user.id || (user as any)._id; if (state.sentRequests.length > 0) { }
 
         // Check if already sent request
         const sentRequest = state.sentRequests.find(
-            (r) => {                return r.receiverId === userId;
+            (r) => {
+                return r.receiverId === userId;
             }
         );
         const isFriend = state.friends.some((f) => f.friendId === userId);
-        const status = state.friendshipStatuses.get(userId);        let buttonText = "Gửi lời mời";
+        const status = state.friendshipStatuses.get(userId); let buttonText = "Gửi lời mời";
         let isDisabledState = false;
         let buttonVariant: "primary" | "secondary" = "primary";
         let buttonAction = () => handleSendRequest(userId);
@@ -149,7 +156,8 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             buttonText = "Hủy lời mời";
             isDisabledState = false;
             buttonVariant = "secondary";
-            buttonAction = () => handleCancelRequest(userId);        }
+            buttonAction = () => handleCancelRequest(userId);
+        }
         return (
             <Card key={userId} style={styles.userCard}>
                 <View style={styles.userHeader}>
@@ -206,8 +214,10 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
                     <View style={styles.friendAction}>
                         <PrimaryButton
                             label={buttonText}
-                            onPress={() => {                                if (!isDisabledState) {                                    buttonAction();
-                                } else {                                }
+                            onPress={() => {
+                                if (!isDisabledState) {
+                                    buttonAction();
+                                } else { }
                             }}
                             variant={buttonVariant}
                         />
@@ -335,7 +345,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: "transparent",
     },
     screenContent: {
         padding: 16,
@@ -352,9 +362,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         borderRadius: 8,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: colors.overlayWhite10,
         paddingHorizontal: 12,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceSoftTransparent,
     },
     searchIcon: {
         marginRight: 8,

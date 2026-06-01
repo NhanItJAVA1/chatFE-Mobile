@@ -98,7 +98,7 @@ const MessageBubble: React.FC<{
   );
 
   React.useEffect(() => {
-    if (hasMedia) {    }
+    if (hasMedia) { }
   }, [hasMedia, message.media]);
 
   return (
@@ -506,7 +506,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   }, [actions]);
 
   // Debug: Log modal visibility changes
-  React.useEffect(() => {  }, [showMediaMenu]);
+  React.useEffect(() => { }, [showMediaMenu]);
 
   React.useEffect(() => {
     return () => {
@@ -585,7 +585,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       if (msgId) {
         map[msgId] = msg;
       }
-    });    return map;
+    }); return map;
   }, [messages]);
 
   // Auto-mark messages as seen when new messages arrive
@@ -745,27 +745,33 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
    * Pick and send image
    */
   const handlePickImage = useCallback(async () => {
-    try {    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permissionResult.granted) {        Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
         return;
-      }      try {
+      } try {
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ["images"],
           allowsMultipleSelection: true,
           selectionLimit: 0,
         } as any);
-        if (result.canceled) {          return;
+        if (result.canceled) {
+          return;
         }
 
-        if (!result.assets || result.assets.length === 0) {          Alert.alert("Error", "No image selected");
+        if (!result.assets || result.assets.length === 0) {
+          Alert.alert("Error", "No image selected");
           return;
         }
 
         const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
-        if (validAssets.length === 0) {          Alert.alert("Error", "Invalid image file");
+        if (validAssets.length === 0) {
+          Alert.alert("Error", "Invalid image file");
           return;
         }
-        appendDraftMedia(validAssets);      } catch (pickerError: any) {
+        appendDraftMedia(validAssets);
+      } catch (pickerError: any) {
         console.error("[ChatScreen] Image picker error:", pickerError);
         console.error("[ChatScreen] Error stack:", pickerError.stack);
         const errorMsg = pickerError.message || "Unknown error";
@@ -784,21 +790,26 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
    * Pick and send video
    */
   const handlePickVideo = useCallback(async () => {
-    try {    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permissionResult.granted) {        Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
         return;
-      }      try {
+      } try {
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ["videos"],
         } as any);
-        if (result.canceled) {          return;
-        }
-
-        if (!result.assets || result.assets.length === 0) {          Alert.alert("Error", "No video selected");
+        if (result.canceled) {
           return;
         }
 
-        if (!result.assets[0].uri || !result.assets[0].type) {          Alert.alert("Error", "Invalid video file");
+        if (!result.assets || result.assets.length === 0) {
+          Alert.alert("Error", "No video selected");
+          return;
+        }
+
+        if (!result.assets[0].uri || !result.assets[0].type) {
+          Alert.alert("Error", "Invalid video file");
           return;
         }
 
@@ -818,7 +829,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           duration: asset.duration,
           width: asset.width,
           height: asset.height,
-        };        const sentMessages = await chatMediaService.sendVideo(
+        }; const sentMessages = await chatMediaService.sendVideo(
           conversation?._id || conversation?.id || "",
           file,
           messageText || undefined,
@@ -830,7 +841,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         }
 
         setMessageText("");
-        setUploadProgress(0);      } catch (pickerError: any) {
+        setUploadProgress(0);
+      } catch (pickerError: any) {
         console.error("[ChatScreen] Video picker error:", pickerError);
         Alert.alert("Error", `Video picker error: ${pickerError.message}`);
       } finally {
@@ -868,10 +880,12 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       // Only close menu if user actually picked something
       setShowMediaMenu(false);
 
-      if (result.canceled) {        return;
+      if (result.canceled) {
+        return;
       }
 
-      if (!result.assets || result.assets.length === 0) {        return;
+      if (!result.assets || result.assets.length === 0) {
+        return;
       }
 
       const asset = result.assets[0];
@@ -881,7 +895,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         type: asset.mimeType || "audio/mpeg",
         mimeType: asset.mimeType || "audio/mpeg",
         size: asset.size || 0,
-      };      setUploading(true);
+      }; setUploading(true);
       setUploadProgress(0);
 
       try {
@@ -1092,10 +1106,12 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       // Only close menu if operation is complete or canceled
       setShowMediaMenu(false);
 
-      if (result.canceled) {        return;
+      if (result.canceled) {
+        return;
       }
 
-      if (!result.assets || result.assets.length === 0) {        return;
+      if (!result.assets || result.assets.length === 0) {
+        return;
       }
 
       const asset = result.assets[0];
@@ -1105,7 +1121,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         type: asset.mimeType || "application/octet-stream",
         mimeType: asset.mimeType || "application/octet-stream",
         size: asset.size || 0,
-      };      setUploading(true);
+      }; setUploading(true);
       setUploadProgress(0);
 
       try {
@@ -1711,7 +1727,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       <View style={styles.messageComposer}>
         <Pressable
           style={styles.composerIconButton}
-          onPress={() => {            setShowMediaMenu(!showMediaMenu);
+          onPress={() => {
+            setShowMediaMenu(!showMediaMenu);
           }}
           disabled={uploading || isBlockedChatError}
         >
@@ -1971,12 +1988,14 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         transparent
         visible={showMediaMenu}
         animationType="fade"
-        onRequestClose={() => {          setShowMediaMenu(false);
+        onRequestClose={() => {
+          setShowMediaMenu(false);
         }}
       >
         <Pressable
           style={styles.modalOverlay}
-          onPress={() => {            setShowMediaMenu(false);
+          onPress={() => {
+            setShowMediaMenu(false);
           }}
         >
           <View style={styles.mediaMenuContainer}>
@@ -1984,7 +2003,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
 
             <Pressable
               style={styles.mediaMenuButton}
-              onPress={() => {                handlePickImage();
+              onPress={() => {
+                handlePickImage();
               }}
             >
               <Ionicons name="image" size={24} color={colors.mediaImageIcon} />
@@ -1993,7 +2013,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
 
             <Pressable
               style={styles.mediaMenuButton}
-              onPress={() => {                handlePickVideo();
+              onPress={() => {
+                handlePickVideo();
               }}
             >
               <Ionicons name="videocam" size={24} color={colors.mediaVideoIcon} />
@@ -2023,7 +2044,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: "transparent",
   },
   centerContainer: {
     flex: 1,
@@ -2075,9 +2096,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    backgroundColor: colors.surfaceTransparent,
+    backgroundColor: colors.headerBgTransparent,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: colors.overlayWhite10,
   },
   backButton: {
     width: 44,
@@ -2085,7 +2106,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: colors.surfaceTransparent,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2096,7 +2117,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     alignItems: "center",
   },
   headerIconButton: {
@@ -2105,7 +2126,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: colors.surfaceTransparent,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2299,8 +2320,9 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    backgroundColor: colors.surfaceTransparent,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: colors.overlayWhite10,
   },
   blockBanner: {
     flexDirection: "row",
@@ -2322,9 +2344,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.inputBgTransparent,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2332,10 +2354,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.surface,
+    backgroundColor: colors.inputBgTransparent,
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     paddingHorizontal: 16,
   },
   composerInput: {
@@ -2360,9 +2382,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentStrong,
   },
   composerMicButton: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.inputBgTransparent,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
   },
   composerActionButtonDisabled: {
     opacity: 0.55,

@@ -218,7 +218,7 @@ export const FriendRequestsScreen = ({
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: "transparent",
     },
     screenContent: {
         padding: 16,

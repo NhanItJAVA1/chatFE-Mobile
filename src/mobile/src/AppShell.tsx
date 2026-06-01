@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, View, Text, Pressable } from "react-native";
+import { ActivityIndicator, ImageBackground, StyleSheet, View, Text, Pressable } from "react-native";
 import { useAuth, useFriendRequests, useFriendship } from "../../shared/hooks";
 import { BottomTabBar } from "./components";
 import {
@@ -15,7 +15,7 @@ import {
     GroupSettingsScreen,
     AddMembersScreen,
 } from "./screens";
-import { colors } from "./theme";
+import { assets, colors } from "./theme";
 
 const LoadingState = () => (
     <View style={styles.loadingWrap}>
@@ -265,15 +265,11 @@ const MainShell = () => {
 const AppShell = () => {
     const { loading, isAuthenticated } = useAuth();
 
-    if (loading) {
-        return <LoadingState />;
-    }
-
-    if (!isAuthenticated) {
-        return <AuthGate />;
-    }
-
-    return <MainShell />;
+    return (
+        <ImageBackground source={assets.chatBackground} style={styles.appShell} resizeMode="cover">
+            {loading ? <LoadingState /> : !isAuthenticated ? <AuthGate /> : <MainShell />}
+        </ImageBackground>
+    );
 };
 
 export default AppShell;
@@ -281,13 +277,13 @@ export default AppShell;
 const styles = StyleSheet.create({
     loadingWrap: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: "transparent",
         alignItems: "center",
         justifyContent: "center",
     },
     appShell: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: "transparent",
     },
     content: {
         flex: 1,
