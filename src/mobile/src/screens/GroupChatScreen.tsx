@@ -199,6 +199,24 @@ export const GroupChatScreen: React.FC<{
     const { startCall, state: callState } = useCall();
     const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
 
+    useEffect(() => {
+        groupActions.setupGroupListeners();
+        return () => {
+            groupActions.cleanupGroupListeners();
+        };
+    }, [groupActions]);
+
+    useEffect(() => {
+        const normalizedGroupId = String(groupId || "");
+        return () => {
+            if (!normalizedGroupId) {
+                return;
+            }
+
+            SocketService.leaveConversation(normalizedGroupId).catch(() => { });
+        };
+    }, [groupId]);
+
     // Local state
     const [messageText, setMessageText] = useState("");
     const [isSending, setIsSending] = useState(false);

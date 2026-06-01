@@ -199,6 +199,13 @@ export const GroupSettingsScreen: React.FC<{
     }, [groupId]);
 
     useEffect(() => {
+        groupActions.setupGroupListeners();
+        return () => {
+            groupActions.cleanupGroupListeners();
+        };
+    }, [groupActions]);
+
+    useEffect(() => {
         if (groupState.group) {
             setHasLoadedGroupOnce(true);
         }

@@ -532,6 +532,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             });
         };
 
+        const handleGroupMembersAdded = (data: any) => {
+            const conversationId = String(
+                data?.conversationId || data?.groupId || data?.conversation?._id || data?.conversation?.id || ""
+            );
+            const newMembers = Array.isArray(data?.newMembers) ? data.newMembers : [];
+
+            if (!conversationId || newMembers.length === 0 || userCandidateIds.length === 0) {
+                return;
+            }
+
+            const isCurrentUserAdded = newMembers.some((member: any) =>
+                userCandidateIds.includes(String(member?.userId || member?.id || ""))
+            );
+
+            if (!isCurrentUserAdded) {
+                return;
+            }
+
+            ConversationService.getConversations(1, 50).then((updated) => {
+                setConversations(dedupeConversations(updated));
+            });
+        };
+
         const handleGroupMemberRemoved = (data: any) => {
             const conversationId = String(
                 data?.conversationId ||
@@ -591,6 +614,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         socket.on("message:revoked", handleMessageRevoked);
         socket.on("message:deleted_for_everyone", handleMessageDeletedForEveryone);
         socket.on("conversation:created", handleGroupCreated);
+        socket.on("conversation:members_added", handleGroupMembersAdded);
         socket.on("conversation:member_removed", handleGroupMemberRemoved);
         socket.on("conversation:updated", handleConversationUpdated);
 
@@ -601,6 +625,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             socket.off("message:revoked", handleMessageRevoked);
             socket.off("message:deleted_for_everyone", handleMessageDeletedForEveryone);
             socket.off("conversation:created", handleGroupCreated);
+            socket.off("conversation:members_added", handleGroupMembersAdded);
             socket.off("conversation:member_removed", handleGroupMemberRemoved);
             socket.off("conversation:updated", handleConversationUpdated);
         };
