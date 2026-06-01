@@ -542,9 +542,6 @@ export const GroupSettingsScreen: React.FC<{
             const fileSize = pickedAsset.fileSize || 5242880; // 5MB default
             const mimeType = pickedAsset.mimeType || "image/jpeg";
             const fileName = `group_${groupId}_${Date.now()}.jpg`;
-
-            console.log("[GroupSettings] Uploading avatar:", { fileName, fileSize, mimeType });
-
             // Step 1: Request presigned URL
             const urlResponse = await requestPresignedUrl({
                 fileType: "IMAGE",
@@ -553,9 +550,6 @@ export const GroupSettingsScreen: React.FC<{
                 originalName: fileName,
                 expiresIn: 3600,
             });
-
-            console.log("[GroupSettings] Got presigned URL, uploading file...");
-
             // Step 2: Upload to S3
             const response = await fetch(imageUri);
             const blob = await response.blob();
@@ -572,17 +566,11 @@ export const GroupSettingsScreen: React.FC<{
             if (!uploadResponse.ok) {
                 throw new Error(`Upload failed: ${uploadResponse.statusText}`);
             }
-
-            console.log("[GroupSettings] File uploaded, confirming...");
-
             // Step 3: Confirm upload
             await confirmUpload({
                 fileId: urlResponse.fileId,
                 uploadedUrl: urlResponse.presignedUrl,
             });
-
-            console.log("[GroupSettings] Upload confirmed, updating group...");
-
             // Step 4: Update group with new avatar URL
             const avatarUrl = `${urlResponse.presignedUrl.split("?")[0]}`;
             await groupActions.updateGroup(groupId, { avatarUrl });

@@ -51,11 +51,13 @@ import type { MessagePayload } from "../../../shared/services/socketService";
 const MessageBubble: React.FC<{
   message: MessagePayload;
   isOwn: boolean;
+  currentUserId?: string;
   onLongPress?: () => void;
   onPressQuoted?: (quotedMessageId: string) => void;
+  onToggleReaction?: (emoji: string, selected: boolean) => void;
   isHighlighted?: boolean;
   messageMap?: Record<string, MessagePayload | undefined>;
-}> = ({ message, isOwn, onLongPress, onPressQuoted, isHighlighted, messageMap = {} }) => {
+}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, onToggleReaction, isHighlighted, messageMap = {} }) => {
   const formatTime = (date: string) => {
     const d = new Date(date);
     return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
@@ -80,14 +82,23 @@ const MessageBubble: React.FC<{
 
   // Check if message has media
   const hasMedia = message.media && message.media.length > 0;
+  const reactionGroups = Object.values(
+    (message.reactions || []).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
+      const emoji = reaction?.emoji;
+      if (!emoji) return acc;
+      if (!acc[emoji]) {
+        acc[emoji] = { emoji, count: 0, selected: false };
+      }
+      acc[emoji].count += 1;
+      if (currentUserId && reaction.userId === currentUserId) {
+        acc[emoji].selected = true;
+      }
+      return acc;
+    }, {})
+  );
 
   React.useEffect(() => {
-    if (hasMedia) {
-      console.log("[MessageBubble] Rendering message with media:", {
-        mediaCount: message.media.length,
-        mediaTypes: message.media.map((m: any) => m.mediaType),
-      });
-    }
+    if (hasMedia) {    }
   }, [hasMedia, message.media]);
 
   return (
@@ -121,13 +132,6 @@ const MessageBubble: React.FC<{
           {/* Quoted message block if this is a reply */}
           {(() => {
             const hasQuoted = resolvedQuotedMessage || message.quotedMessageId;
-            if (hasQuoted) {
-              // console.log("[MessageBubble] Message has quoted content:", {
-              //   hasResolvedQuotedMessage: !!resolvedQuotedMessage,
-              //   hasQuotedMessageId: !!message.quotedMessageId,
-              //   quotedMessageData: resolvedQuotedMessage,
-              // });
-            }
             return resolvedQuotedMessage ? (
               <QuotedMessageBlock
                 quotedMessage={resolvedQuotedMessage}
@@ -159,6 +163,21 @@ const MessageBubble: React.FC<{
               </Text>
             )}
           </View>
+          {reactionGroups.length > 0 && (
+            <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+              {reactionGroups.map((reaction) => (
+                <Pressable
+                  key={reaction.emoji}
+                  style={[styles.reactionPill, reaction.selected && styles.reactionPillSelected]}
+                  onPress={() => onToggleReaction?.(reaction.emoji, reaction.selected)}
+                >
+                  <Text style={styles.reactionText}>
+                    {reaction.emoji}{reaction.count > 1 ? ` ${reaction.count}` : ""}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
         </View>
       )}
     </HighlightableMessage>
@@ -190,6 +209,8 @@ type DraftMediaAsset = {
   width: number | undefined;
   height: number | undefined;
 };
+
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"];
 
 const getMessageKey = (message: MessagePayload): string => {
   return message._id || message.id || message.createdAt;
@@ -409,16 +430,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   const isSelfChat = chatUser?.isSelfChat || chatUser?.relationship === "self";
   const currentUserId = currentUser?.id || (currentUser as any)?._id || "";
 
-  // DEBUG: Track when chatUser changes
-  useEffect(() => {
-    console.log("[ChatScreen] ===== chatUser CHANGED =====");
-    console.log("[ChatScreen] New chatUser:", {
-      id: chatUser?.id,
-      displayName: (chatUser as any)?.displayName || chatUser?.name,
-    });
-    console.log("[ChatScreen] Token available:", token ? `${token.substring(0, 20)}...` : "MISSING");
-  }, [chatUser?.id, token]);
-
   const { state, actions, flatListRef, highlightedMessageId } = useChatMessage(friendId || "", token || "");
 
   useEffect(() => {
@@ -495,9 +506,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   }, [actions]);
 
   // Debug: Log modal visibility changes
-  React.useEffect(() => {
-    console.log("[ChatScreen] showMediaMenu changed:", showMediaMenu);
-  }, [showMediaMenu]);
+  React.useEffect(() => {  }, [showMediaMenu]);
 
   React.useEffect(() => {
     return () => {
@@ -576,9 +585,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       if (msgId) {
         map[msgId] = msg;
       }
-    });
-    console.log("[ChatScreen] messageMap created with", Object.keys(map).length, "messages");
-    return map;
+    });    return map;
   }, [messages]);
 
   // Auto-mark messages as seen when new messages arrive
@@ -738,52 +745,27 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
    * Pick and send image
    */
   const handlePickImage = useCallback(async () => {
-    try {
-      console.log("[ChatScreen] handlePickImage called");
-      // Don't dismiss modal yet - let picker load first
-      // setShowMediaMenu(false);
-
-      // Request permission
-      console.log("[ChatScreen] Requesting media library permission...");
-      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      console.log("[ChatScreen] Permission result:", permissionResult);
-
-      if (!permissionResult.granted) {
-        console.log("[ChatScreen] Permission denied");
-        Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
+    try {    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {        Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
         return;
-      }
-
-      console.log("[ChatScreen] Launching image library...");
-      try {
+      }      try {
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ["images"],
           allowsMultipleSelection: true,
           selectionLimit: 0,
         } as any);
-
-        console.log("[ChatScreen] Image library result:", JSON.stringify(result, null, 2));
-
-        if (result.canceled) {
-          console.log("[ChatScreen] User canceled image selection");
-          return;
+        if (result.canceled) {          return;
         }
 
-        if (!result.assets || result.assets.length === 0) {
-          console.log("[ChatScreen] No assets selected");
-          Alert.alert("Error", "No image selected");
+        if (!result.assets || result.assets.length === 0) {          Alert.alert("Error", "No image selected");
           return;
         }
 
         const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
-        if (validAssets.length === 0) {
-          console.log("[ChatScreen] No valid image assets selected");
-          Alert.alert("Error", "Invalid image file");
+        if (validAssets.length === 0) {          Alert.alert("Error", "Invalid image file");
           return;
         }
-        appendDraftMedia(validAssets);
-        console.log("[ChatScreen] Added images to draft tray:", validAssets.length);
-      } catch (pickerError: any) {
+        appendDraftMedia(validAssets);      } catch (pickerError: any) {
         console.error("[ChatScreen] Image picker error:", pickerError);
         console.error("[ChatScreen] Error stack:", pickerError.stack);
         const errorMsg = pickerError.message || "Unknown error";
@@ -802,44 +784,21 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
    * Pick and send video
    */
   const handlePickVideo = useCallback(async () => {
-    try {
-      console.log("[ChatScreen] handlePickVideo called");
-      // Don't dismiss modal yet - let picker load first
-      // setShowMediaMenu(false);
-
-      // Request permission
-      console.log("[ChatScreen] Requesting media library permission...");
-      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      console.log("[ChatScreen] Permission result:", permissionResult);
-
-      if (!permissionResult.granted) {
-        console.log("[ChatScreen] Permission denied");
-        Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
+    try {    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {        Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
         return;
-      }
-
-      console.log("[ChatScreen] Launching video library...");
-      try {
+      }      try {
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ["videos"],
         } as any);
+        if (result.canceled) {          return;
+        }
 
-        console.log("[ChatScreen] Video library result:", JSON.stringify(result, null, 2));
-
-        if (result.canceled) {
-          console.log("[ChatScreen] User canceled video selection");
+        if (!result.assets || result.assets.length === 0) {          Alert.alert("Error", "No video selected");
           return;
         }
 
-        if (!result.assets || result.assets.length === 0) {
-          console.log("[ChatScreen] No assets selected");
-          Alert.alert("Error", "No video selected");
-          return;
-        }
-
-        if (!result.assets[0].uri || !result.assets[0].type) {
-          console.log("[ChatScreen] Invalid asset data:", result.assets[0]);
-          Alert.alert("Error", "Invalid video file");
+        if (!result.assets[0].uri || !result.assets[0].type) {          Alert.alert("Error", "Invalid video file");
           return;
         }
 
@@ -850,9 +809,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         const uri = asset.uri;
         const name = asset.fileName || uri.split("/").pop() || "video.mp4";
         const type = asset.mimeType || asset.type || "video/mp4";
-
-        console.log("[ChatScreen] Selected video:", { uri, name, type, duration: asset.duration });
-
         const file = {
           uri,
           name,
@@ -862,10 +818,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           duration: asset.duration,
           width: asset.width,
           height: asset.height,
-        };
-
-        console.log("[ChatScreen] Sending video...");
-        const sentMessages = await chatMediaService.sendVideo(
+        };        const sentMessages = await chatMediaService.sendVideo(
           conversation?._id || conversation?.id || "",
           file,
           messageText || undefined,
@@ -877,9 +830,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         }
 
         setMessageText("");
-        setUploadProgress(0);
-        console.log("[ChatScreen] Video sent successfully");
-      } catch (pickerError: any) {
+        setUploadProgress(0);      } catch (pickerError: any) {
         console.error("[ChatScreen] Video picker error:", pickerError);
         Alert.alert("Error", `Video picker error: ${pickerError.message}`);
       } finally {
@@ -911,29 +862,16 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         Alert.alert("Error", "Conversation is not ready yet");
         return;
       }
-
-      console.log("[ChatScreen] handlePickAudioFile called");
-
       const result = await DocumentPicker.getDocumentAsync({
         type: ["audio/*"],
       });
-
-      console.log("[ChatScreen] DocumentPicker result:", {
-        canceled: result.canceled,
-        assetsCount: result.assets?.length,
-      });
-
       // Only close menu if user actually picked something
       setShowMediaMenu(false);
 
-      if (result.canceled) {
-        console.log("[ChatScreen] User canceled audio file picker");
-        return;
+      if (result.canceled) {        return;
       }
 
-      if (!result.assets || result.assets.length === 0) {
-        console.log("[ChatScreen] No audio assets selected");
-        return;
+      if (!result.assets || result.assets.length === 0) {        return;
       }
 
       const asset = result.assets[0];
@@ -943,17 +881,11 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         type: asset.mimeType || "audio/mpeg",
         mimeType: asset.mimeType || "audio/mpeg",
         size: asset.size || 0,
-      };
-
-      console.log("[ChatScreen] Audio file selected:", audioFile);
-      setUploading(true);
+      };      setUploading(true);
       setUploadProgress(0);
 
       try {
         const sentMessages = await chatMediaService.sendAudio(conversation?._id || conversation?.id || "", audioFile);
-
-        console.log("[ChatScreen] Audio sent from file picker:", sentMessages);
-
         // Add messages to local state to show realtime
         if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
           actionsRef.current.addMessages(sentMessages);
@@ -1143,9 +1075,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         Alert.alert("Error", "Conversation is not ready yet");
         return;
       }
-
-      console.log("[ChatScreen] handlePickDocument called");
-
       const result = await DocumentPicker.getDocumentAsync({
         type: [
           "application/pdf",
@@ -1160,23 +1089,13 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           "application/x-rar-compressed",
         ],
       });
-
-      console.log("[ChatScreen] DocumentPicker result for document:", {
-        canceled: result.canceled,
-        assetsCount: result.assets?.length,
-      });
-
       // Only close menu if operation is complete or canceled
       setShowMediaMenu(false);
 
-      if (result.canceled) {
-        console.log("[ChatScreen] User canceled document file picker");
-        return;
+      if (result.canceled) {        return;
       }
 
-      if (!result.assets || result.assets.length === 0) {
-        console.log("[ChatScreen] No document assets selected");
-        return;
+      if (!result.assets || result.assets.length === 0) {        return;
       }
 
       const asset = result.assets[0];
@@ -1186,10 +1105,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         type: asset.mimeType || "application/octet-stream",
         mimeType: asset.mimeType || "application/octet-stream",
         size: asset.size || 0,
-      };
-
-      console.log("[ChatScreen] Document file selected:", documentFile);
-      setUploading(true);
+      };      setUploading(true);
       setUploadProgress(0);
 
       try {
@@ -1197,9 +1113,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           conversation?._id || conversation?.id || "",
           documentFile,
         );
-
-        console.log("[ChatScreen] Document sent:", sentMessages);
-
         // Add messages to local state to show realtime
         if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
           actionsRef.current.addMessages(sentMessages);
@@ -1400,6 +1313,36 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
     }
   }, [hasMoreMessages, isLoading]);
 
+  const handleToggleReaction = useCallback(async (messageId: string, emoji: string, selected: boolean) => {
+    try {
+      if (selected) {
+        await actionsRef.current?.removeReaction?.(messageId, emoji);
+      } else {
+        await actionsRef.current?.addReaction?.(messageId, emoji);
+      }
+    } catch (error: any) {
+      Alert.alert("Lỗi", error?.message || "Không thể cập nhật react");
+    }
+  }, []);
+
+  const handleShowReactionPicker = useCallback((message: MessagePayload) => {
+    const messageId = message._id || message.id;
+    if (!messageId) return;
+
+    const myReaction = (message.reactions || []).find((reaction: any) => reaction.userId === currentUserId);
+    Alert.alert(
+      "React tin nhắn",
+      "Chọn cảm xúc",
+      [
+        ...QUICK_REACTIONS.map((emoji) => ({
+          text: emoji,
+          onPress: () => handleToggleReaction(messageId, emoji, myReaction?.emoji === emoji),
+        })),
+        { text: "Hủy", style: "cancel" as const, onPress: () => { } },
+      ]
+    );
+  }, [currentUserId, handleToggleReaction]);
+
   /**
    * Handle message long press - show action menu
    */
@@ -1473,10 +1416,11 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
               actionsRef.current.setReplyingTo(message);
             }
           },
+          onReact: () => handleShowReactionPicker(message),
         }),
       );
     },
-    [currentUser?.id],
+    [currentUser?.id, handleShowReactionPicker],
   );
 
   /**
@@ -1524,7 +1468,14 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           <MessageBubble
             message={item.message}
             isOwn={item.message.senderId === currentUserId}
+            currentUserId={currentUserId}
             onLongPress={() => handleMessageLongPress(item.message)}
+            onToggleReaction={(emoji, selected) => {
+              const messageId = item.message._id || item.message.id;
+              if (messageId) {
+                handleToggleReaction(messageId, emoji, selected);
+              }
+            }}
             onPressQuoted={async (quotedId) => {
               if (actions.scrollToMessage) {
                 const success = await actions.scrollToMessage(quotedId);
@@ -1760,9 +1711,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       <View style={styles.messageComposer}>
         <Pressable
           style={styles.composerIconButton}
-          onPress={() => {
-            console.log("[ChatScreen] Attach button pressed, showMediaMenu:", showMediaMenu);
-            setShowMediaMenu(!showMediaMenu);
+          onPress={() => {            setShowMediaMenu(!showMediaMenu);
           }}
           disabled={uploading || isBlockedChatError}
         >
@@ -2022,16 +1971,12 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         transparent
         visible={showMediaMenu}
         animationType="fade"
-        onRequestClose={() => {
-          console.log("[ChatScreen] Modal onRequestClose");
-          setShowMediaMenu(false);
+        onRequestClose={() => {          setShowMediaMenu(false);
         }}
       >
         <Pressable
           style={styles.modalOverlay}
-          onPress={() => {
-            console.log("[ChatScreen] Modal overlay pressed");
-            setShowMediaMenu(false);
+          onPress={() => {            setShowMediaMenu(false);
           }}
         >
           <View style={styles.mediaMenuContainer}>
@@ -2039,9 +1984,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
 
             <Pressable
               style={styles.mediaMenuButton}
-              onPress={() => {
-                console.log("[ChatScreen] Library button pressed");
-                handlePickImage();
+              onPress={() => {                handlePickImage();
               }}
             >
               <Ionicons name="image" size={24} color={colors.mediaImageIcon} />
@@ -2050,9 +1993,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
 
             <Pressable
               style={styles.mediaMenuButton}
-              onPress={() => {
-                console.log("[ChatScreen] Video button pressed");
-                handlePickVideo();
+              onPress={() => {                handlePickVideo();
               }}
             >
               <Ionicons name="videocam" size={24} color={colors.mediaVideoIcon} />
@@ -2244,6 +2185,34 @@ const styles = StyleSheet.create({
   bubbleTime: {
     color: colors.overlayWhite75,
     fontSize: 11,
+  },
+  reactionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    marginTop: 6,
+  },
+  reactionRowOwn: {
+    justifyContent: "flex-end",
+  },
+  reactionRowOther: {
+    justifyContent: "flex-start",
+  },
+  reactionPill: {
+    minHeight: 24,
+    paddingHorizontal: 7,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reactionPillSelected: {
+    backgroundColor: "rgba(79,140,255,0.35)",
+  },
+  reactionText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700",
   },
   galleryGrid: {
     flexDirection: "row",

@@ -42,12 +42,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                         }
 
                         if (!profile.avatarUrl && profile.avatar) {
-                            profile.avatarUrl = profile.avatar;
-                            console.log(
-                                "[AuthContext] Set avatarUrl from avatar:",
-                                profile.avatarUrl
-                            );
-                        }
+                            profile.avatarUrl = profile.avatar;                        }
 
                         setUser(profile);
                         await authService.saveUser(profile);
@@ -67,14 +62,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                             await authService.logout();
                             setToken(null);
                             setUser(null);
-                        } else if (savedUser) {
-                            console.log("[AuthContext] Network or generic error, using saved user");
-                            setUser(savedUser);
+                        } else if (savedUser) {                            setUser(savedUser);
                         }
                     }
-                } else if (savedUser) {
-                    console.log("[AuthContext] No saved token, using saved user");
-                    setUser(savedUser);
+                } else if (savedUser) {                    setUser(savedUser);
                 }
 
                 if (isActive) {
@@ -90,9 +81,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
         restoreSession();
 
-        const logoutSub = DeviceEventEmitter.addListener("forceLogout", () => {
-            console.log("[AuthContext] forceLogout event received");
-            setToken(null);
+        const logoutSub = DeviceEventEmitter.addListener("forceLogout", () => {            setToken(null);
             setUser(null);
         });
 
@@ -126,13 +115,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
             const loginPhone = credentials.phone?.trim();
             const loginEmail = credentials.email?.trim();
             const loginPassword = credentials.password;
-
-            console.log("[AuthContext] Logging in:", {
-                hasPhone: !!loginPhone,
-                hasEmail: !!loginEmail,
-                hasPassword: typeof loginPassword === "string" && loginPassword.length > 0,
-            });
-
             if ((!loginPhone && !loginEmail) || typeof loginPassword !== "string" || !loginPassword) {
                 throw new Error("Phone/email and password are required");
             }
@@ -142,17 +124,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                 ...(loginEmail ? { email: loginEmail } : {}),
                 password: loginPassword,
             });
-            console.log("[AuthContext] Login response:", response);
-
             const token =
                 response?.token ||
                 response?.accessToken ||
                 response?.data?.token;
-            console.log(
-                "[AuthContext] Extracted token:",
-                token ? `${token.substring(0, 20)}...` : "missing"
-            );
-
             if (!token) {
                 throw new Error("No token in login response");
             }
@@ -164,25 +139,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
             setToken(token);
 
-            const profile = await authService.getProfile(token);
-            console.log(
-                "[AuthContext] Profile JSON:",
-                JSON.stringify(profile, null, 2)
-            );
-            console.log("[AuthContext] Profile keys:", Object.keys(profile || {}));
+            const profile = await authService.getProfile(token);            if (!profile.avatarUrl && profile.avatar) {
+                profile.avatarUrl = profile.avatar;            }
 
-            if (!profile.avatarUrl && profile.avatar) {
-                profile.avatarUrl = profile.avatar;
-                console.log(
-                    "[AuthContext] Set avatarUrl from avatar:",
-                    profile.avatarUrl
-                );
-            }
-
-            console.log(
-                "[AuthContext] Final user object:",
-                JSON.stringify(profile, null, 2)
-            );
             await authService.saveUser(profile);
             setUser(profile);
 
@@ -212,28 +171,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     const updateProfile = async (profileData: any): Promise<User> => {
         try {
             setLoading(true);
-            console.log(
-                "[AuthContext] updateProfile called with:",
-                JSON.stringify(profileData, null, 2)
-            );
-
             const currentToken = await authService.getToken();
             if (!currentToken) {
                 throw new Error("Not authenticated - please login again");
             }
 
             const updateResponse = await updateProfileAPI(profileData);
-            console.log(
-                "[AuthContext] updateProfile API response:",
-                JSON.stringify(updateResponse, null, 2)
-            );
-
             const freshProfile = await authService.getProfile(currentToken);
-            console.log(
-                "[AuthContext] Fresh profile after update:",
-                JSON.stringify(freshProfile, null, 2)
-            );
-
             if (!freshProfile.avatarUrl && freshProfile.avatar) {
                 freshProfile.avatarUrl = freshProfile.avatar;
             }

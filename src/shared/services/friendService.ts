@@ -48,9 +48,7 @@ export const searchUsers = async (query: string): Promise<User[]> => {
  * Tìm kiếm người dùng theo số điện thoại (deprecated - use searchUsers)
  */
 export const searchUserByPhone = async (phone: string): Promise<any> => {
-    try {
-        console.log("[friendService] Searching user by phone:", phone);
-        const response = await api.get("/users/search-by-phone", { params: { phone } });
+    try {        const response = await api.get("/users/search-by-phone", { params: { phone } });
 
         // Extract data from response
         let data = response.data || response;
@@ -155,9 +153,7 @@ export const getReceivedRequests = getReceivedFriendRequests;
  * Xem lời mời kết bạn đã gửi
  */
 export const getSentFriendRequests = async (): Promise<FriendRequest[]> => {
-    try {
-        console.trace("[API] Calling /friend-requests/sent");
-        const response = await api.get("/friend-requests/sent");
+    try {        const response = await api.get("/friend-requests/sent");
 
         // Extract data from response
         let data = response.data || response;
@@ -252,12 +248,8 @@ export const declineFriendRequest = rejectFriendRequest;
 export const cancelFriendRequest = async (requestId: string): Promise<boolean> => {
     try {
         const response = await api.delete(`/friend-requests/${requestId}`);
-        console.log('[friendService] cancelFriendRequest response:', response);
-
         // Handle null/undefined response (204 No Content)
-        if (!response) {
-            console.log('[friendService] Delete returned null/undefined - treating as success');
-            return true;
+        if (!response) {            return true;
         }
 
         // Extract data from response
@@ -267,13 +259,8 @@ export const cancelFriendRequest = async (requestId: string): Promise<boolean> =
         if (data === undefined) {
             data = response;
         }
-
-        console.log('[friendService] Extracted data:', data);
-
         // Handle null response
-        if (data === null) {
-            console.log('[friendService] Data is null - treating as success');
-            return true;
+        if (data === null) {            return true;
         }
 
         // Check if it's a success response
@@ -283,13 +270,8 @@ export const cancelFriendRequest = async (requestId: string): Promise<boolean> =
 
         // If it's an object with status, check the status
         if (data && typeof data === "object") {
-            const isSuccess = !!(data.success || data.status === "success" || data !== false);
-            console.log('[friendService] Response is object, isSuccess:', isSuccess);
-            return isSuccess;
-        }
-
-        console.log('[friendService] Default return - data !== false:', data !== false);
-        return data !== false;
+            const isSuccess = !!(data.success || data.status === "success" || data !== false);            return isSuccess;
+        }        return data !== false;
     } catch (error: any) {
         console.error("[friendService] Cancel request error:", error);
         throw new Error(error.message || "Failed to cancel friend request");
@@ -437,9 +419,7 @@ export const getFriendsWithEnrichment = async (currentUserId: string): Promise<F
  * Xem danh sách bạn bè (fallback - returns raw data, should use getFriendsWithEnrichment)
  */
 export const getFriends = async (): Promise<Friend[]> => {
-    try {
-        console.log("[friendService] Loading friends...");
-        const response = await api.get("/friendships");
+    try {        const response = await api.get("/friendships");
 
         let data = response.data || response;
 
@@ -451,10 +431,7 @@ export const getFriends = async (): Promise<Friend[]> => {
             friendships = data.data.items;
         } else if (data?.items && Array.isArray(data.items)) {
             friendships = data.items;
-        }
-
-        console.log("[friendService] Loaded raw friendships:", friendships);
-        return friendships || [];
+        }        return friendships || [];
     } catch (error: any) {
         console.error("[friendService] Load friends error:", error);
         throw new Error(error.message || "Failed to load friends");
@@ -522,11 +499,7 @@ export const getMutualFriends = async (userId: string): Promise<User[]> => {
  * Xem gợi ý kết bạn
  */
 export const getFriendSuggestions = async (): Promise<User[]> => {
-    try {
-        console.log("[friendService] Loading friend suggestions...");
-        const response = await api.get("/friends/suggestions");
-        console.log("[friendService] Friend suggestions:", response);
-
+    try {        const response = await api.get("/friends/suggestions");
         // Extract data from response
         let data = response.data || response;
 
@@ -555,11 +528,7 @@ export const getFriendSuggestions = async (): Promise<User[]> => {
  * Hủy kết bạn (Unfriend)
  */
 export const removeFriend = async (friendId: string): Promise<boolean> => {
-    try {
-        console.log("[friendService] Unfriending user:", friendId);
-        const response = await api.delete(`/friendships/${friendId}`);
-        console.log("[friendService] Unfriend successful:", response);
-
+    try {        const response = await api.delete(`/friendships/${friendId}`);
         // Handle null response
         if (!response) {
             return true; // Treat null as success (some APIs return 204 No Content)

@@ -176,13 +176,9 @@ class FriendRequestService {
             throw new Error("requestId is required");
         }
 
-        try {
-            console.log(`[friendRequestService] Accepting request ${requestId}...`);
-            const response = await api.patch(`/friend-requests/${requestId}`, {
+        try {            const response = await api.patch(`/friend-requests/${requestId}`, {
                 status: "accepted",
-            });
-            console.log("[friendRequestService] Request accepted successfully");
-            return response.data || response;
+            });            return response.data || response;
         } catch (error: any) {
             console.error("[friendRequestService] Accept error:", error);
             throw new Error(error.message || "Failed to accept friend request");
@@ -198,13 +194,9 @@ class FriendRequestService {
             throw new Error("requestId is required");
         }
 
-        try {
-            console.log(`[friendRequestService] Declining request ${requestId}...`);
-            const response = await api.patch(`/friend-requests/${requestId}`, {
+        try {            const response = await api.patch(`/friend-requests/${requestId}`, {
                 status: "rejected",
-            });
-            console.log("[friendRequestService] Request declined successfully");
-            return response.data || response;
+            });            return response.data || response;
         } catch (error: any) {
             console.error("[friendRequestService] Decline error:", error);
             throw new Error(error.message || "Failed to decline friend request");

@@ -144,10 +144,6 @@ const MainShell = () => {
             // Check if it's a GROUP or PRIVATE chat
             if (selectedChat?.conversationType === 'GROUP') {
                 const groupId = selectedChat.conversationId;
-                // console.log('[AppShell] Rendering GroupChatScreen:', {
-                //     groupId,
-                //     selectedChat
-                // });
                 if (!groupId) {
                     return (
                         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -231,10 +227,6 @@ const MainShell = () => {
                     setActiveTab("chat");
                 }}
                 onGroupPress={(conversation) => {
-                    // console.log('[AppShell] Group conversation selected:', {
-                    //     conversationId: conversation._id || conversation.id,
-                    //     name: conversation.name,
-                    // });
                     setSelectedChat({
                         conversationId: conversation._id || conversation.id,
                         conversationType: 'GROUP',

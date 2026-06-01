@@ -14,6 +14,7 @@ export interface BuildMessageActionSheetOptions {
     onForward?: () => void;
     onPin?: () => void;
     onReply?: () => void;
+    onReact?: () => void;
 }
 
 export const buildMessageActionSheetOptions = ({
@@ -24,6 +25,7 @@ export const buildMessageActionSheetOptions = ({
     onForward,
     onPin,
     onReply,
+    onReact,
 }: BuildMessageActionSheetOptions): MessageActionButton[] => {
     const buttons: MessageActionButton[] = [
         { text: "Hủy", style: "cancel", onPress: () => { } },
@@ -32,6 +34,10 @@ export const buildMessageActionSheetOptions = ({
 
     if (onReply) {
         buttons.push({ text: "Trả lời", style: "default", onPress: onReply });
+    }
+
+    if (onReact) {
+        buttons.push({ text: "React", style: "default", onPress: onReact });
     }
 
     if (onPin) {

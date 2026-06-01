@@ -57,12 +57,8 @@ export const ProfileScreen = () => {
 
     // Initialize upload hook with callbacks
     const { uploadFile, isUploading, progress, error: uploadError, clearError } = useMediaUpload({
-        onProgress: (event) => {
-            console.log(`[Profile] Upload progress: ${event.percentage.toFixed(0)}%`);
-        },
-        onSuccess: (session) => {
-            console.log("[Profile] Image uploaded successfully:", session.fileId);
-            // Update profile with the uploaded URL
+        onProgress: (event) => {        },
+        onSuccess: (session) => {            // Update profile with the uploaded URL
             if (session.presignedUrl) {
                 setEditData((current) => ({
                     ...current,
@@ -115,9 +111,7 @@ export const ProfileScreen = () => {
             if (!result.canceled) {
                 const imageUri = result.assets[0].uri;
                 setSelectedImage(imageUri);
-                setEditData((current) => ({ ...current, avatarUrl: imageUri }));
-                console.log("[Profile] Image selected:", imageUri);
-            }
+                setEditData((current) => ({ ...current, avatarUrl: imageUri }));            }
         } catch (error: any) {
             console.error("Failed to pick image:", error);
             Alert.alert("Error", "Failed to pick image");
@@ -129,30 +123,14 @@ export const ProfileScreen = () => {
      */
     const handleUploadImage = async (imageUri: string) => {
         try {
-            setIsCompressing(true);
-
-            // Convert URI to Blob
-            console.log("[Profile] Converting image URI to blob...");
-            const imageBlob = await uriToBlob(imageUri);
+            setIsCompressing(true);            const imageBlob = await uriToBlob(imageUri);
 
             // Create File object for upload
             const filename = imageUri.split("/").pop() || "avatar.jpg";
             const file = new File([imageBlob], filename, { type: "image/jpeg" });
-
-            console.log(`[Profile] Compressing image: ${filename}`);
-
             // Compress image: 80% quality, max 1920px
             const { compressedFile } = await compressImage(file, 0.8, 1920);
-
-            console.log(
-                `[Profile] Compressed: ${(file.size / 1024).toFixed(2)}KB → ${(compressedFile.size / 1024).toFixed(2)}KB`
-            );
-
-            setIsCompressing(false);
-
-            // Upload using presigned URL flow
-            console.log("[Profile] Starting upload to S3...");
-            await uploadFile(compressedFile, "IMAGE");
+            setIsCompressing(false);            await uploadFile(compressedFile, "IMAGE");
 
         } catch (error: any) {
             setIsCompressing(false);
@@ -229,13 +207,7 @@ export const ProfileScreen = () => {
 
             if (profileData.avatarUrl) {
                 updateData.avatarUrl = profileData.avatarUrl;
-            }
-
-            console.log("[Profile] Saving profile with data:", updateData);
-            await updateProfile(updateData);
-
-            console.log("[Profile] Profile updated successfully");
-            setIsEditing(false);
+            }            await updateProfile(updateData);            setIsEditing(false);
             setSelectedImage(null);
             Alert.alert("Success", "Profile updated successfully");
         } catch (err: any) {
@@ -493,14 +465,17 @@ export const ProfileScreen = () => {
                 ) : (
                     sessions.map((session, index) => {
                         const deviceId = session.deviceId || session.id || "";
-                        const isCurrent = !!deviceId && deviceId === currentDeviceId;
+                        const platform = session.devicePlatform || session.platform || "";
+                        const location = session.deviceLocation || session.location || "Không rõ vị trí";
+                        const lastActive = session.lastActiveAt || session.lastActive;
+                        const isCurrent = Boolean(session.current || session.isCurrent || (!!deviceId && deviceId === currentDeviceId));
                         return (
                             <View key={deviceId || index}>
                                 {index > 0 && <View style={styles.divider} />}
                                 <View style={styles.deviceRow}>
                                     <View style={styles.profileActionIcon}>
                                         <Ionicons
-                                            name={(session.deviceType || "").toLowerCase() === "web" ? "globe-outline" : "phone-portrait-outline"}
+                                            name={platform === "web" || (session.deviceType || "").toLowerCase().includes("web") ? "globe-outline" : "phone-portrait-outline"}
                                             size={22}
                                             color="#4f8cff"
                                         />
@@ -508,13 +483,13 @@ export const ProfileScreen = () => {
                                     <View style={styles.deviceInfo}>
                                         <View style={styles.deviceNameRow}>
                                             <Text style={styles.deviceName} numberOfLines={1}>
-                                                {session.displayLabel || session.devicePlatform || "Thiết bị"}
+                                                {session.displayLabel || platform || "Thiết bị"}
                                             </Text>
                                             {isCurrent && <Text style={styles.currentDeviceBadge}>Hiện tại</Text>}
                                         </View>
                                         <Text style={styles.deviceMutedText} numberOfLines={1}>
-                                            {session.deviceLocation || session.devicePlatform || "Không rõ vị trí"}
-                                            {session.lastActiveAt ? ` • ${new Date(session.lastActiveAt).toLocaleString("vi-VN")}` : ""}
+                                            {location}
+                                            {lastActive ? ` • ${new Date(lastActive).toLocaleString("vi-VN")}` : ""}
                                         </Text>
                                     </View>
                                     {!!deviceId && (

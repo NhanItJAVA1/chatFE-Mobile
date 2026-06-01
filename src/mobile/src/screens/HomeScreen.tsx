@@ -755,15 +755,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     /**
      * Handle friend press - navigate to chat
      */
-    const handleFriendPress = (friend: Friend) => {
-        console.log('[HomeScreen] ===== handleFriendPress CALLED =====');
-        console.log('[HomeScreen] Friend object:', {
-            friendId: friend.friendId,
-            displayName: friend.friendInfo?.displayName,
-            _id: friend._id,
-        });
-
-        if (onFriendPress) {
+    const handleFriendPress = (friend: Friend) => {        if (onFriendPress) {
             const chatUserData = {
                 id: friend.friendId,
                 displayName: friend.friendInfo?.displayName,
@@ -772,31 +764,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 phone: friend.friendInfo?.phoneNumber,
                 status: friend.friendInfo?.status,
                 _id: friend._id,
-            };
-            console.log('[HomeScreen] Calling onFriendPress with data:', chatUserData);
-            onFriendPress(chatUserData);
+            };            onFriendPress(chatUserData);
         }
     };
 
-    const handleConversationPress = (conversation: Conversation) => {
-        console.log('[HomeScreen] ===== handleConversationPress CALLED =====');
-        console.log('[HomeScreen] Conversation:', {
-            id: conversation._id || conversation.id,
-            type: conversation.type,
-            name: conversation.name,
-            pairKey: conversation.pairKey,
-        });
-
-        const conversationType = getConversationType(conversation);
-        if (conversationType === "GROUP") {
-            console.log('[HomeScreen] Group chat clicked:', conversation._id);
-            if (onGroupPress) {
-                console.log('[HomeScreen] Calling onGroupPress with conversation:', {
-                    conversationId: conversation._id || conversation.id,
-                    name: conversation.name,
-                    type: conversation.type,
-                });
-                onGroupPress(conversation);
+    const handleConversationPress = (conversation: Conversation) => {        const conversationType = getConversationType(conversation);
+        if (conversationType === "GROUP") {            if (onGroupPress) {                onGroupPress(conversation);
             }
             return;
         }
@@ -806,18 +779,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         const friend = otherMemberId
             ? state?.friends?.find((f) => f.friendId === otherMemberId)
             : undefined;
-
-        console.log('[HomeScreen] Found friend:', {
-            friendId: friend?.friendId,
-            displayName: friend?.friendInfo?.displayName,
-        });
-
-        if (friend) {
-            console.log('[HomeScreen] Calling onFriendPress with friend:', {
-                friendId: friend.friendId,
-                displayName: friend.friendInfo?.displayName,
-            });
-            handleFriendPress(friend);
+        if (friend) {            handleFriendPress(friend);
             return;
         }
 

@@ -34,6 +34,8 @@ import MediaMessage from "../components/MediaMessage";
 import { colors, assets } from "../theme";
 import { buildMessageActionSheetOptions } from "../../../shared/utils";
 
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"];
+
 /**
  * Helper function to generate unique asset ID - matches ChatScreen implementation
  */
@@ -537,50 +539,30 @@ export const GroupChatScreen: React.FC<{
     }, []);
 
     const handlePickImage = useCallback(async () => {
-        try {
-            console.log('[GroupChatScreen] Requesting media library permission...');
-            const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            console.log('[GroupChatScreen] Permission result:', permissionResult);
-
-            if (!permissionResult.granted) {
-                console.log('[GroupChatScreen] Permission denied');
-                Alert.alert(
+        try {            const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!permissionResult.granted) {                Alert.alert(
                     "Yêu cầu quyền",
                     "Chúng tôi cần quyền truy cập thư viện ảnh. Vui lòng bật nó trong cài đặt."
                 );
                 return;
-            }
-
-            console.log('[GroupChatScreen] Launching image library...');
-            try {
+            }            try {
                 const result = await ImagePicker.launchImageLibraryAsync({
                     mediaTypes: ['images'],
                     allowsMultipleSelection: true,
                     selectionLimit: 0,
                 } as any);
-
-                console.log('[GroupChatScreen] Image library result:', result.canceled ? 'canceled' : `${result.assets?.length || 0} images`);
-
-                if (result.canceled) {
-                    console.log('[GroupChatScreen] User canceled image selection');
-                    return;
+                if (result.canceled) {                    return;
                 }
 
-                if (!result.assets || result.assets.length === 0) {
-                    console.log('[GroupChatScreen] No assets selected');
-                    Alert.alert("Lỗi", "Chưa chọn ảnh");
+                if (!result.assets || result.assets.length === 0) {                    Alert.alert("Lỗi", "Chưa chọn ảnh");
                     return;
                 }
 
                 const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
-                if (validAssets.length === 0) {
-                    console.log('[GroupChatScreen] No valid image assets selected');
-                    Alert.alert("Lỗi", "File ảnh không hợp lệ");
+                if (validAssets.length === 0) {                    Alert.alert("Lỗi", "File ảnh không hợp lệ");
                     return;
                 }
-                appendDraftMedia(validAssets);
-                console.log('[GroupChatScreen] Added images to draft tray:', validAssets.length);
-            } catch (pickerError: any) {
+                appendDraftMedia(validAssets);            } catch (pickerError: any) {
                 console.error('[GroupChatScreen] Image picker error:', pickerError);
                 const errorMsg = pickerError.message || 'Lỗi không xác định';
                 Alert.alert("Lỗi gửi ảnh", errorMsg);
@@ -594,33 +576,23 @@ export const GroupChatScreen: React.FC<{
     }, [appendDraftMedia]);
 
     const handlePickVideo = useCallback(async () => {
-        try {
-            console.log('[GroupChatScreen] Launching video picker...');
-            const result = await ImagePicker.launchImageLibraryAsync({
+        try {            const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['videos'],
                 allowsMultipleSelection: true,
             } as any);
 
-            if (result.canceled) {
-                console.log('[GroupChatScreen] User canceled video selection');
-                return;
+            if (result.canceled) {                return;
             }
 
-            if (!result.assets || result.assets.length === 0) {
-                console.log('[GroupChatScreen] No videos selected');
-                Alert.alert("Lỗi", "Chưa chọn video");
+            if (!result.assets || result.assets.length === 0) {                Alert.alert("Lỗi", "Chưa chọn video");
                 return;
             }
 
             const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
-            if (validAssets.length === 0) {
-                console.log('[GroupChatScreen] No valid video assets selected');
-                Alert.alert("Lỗi", "File video không hợp lệ");
+            if (validAssets.length === 0) {                Alert.alert("Lỗi", "File video không hợp lệ");
                 return;
             }
-            appendDraftMedia(validAssets);
-            console.log('[GroupChatScreen] Added videos to draft tray:', validAssets.length);
-        } catch (pickerError: any) {
+            appendDraftMedia(validAssets);        } catch (pickerError: any) {
             console.error('[GroupChatScreen] Video picker error:', pickerError);
             const errorMsg = pickerError.message || 'Lỗi không xác định';
             Alert.alert("Lỗi gửi video", errorMsg);
@@ -630,32 +602,22 @@ export const GroupChatScreen: React.FC<{
     }, [appendDraftMedia]);
 
     const handlePickAudioFile = useCallback(async () => {
-        try {
-            console.log('[GroupChatScreen] Launching audio picker...');
-            const result = await DocumentPicker.getDocumentAsync({
+        try {            const result = await DocumentPicker.getDocumentAsync({
                 type: ["audio/*"],
             });
 
-            if (result.canceled) {
-                console.log('[GroupChatScreen] User canceled audio selection');
-                return;
+            if (result.canceled) {                return;
             }
 
-            if (!result.assets || result.assets.length === 0) {
-                console.log('[GroupChatScreen] No audio files selected');
-                Alert.alert("Lỗi", "Chưa chọn file audio");
+            if (!result.assets || result.assets.length === 0) {                Alert.alert("Lỗi", "Chưa chọn file audio");
                 return;
             }
 
             const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
-            if (validAssets.length === 0) {
-                console.log('[GroupChatScreen] No valid audio assets selected');
-                Alert.alert("Lỗi", "File audio không hợp lệ");
+            if (validAssets.length === 0) {                Alert.alert("Lỗi", "File audio không hợp lệ");
                 return;
             }
-            appendDraftMedia(validAssets);
-            console.log('[GroupChatScreen] Added audio files to draft tray:', validAssets.length);
-        } catch (pickerError: any) {
+            appendDraftMedia(validAssets);        } catch (pickerError: any) {
             console.error('[GroupChatScreen] Audio picker error:', pickerError);
             const errorMsg = pickerError.message || 'Lỗi không xác định';
             Alert.alert("Lỗi gửi audio", errorMsg);
@@ -665,9 +627,7 @@ export const GroupChatScreen: React.FC<{
     }, [appendDraftMedia]);
 
     const handlePickDocument = useCallback(async () => {
-        try {
-            console.log('[GroupChatScreen] Launching document picker...');
-            const result = await DocumentPicker.getDocumentAsync({
+        try {            const result = await DocumentPicker.getDocumentAsync({
                 type: [
                     "application/pdf",
                     "application/msword",
@@ -682,26 +642,18 @@ export const GroupChatScreen: React.FC<{
                 ],
             });
 
-            if (result.canceled) {
-                console.log('[GroupChatScreen] User canceled document selection');
-                return;
+            if (result.canceled) {                return;
             }
 
-            if (!result.assets || result.assets.length === 0) {
-                console.log('[GroupChatScreen] No documents selected');
-                Alert.alert("Lỗi", "Chưa chọn tài liệu");
+            if (!result.assets || result.assets.length === 0) {                Alert.alert("Lỗi", "Chưa chọn tài liệu");
                 return;
             }
 
             const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
-            if (validAssets.length === 0) {
-                console.log('[GroupChatScreen] No valid document assets selected');
-                Alert.alert("Lỗi", "File tài liệu không hợp lệ");
+            if (validAssets.length === 0) {                Alert.alert("Lỗi", "File tài liệu không hợp lệ");
                 return;
             }
-            appendDraftMedia(validAssets);
-            console.log('[GroupChatScreen] Added documents to draft tray:', validAssets.length);
-        } catch (pickerError: any) {
+            appendDraftMedia(validAssets);        } catch (pickerError: any) {
             console.error('[GroupChatScreen] Document picker error:', pickerError);
             const errorMsg = pickerError.message || 'Lỗi không xác định';
             Alert.alert("Lỗi gửi tài liệu", errorMsg);
@@ -915,6 +867,36 @@ export const GroupChatScreen: React.FC<{
         }
     }, [chatActions]);
 
+    const handleToggleReaction = useCallback(async (messageId: string, emoji: string, selected: boolean) => {
+        try {
+            if (selected) {
+                await actionsRef.current?.removeReaction?.(messageId, emoji);
+            } else {
+                await actionsRef.current?.addReaction?.(messageId, emoji);
+            }
+        } catch (error: any) {
+            Alert.alert("Lỗi", error?.message || "Không thể cập nhật react");
+        }
+    }, []);
+
+    const handleShowReactionPicker = useCallback((message: any) => {
+        const messageId = message._id || message.id;
+        if (!messageId) return;
+
+        const myReaction = (message.reactions || []).find((reaction: any) => reaction.userId === currentUserId);
+        Alert.alert(
+            "React tin nhắn",
+            "Chọn cảm xúc",
+            [
+                ...QUICK_REACTIONS.map((emoji) => ({
+                    text: emoji,
+                    onPress: () => handleToggleReaction(messageId, emoji, myReaction?.emoji === emoji),
+                })),
+                { text: "Hủy", style: "cancel" as const, onPress: () => { } },
+            ]
+        );
+    }, [currentUserId, handleToggleReaction]);
+
     const handleMessageLongPress = useCallback((message: any) => {
         const messageId = message._id || message.id;
         if (!messageId) return;
@@ -994,9 +976,10 @@ export const GroupChatScreen: React.FC<{
                         actionsRef.current.setReplyingTo(message);
                     }
                 },
+                onReact: () => handleShowReactionPicker(message),
             })
         );
-    }, [currentUserId, groupState?.group?.admins]);
+    }, [currentUserId, groupState?.group?.admins, handleShowReactionPicker]);
 
     const handleSaveEdit = useCallback(async () => {
         if (!selectedMessageId || !editText.trim()) {
@@ -1101,9 +1084,7 @@ export const GroupChatScreen: React.FC<{
             if (msgId) {
                 map[msgId] = msg;
             }
-        });
-        console.log('[GroupChatScreen] messageMap created with', Object.keys(map).length, 'messages');
-        return map;
+        });        return map;
     }, [chatState.messages]);
 
     const renderMessage = useCallback(
@@ -1209,6 +1190,20 @@ export const GroupChatScreen: React.FC<{
 
             const messageId = item._id || item.id;
             const isHighlighted = !!messageId && messageId === highlightedMessageId;
+            const reactionGroups = Object.values(
+                ((item.reactions || []) as any[]).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
+                    const emoji = reaction?.emoji;
+                    if (!emoji) return acc;
+                    if (!acc[emoji]) {
+                        acc[emoji] = { emoji, count: 0, selected: false };
+                    }
+                    acc[emoji].count += 1;
+                    if (currentUserId && reaction.userId === currentUserId) {
+                        acc[emoji].selected = true;
+                    }
+                    return acc;
+                }, {})
+            );
 
             return (
                 <HighlightableMessage
@@ -1301,13 +1296,6 @@ export const GroupChatScreen: React.FC<{
                                 {/* Quoted message block if this is a reply */}
                                 {(() => {
                                     const hasQuoted = resolvedQuotedMessage || item.quotedMessageId;
-                                    // if (hasQuoted) {
-                                    //     console.log('[GroupMessageBubble] Message has quoted content:', {
-                                    //         hasResolvedQuotedMessage: !!resolvedQuotedMessage,
-                                    //         hasQuotedMessageId: !!item.quotedMessageId,
-                                    //         quotedMessageData: resolvedQuotedMessage,
-                                    //     });
-                                    // }
                                     return resolvedQuotedMessage ? (
                                         <QuotedMessageBlock
                                             quotedMessage={resolvedQuotedMessage}
@@ -1348,6 +1336,21 @@ export const GroupChatScreen: React.FC<{
                                         { hour: "2-digit", minute: "2-digit" }
                                     )}
                                 </Text>
+                                {reactionGroups.length > 0 && (
+                                    <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+                                        {reactionGroups.map((reaction) => (
+                                            <Pressable
+                                                key={reaction.emoji}
+                                                style={[styles.reactionPill, reaction.selected && styles.reactionPillSelected]}
+                                                onPress={() => messageId && handleToggleReaction(messageId, reaction.emoji, reaction.selected)}
+                                            >
+                                                <Text style={styles.reactionText}>
+                                                    {reaction.emoji}{reaction.count > 1 ? ` ${reaction.count}` : ""}
+                                                </Text>
+                                            </Pressable>
+                                        ))}
+                                    </View>
+                                )}
                             </View>
                         )}
 
@@ -1366,7 +1369,7 @@ export const GroupChatScreen: React.FC<{
                 </HighlightableMessage>
             );
         },
-        [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, groupState.members, openImageViewer, messageMap, highlightedMessageId]
+        [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId]
     );
 
     const handleViewableItemsChanged = useCallback(
@@ -2088,6 +2091,34 @@ const styles = StyleSheet.create({
         fontSize: 11,
         color: colors.overlayWhite75,
         marginTop: 6,
+    },
+    reactionRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 4,
+        marginTop: 6,
+    },
+    reactionRowOwn: {
+        justifyContent: "flex-end",
+    },
+    reactionRowOther: {
+        justifyContent: "flex-start",
+    },
+    reactionPill: {
+        minHeight: 24,
+        paddingHorizontal: 7,
+        borderRadius: 12,
+        backgroundColor: "rgba(255,255,255,0.18)",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    reactionPillSelected: {
+        backgroundColor: "rgba(79,140,255,0.35)",
+    },
+    reactionText: {
+        color: colors.text,
+        fontSize: 13,
+        fontWeight: "700",
     },
     mediaContainer: {
         gap: 8,

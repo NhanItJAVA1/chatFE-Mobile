@@ -58,20 +58,14 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
     // Handle send friend request
     const handleSendRequest = async (userId: string) => {
-        try {
-            console.log('[AddFriendScreen] Sending friend request to userId:', userId);
-            lastSentUserIdRef.current = userId;
+        try {            lastSentUserIdRef.current = userId;
 
             // Capture the returned request object
             const sentRequest = await actions.sendRequest(userId);
-            console.log('[AddFriendScreen] Received request object:', JSON.stringify(sentRequest, null, 2));
-
             if (sentRequest) {
                 // Store the full request object for use during cancel
                 sentRequestMapRef.current.set(userId, sentRequest);
-                const requestId = (sentRequest as any).id || sentRequest._id;
-                console.log('[AddFriendScreen] Stored request for userId:', userId, 'with id:', requestId);
-            }
+                const requestId = (sentRequest as any).id || sentRequest._id;            }
 
             Alert.alert("Success", "Lời mời kết bạn đã được gửi!");
         } catch (error: any) {
@@ -81,54 +75,25 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
     // Handle cancel sent request
     const handleCancelRequest = async (userId: string) => {
-        console.log('[AddFriendScreen] handleCancelRequest called with userId:', userId);
-
         // First, try to use the stored request object from when we sent it
         let requestId: string | undefined;
         let storedRequest = sentRequestMapRef.current.get(userId);
 
-        if (storedRequest) {
-            console.log('[AddFriendScreen] Found stored request:', JSON.stringify(storedRequest, null, 2));
-            requestId = (storedRequest as any).id || storedRequest._id;
-            console.log('[AddFriendScreen] Using stored request id:', requestId);
-        } else {
-            // Fallback: try to find in current state
-            console.log('[AddFriendScreen] No stored request, searching in state.sentRequests...');
-            console.log('[AddFriendScreen] state.sentRequests:', JSON.stringify(state.sentRequests, null, 2));
-
-            const sentRequest = state.sentRequests.find(r => {
+        if (storedRequest) {            requestId = (storedRequest as any).id || storedRequest._id;        } else {            const sentRequest = state.sentRequests.find(r => {
                 const receiverId = r.receiverId || (r as any).toUserId;
                 const matches = receiverId === userId;
-                if (matches) console.log('[AddFriendScreen] Found request in state with id:', (r as any).id);
-                return matches;
+                if (matches)                return matches;
             });
 
             if (sentRequest) {
-                requestId = (sentRequest as any).id || sentRequest._id;
-                console.log('[AddFriendScreen] Found in state, id:', requestId);
-            }
+                requestId = (sentRequest as any).id || sentRequest._id;            }
         }
-
-        console.log('[AddFriendScreen] Final requestId:', requestId);
-
         if (!requestId) {
             console.warn('[AddFriendScreen] Could not find requestId for userId:', userId);
             Alert.alert("Error", "Không tìm thấy lời mời để hủy");
             return;
         }
-
-        console.log('[AddFriendScreen] About to show Alert dialog with requestId:', requestId);
-
-        const onConfirm = async () => {
-            console.log('[AddFriendScreen] onConfirm callback executed with requestId:', requestId);
-            try {
-                console.log('[AddFriendScreen] Calling cancelRequest with id:', requestId);
-                await actions.cancelRequest(requestId);
-                console.log('[AddFriendScreen] Cancel API succeeded, updating status locally');
-
-                // Remove from state.sentRequests so button text changes back to "Gửi lời mời"
-                console.log('[AddFriendScreen] Removing request from sentRequests');
-                actions.removeSentRequest(requestId);
+        const onConfirm = async () => {            try {                await actions.cancelRequest(requestId);              actions.removeSentRequest(requestId);
 
                 // Reset the friendship status to NONE (redundant but ensures status is correct)
                 (actions as any).resetFriendshipStatus(userId);
@@ -150,7 +115,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             [
                 {
                     text: "Không",
-                    onPress: () => console.log('[AddFriendScreen] User pressed Không button')
+                    onPress: () => { },
                 },
                 {
                     text: "Hủy",
@@ -163,30 +128,15 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
     // Render user search result
     const renderUserCard = (user: User) => {
-        const userId = user.id || (user as any)._id;
-        console.log('[AddFriendScreen] renderUserCard for user:', userId);
-
-        // Log all sentRequests with details
-        console.log('[AddFriendScreen] Total sentRequests:', state.sentRequests.length);
-        if (state.sentRequests.length > 0) {
-            console.log('[AddFriendScreen] sentRequests details:', JSON.stringify(state.sentRequests.map(r => ({ _id: r._id, receiverId: r.receiverId, status: (r as any).status })), null, 2));
-        }
+        const userId = user.id || (user as any)._id;      if (state.sentRequests.length > 0) {        }
 
         // Check if already sent request
         const sentRequest = state.sentRequests.find(
-            (r) => {
-                console.log('[AddFriendScreen] Comparing - r.receiverId:', r.receiverId, 'user.id:', userId, 'match:', r.receiverId === userId);
-                return r.receiverId === userId;
+            (r) => {                return r.receiverId === userId;
             }
         );
-        console.log('[AddFriendScreen] Found sentRequest for user:', sentRequest?._id);
-
         const isFriend = state.friends.some((f) => f.friendId === userId);
-        const status = state.friendshipStatuses.get(userId);
-        console.log('[AddFriendScreen] Status for user:', status);
-        console.log('[AddFriendScreen] Button condition check - sentRequest:', !!sentRequest, 'status.status:', status?.status);
-
-        let buttonText = "Gửi lời mời";
+        const status = state.friendshipStatuses.get(userId);        let buttonText = "Gửi lời mời";
         let isDisabledState = false;
         let buttonVariant: "primary" | "secondary" = "primary";
         let buttonAction = () => handleSendRequest(userId);
@@ -199,12 +149,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             buttonText = "Hủy lời mời";
             isDisabledState = false;
             buttonVariant = "secondary";
-            buttonAction = () => handleCancelRequest(userId);
-            console.log('[AddFriendScreen] BUTTON SET TO CANCEL for user:', userId);
-        }
-
-        console.log('[AddFriendScreen] Button final state - text:', buttonText, 'disabled:', isDisabledState);
-
+            buttonAction = () => handleCancelRequest(userId);        }
         return (
             <Card key={userId} style={styles.userCard}>
                 <View style={styles.userHeader}>
@@ -261,14 +206,8 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
                     <View style={styles.friendAction}>
                         <PrimaryButton
                             label={buttonText}
-                            onPress={() => {
-                                console.log('[AddFriendScreen] Button pressed - buttonText:', buttonText, 'isDisabled:', isDisabledState);
-                                if (!isDisabledState) {
-                                    console.log('[AddFriendScreen] Calling buttonAction');
-                                    buttonAction();
-                                } else {
-                                    console.log('[AddFriendScreen] Button disabled, skipping action');
-                                }
+                            onPress={() => {                                if (!isDisabledState) {                                    buttonAction();
+                                } else {                                }
                             }}
                             variant={buttonVariant}
                         />

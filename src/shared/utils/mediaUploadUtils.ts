@@ -152,14 +152,6 @@ export const compressImage = async (
     targetQuality: number = 0.8,
     maxWidth: number = 1920
 ): Promise<{ compressedFile: Blob; width: number; height: number }> => {
-    // In React Native, browser APIs (Image, document, canvas) are not available
-    // Return the file as-is - server can compress if needed
-    // For actual image resizing in React Native, use: react-native-image-resizer
-    console.log(
-        "[compressImage] Skipping compression in React Native environment",
-        { targetQuality, maxWidth }
-    );
-
     return Promise.resolve({
         compressedFile: file,
         width: maxWidth, // Placeholder width
@@ -237,12 +229,6 @@ export const retryWithBackoff = async <T,>(
             if (attempt < config.maxRetries) {
                 const delay = calculateBackoffDelay(attempt, config);
                 onRetry?.(attempt, error);
-
-                console.log(
-                    `[retryWithBackoff] Attempt ${attempt} failed, retrying in ${delay}ms:`,
-                    error.message
-                );
-
                 await new Promise<void>((resolve) =>
                     setTimeout(() => resolve(), delay)
                 );
@@ -279,20 +265,11 @@ export const uploadWithProgress = async (
                     total: event.total,
                     percentage: percentComplete,
                     status: "uploading",
-                });
-
-                console.log(
-                    `[uploadWithProgress] Upload progress: ${percentComplete.toFixed(
-                        2
-                    )}%`
-                );
-            }
+                });            }
         });
 
         // Load complete
-        xhr.addEventListener("load", () => {
-            console.log(`[uploadWithProgress] Response status: ${xhr.status}`);
-            if (xhr.status >= 200 && xhr.status < 300) {
+        xhr.addEventListener("load", () => {            if (xhr.status >= 200 && xhr.status < 300) {
                 onProgress?.({
                     loaded: file.size,
                     total: file.size,
@@ -341,21 +318,8 @@ export const uploadWithProgress = async (
         });
 
         // Open request first
-        xhr.open("PUT", url);
-        console.log("[uploadWithProgress] XMLHttpRequest opened");
-
-        // Set headers after opening
-        console.log(
-            "[uploadWithProgress] Setting headers:",
-            Object.keys(headers)
-        );
-        Object.entries(headers).forEach(([key, value]) => {
-            console.log(`[uploadWithProgress] Header: ${key} = ${value?.substring(0, 50)}`);
-            xhr.setRequestHeader(key, value);
-        });
-
-        console.log("[uploadWithProgress] Sending file with size:", file.size);
-        // Send file
+        xhr.open("PUT", url);      Object.entries(headers).forEach(([key, value]) => {            xhr.setRequestHeader(key, value);
+        });        // Send file
         xhr.send(file);
     });
 };

@@ -55,13 +55,6 @@ export const authService = {
                 ...(email ? { email } : {}),
                 password,
             };
-
-            console.log("[AUTH] Login payload:", {
-                hasPhone: !!loginPayload.phone,
-                hasEmail: !!loginPayload.email,
-                hasPassword: typeof loginPayload.password === "string" && loginPayload.password.length > 0,
-            });
-
             let authData = await api.post("/auth/login", loginPayload, {
                 headers: await getDeviceHeaders(),
                 skipAuth: true,
@@ -74,9 +67,7 @@ export const authService = {
 
             const accessToken = readAccessToken(authData);
 
-            if (accessToken) {
-                console.log("[AUTH] Saving token:", accessToken.substring(0, 20) + "...");
-                await authStorage.setItem("token", accessToken);
+            if (accessToken) {                await authStorage.setItem("token", accessToken);
                 if (authData.refreshToken) {
                     await authStorage.setItem("refreshToken", authData.refreshToken);
                 }
@@ -138,11 +129,6 @@ export const authService = {
                     throw new Error(`Profile fetch failed: ${response.status}`);
 
                 const responseData = await response.json();
-                console.log(
-                    "[authService] Profile JSON:",
-                    JSON.stringify(responseData, null, 2)
-                );
-
                 const profile = responseData.data || responseData;
                 return profile;
             }
@@ -157,12 +143,6 @@ export const authService = {
             ) {
                 profile = response.data;
             }
-
-            console.log(
-                "[authService] Profile JSON (api.get):",
-                JSON.stringify(profile, null, 2)
-            );
-
             return profile;
         } catch (error: any) {
             console.error("[authService] Get profile error:", error);

@@ -53,11 +53,6 @@ export const useMediaUpload = (options: UseMediaUploadOptions = {}) => {
                 ...prev,
                 progress: progressPercent,
             }));
-
-            console.log(
-                `[useMediaUpload] Progress: ${progressPercent}% (${event.loaded}/${event.total} bytes)`
-            );
-
             options.onProgress?.(event);
         },
         [options]
@@ -111,11 +106,6 @@ export const useMediaUpload = (options: UseMediaUploadOptions = {}) => {
 
             try {
                 const finalConversationId = conversationId || options.conversationId;
-
-                console.log(
-                    `[useMediaUpload] Starting upload: ${file.name} (${file.type})`
-                );
-
                 const presignedData = await uploadFileWithPresignedUrl(
                     file,
                     fileType,
@@ -145,12 +135,6 @@ export const useMediaUpload = (options: UseMediaUploadOptions = {}) => {
                     progress: 100,
                     currentFile: session,
                 }));
-
-                console.log(
-                    "[useMediaUpload] Upload completed:",
-                    session.fileId
-                );
-
                 options.onSuccess?.(session);
 
                 return session;
@@ -179,8 +163,6 @@ export const useMediaUpload = (options: UseMediaUploadOptions = {}) => {
      * Cancel upload
      */
     const cancelUpload = useCallback(() => {
-        console.log("[useMediaUpload] Cancelling upload");
-
         setState((prev) => ({
             ...prev,
             isUploading: false,

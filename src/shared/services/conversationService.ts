@@ -103,18 +103,6 @@ export class ConversationService {
     static async getGroupDetail(groupId: string): Promise<Conversation> {
         try {
             const response = await api.get(`/groups/${groupId}/info`);
-
-            // Log comprehensive response structure
-            console.log('[ConversationService] getGroupDetail response:', {
-                type: typeof response,
-                isObject: typeof response === 'object',
-                keys: Array.isArray(response) ? 'array' : Object.keys(response || {}),
-                hasData: 'data' in response,
-                dataType: response?.data ? typeof response.data : 'missing',
-                dataKeys: response?.data ? Object.keys(response.data) : 'N/A',
-                fullResponse: JSON.stringify(response).substring(0, 2000),
-            });
-
             // If response.data doesn't exist, check if entire response IS the data
             if (!response?.data && response?.conversation) {
                 return response.conversation;
@@ -139,9 +127,7 @@ export class ConversationService {
         page: number = 1,
         limit: number = 20
     ): Promise<Conversation[]> {
-        try {
-            console.trace(`[API] Calling /conversations?page=${page}&limit=${limit}`);
-            const response = await api.get("/conversations", {
+        try {            const response = await api.get("/conversations", {
                 params: { page, limit },
             });
 
@@ -168,12 +154,6 @@ export class ConversationService {
         limit: number = 30
     ): Promise<MessagePage> {
         try {
-            console.log('[ConversationService] loadMessages called:', {
-                conversationId,
-                cursor,
-                limit,
-            });
-
             const response = await api.get(
                 `/conversations/${conversationId}/messages`,
                 {
@@ -183,29 +163,11 @@ export class ConversationService {
                     },
                 }
             );
-
-            console.log('[ConversationService] loadMessages response:', {
-                status: response.status,
-                hasData: !!response.data,
-                dataKeys: Object.keys(response.data || {}),
-                dataDataKeys: Object.keys(response.data?.data || {}),
-            });
-
             const data = response.data || response;
 
             // Current backend shape: { data: { messages, nextCursor, hasMore } }
             const payload = data?.data || data;
             const messages = payload?.messages || payload?.items || [];
-
-            console.log('[ConversationService] Messages parsed:', {
-                count: messages.length,
-                messagePreview: messages.slice(0, 2).map((m: any) => ({
-                    id: m._id || m.id,
-                    text: m.text?.substring(0, 30),
-                    senderId: m.senderId,
-                })),
-            });
-
             if (Array.isArray(messages)) {
                 return {
                     items: messages,

@@ -32,18 +32,6 @@ export const QuotedMessageBlock: React.FC<QuotedMessageBlockProps> = ({
     isOwn,
     onPress,
 }) => {
-    // if (!quotedMessage) {
-    //     console.log('[QuotedMessageBlock] No quotedMessage provided, rendering nothing');
-    //     return null;
-    // }
-
-    // console.log('[QuotedMessageBlock]', {
-    //     senderId: quotedMessage.senderId,
-    //     cachedName: resolveUserName(quotedMessage.senderId),
-    //     rawSenderName: quotedMessage.senderName,
-    //     text: quotedMessage.text?.substring(0, 30),
-    // });
-
     // Sử dụng Hook để lấy thông tin user một cách đúng đắn trong React
     const { user } = useUserCache(quotedMessage.senderId);
     const senderName = user?.name ?? "Unknown";

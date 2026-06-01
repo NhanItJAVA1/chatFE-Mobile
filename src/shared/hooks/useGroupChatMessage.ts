@@ -380,21 +380,7 @@ const enrichMessagesWithQuotedData = (
         if (!currentSenderName || currentSenderName === "Unknown" || resolvedSenderName) {
             // Assign resolvedSenderName (which might be undefined, allowing UI to fallback)
             enrichedQuotedMessage.senderName = resolvedSenderName;
-        }
-
-        console.log("RESOLVE NAME", {
-            senderId: quotedSenderId,
-            fromUserMap: quotedSenderId ? userMap[quotedSenderId] : undefined,
-            final: resolvedSenderName
-        });
-
-        // Debug: verify senderName is populated after enrich
-        console.log("ENRICHED MESSAGE", {
-            quotedMessageId: msg.quotedMessageId,
-            quotedMessage: enrichedQuotedMessage,
-        });
-
-        return {
+        }        return {
             ...msg,
             quotedMessage: enrichedQuotedMessage,
         };
@@ -1139,13 +1125,27 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             if (messageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
 
             try {
-                await SocketService.addReaction(messageId, emoji);
+                const reaction = await SocketService.addReaction(messageId, emoji);
+                setState((prev) => ({
+                    ...prev,
+                    messages: prev.messages.map((msg) =>
+                        getMessageId(msg) === messageId
+                            ? {
+                                ...msg,
+                                reactions: [
+                                    ...(msg.reactions || []).filter((item: any) => item.userId !== user?.id),
+                                    reaction || { emoji, userId: user?.id },
+                                ],
+                            }
+                            : msg
+                    ),
+                }));
             } catch (error) {
                 console.error("[useGroupChatMessage] Add reaction error:", error);
                 throw error;
             }
         },
-        [state.conversation]
+        [state.conversation, user?.id]
     );
 
     const removeReaction = useCallback(
@@ -1155,12 +1155,25 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
 
             try {
                 await SocketService.removeReaction(messageId, emoji);
+                setState((prev) => ({
+                    ...prev,
+                    messages: prev.messages.map((msg) =>
+                        getMessageId(msg) === messageId
+                            ? {
+                                ...msg,
+                                reactions: (msg.reactions || []).filter(
+                                    (reaction: any) => !(reaction.emoji === emoji && (!user?.id || reaction.userId === user.id))
+                                ),
+                            }
+                            : msg
+                    ),
+                }));
             } catch (error) {
                 console.error("[useGroupChatMessage] Remove reaction error:", error);
                 throw error;
             }
         },
-        [state.conversation]
+        [state.conversation, user?.id]
     );
 
     /**
@@ -1174,9 +1187,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             }
             const conversationId = state.conversation._id || state.conversation.id;
 
-            await SocketService.pinMessage(conversationId, messageId);
-            console.log('[useGroupChatMessage] Pin message action completed');
-        } catch (error: any) {
+            await SocketService.pinMessage(conversationId, messageId);        } catch (error: any) {
             setState((prev) => ({
                 ...prev,
                 error: error.message || "Failed to pin message",
@@ -1213,9 +1224,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 };
             });
 
-            await SocketService.unpinMessage(conversationId, messageId);
-            console.log('[useGroupChatMessage] Unpin message action completed');
-        } catch (error: any) {
+            await SocketService.unpinMessage(conversationId, messageId);        } catch (error: any) {
             const errorMsg = error?.message || "Failed to unpin message";
             const isNotPinnedError = errorMsg.includes("not pinned") || error?.status === 400;
 
@@ -1229,11 +1238,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     error: errorMsg,
                 }));
                 throw new Error(errorMsg);
-            }
-
-            // For "not pinned" error, keep the removal (message wasn't pinned anyway)
-            console.log('[useGroupChatMessage] Message was not pinned on backend, but removal succeeded');
-        }
+            }        }
     }, [state.conversation, state.pinnedMessages, state.pinnedMessageIndex]);
 
     /**
@@ -1274,13 +1279,6 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
 
             const conversationId = state.conversation._id || state.conversation.id;
             setState((prev) => ({ ...prev, isSending: true }));
-
-            console.log('[useGroupChatMessage] sendQuotedMessage:', {
-                conversationId,
-                quotedMessageId,
-                textLength: text.length,
-            });
-
             const messages = await SocketService.sendQuotedMessage(
                 conversationId,
                 quotedMessageId,
@@ -1451,12 +1449,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     const enriched = collapsePollMessages(attachPollsToMessages(
                         enrichMessagesWithQuotedData(merged),
                         messagesStateRef.current.polls
-                    ));
-                        console.log('[useGroupChatMessage] onMessage - enriched quoted fields:', {
-                            quotedMessageId: message.quotedMessageId,
-                            quotedMessageSenderName: message.quotedMessageSenderName,
-                        });
-                        updateStateAndCache({ messages: enriched });
+                    ));                        updateStateAndCache({ messages: enriched });
                     }
                 });
 
@@ -1500,9 +1493,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                         return;
                     }
 
-                    if (messagesStateRef.current) {
-                        console.log('[useGroupChatMessage] onMessageQuoted - adding and enriching');
-                        const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
+                    if (messagesStateRef.current) {                        const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
                         const enriched = collapsePollMessages(attachPollsToMessages(
                             enrichMessagesWithQuotedData(merged),
                             messagesStateRef.current.polls
@@ -1531,9 +1522,6 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     if (incomingConvId && incomingConvId !== conversationId && incomingConvId !== groupId) {
                         return;
                     }
-                    
-                    console.log('[useGroupChatMessage] Pinned message event:', data);
-
                     setState((prev) => {
                         if (data.type === "pinned") {
                             const pinnedMsg = data.pinnedMessage?.message || data.pinnedMessage;
@@ -1645,9 +1633,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                         ...prev,
                         pinnedMessages: pinnedMsgs || [],
                         pinnedMessageIndex: 0,
-                    }));
-                    console.log('[useGroupChatMessage] Loaded', pinnedMsgs?.length || 0, 'pinned messages');
-                } catch (error: any) {
+                    }));                } catch (error: any) {
                     console.warn('[useGroupChatMessage] Failed to load pinned messages:', error.message);
                 }
             } catch (error: any) {

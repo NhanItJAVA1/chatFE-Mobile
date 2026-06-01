@@ -15,11 +15,6 @@ const getAuthToken = async (): Promise<string | null> => {
     if (token) {
         token = String(token).trim();
     }
-    // Commented out debug log to reduce console spam
-    // console.log(
-    //     "[API] Token retrieved:",
-    //     token ? "✅ exists (" + token.substring(0, 20) + "...)" : "❌ missing"
-    // );
     return token;
 };
 
@@ -35,16 +30,12 @@ const setTokens = async (accessToken: string, refreshToken?: string): Promise<vo
     await authStorage.setItem("token", accessToken);
     if (refreshToken) {
         await authStorage.setItem("refreshToken", refreshToken);
-    }
-    console.log("[API] Tokens updated and saved");
-};
+    }};
 
 const clearTokens = async (): Promise<void> => {
     await authStorage.removeItem("token");
     await authStorage.removeItem("refreshToken");
-    await authStorage.removeItem("user");
-    console.log("[API] Tokens cleared (logout)");
-    DeviceEventEmitter.emit("forceLogout");
+    await authStorage.removeItem("user");    DeviceEventEmitter.emit("forceLogout");
 };
 
 const refreshAccessToken = async (): Promise<boolean> => {
@@ -56,9 +47,6 @@ const refreshAccessToken = async (): Promise<boolean> => {
             await clearTokens();
             return false;
         }
-
-        console.log("[API] Attempting to refresh access token...");
-
         // Call refresh endpoint WITHOUT auth header to avoid infinite loop
         const baseUrl = getApiBaseUrl();
         const response = await fetch(buildUrl("/auth/refresh"), {
@@ -75,9 +63,7 @@ const refreshAccessToken = async (): Promise<boolean> => {
             const newRefreshToken = result.data?.refreshToken || result.refreshToken;
 
             if (newAccessToken) {
-                await setTokens(newAccessToken, newRefreshToken);
-                console.log("[API] ✅ Access token refreshed successfully");
-                return true;
+                await setTokens(newAccessToken, newRefreshToken);                return true;
             } else {
                 console.error("[API] No token in refresh response:", result);
                 return false;
@@ -115,12 +101,6 @@ export const apiCall = async (
             ...(optionHeaders || {}),
         };
 
-        // Commented out debug log to reduce console spam
-        // console.log(`[API] ${options.method || "GET"} ${endpoint}`, {
-        //     hasToken: !!token,
-        //     authHeader: headers.Authorization ? "set" : "missing",
-        // });
-
         let response = await fetch(url, {
             headers,
             ...fetchOptions,
@@ -131,9 +111,7 @@ export const apiCall = async (
             console.warn(`[API] Got 401 on ${options.method || "GET"} ${endpoint}`);
 
             // If already refreshing, queue this request
-            if (isRefreshing) {
-                console.log("[API] Token refresh in progress, queuing request...");
-                return new Promise((resolve, reject) => {
+            if (isRefreshing) {                return new Promise((resolve, reject) => {
                     refreshQueue.push(async () => {
                         try {
                             const result = await apiCall(endpoint, options);
@@ -147,21 +125,14 @@ export const apiCall = async (
 
             // Start refresh process
             isRefreshing = true;
-            console.log("[API] Starting token refresh...");
-
             const refreshed = await refreshAccessToken();
 
             // Process queued requests
             isRefreshing = false;
             const queue = refreshQueue;
-            refreshQueue = [];
-            console.log(`[API] Processing ${queue.length} queued requests`);
-            queue.forEach((callback) => callback());
+            refreshQueue = [];            queue.forEach((callback) => callback());
 
-            if (refreshed) {
-                // Retry with new token
-                console.log("[API] Retrying request with new token...");
-                token = skipAuth ? null : await getAuthToken();
+            if (refreshed) {                token = skipAuth ? null : await getAuthToken();
                 const newHeaders: Record<string, string> = {
                     "Content-Type": "application/json",
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
