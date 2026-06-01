@@ -12,7 +12,7 @@ export interface ConversationLastMessageSummary {
 export interface Conversation {
     _id: string;
     id?: string;
-    type: "PRIVATE" | "GROUP";
+    type: "PRIVATE" | "GROUP" | "saved_messages";
     name?: string;
     members?: string[];
     pairKey?: string;
@@ -26,6 +26,16 @@ export interface Conversation {
     unreadCount?: number;
     createdAt: string;
     updatedAt: string;
+    // Pin fields
+    pinned?: boolean;
+    isPinned?: boolean;
+    pinnedAt?: string;
+    // Archive fields
+    archived?: boolean;
+    isArchived?: boolean;
+    // Saved Messages fields
+    isSavedMessages?: boolean;
+    isSelfChat?: boolean;
 }
 
 export interface MessageResponse {
@@ -353,6 +363,58 @@ export class ConversationService {
             return response.data || response;
         } catch (error: any) {
 
+            throw error;
+        }
+    }
+
+    /**
+     * Pin a conversation
+     */
+    static async pinConversation(conversationId: string): Promise<any> {
+        try {
+            const response = await api.post(`/conversations/${conversationId}/pin-conversation`, {});
+            return response.data || response;
+        } catch (error: any) {
+            console.error("[ConversationService] Error pinning conversation:", error);
+            throw error;
+        }
+    }
+
+    /**
+     * Unpin a conversation
+     */
+    static async unpinConversation(conversationId: string): Promise<any> {
+        try {
+            const response = await api.delete(`/conversations/${conversationId}/pin-conversation`);
+            return response.data || response;
+        } catch (error: any) {
+            console.error("[ConversationService] Error unpinning conversation:", error);
+            throw error;
+        }
+    }
+
+    /**
+     * Archive a conversation
+     */
+    static async archiveConversation(conversationId: string): Promise<any> {
+        try {
+            const response = await api.post(`/conversations/${conversationId}/archive`, {});
+            return response.data || response;
+        } catch (error: any) {
+            console.error("[ConversationService] Error archiving conversation:", error);
+            throw error;
+        }
+    }
+
+    /**
+     * Unarchive a conversation
+     */
+    static async unarchiveConversation(conversationId: string): Promise<any> {
+        try {
+            const response = await api.delete(`/conversations/${conversationId}/archive`);
+            return response.data || response;
+        } catch (error: any) {
+            console.error("[ConversationService] Error unarchiving conversation:", error);
             throw error;
         }
     }

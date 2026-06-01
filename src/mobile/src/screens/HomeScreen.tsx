@@ -1,15 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import {
     ActivityIndicator,
     Alert,
     AppState,
+    Dimensions,
     Image,
+    Modal,
     Pressable,
     ScrollView,
     StyleSheet,
     Text,
     TextInput,
+    TouchableOpacity,
     View,
 } from "react-native";
 import { useAuth, useFriendship } from "../../../shared/hooks";
@@ -29,6 +32,47 @@ interface HomeScreenProps {
     onGroupCreatedAck?: () => void;
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/** Normalize pinned boolean from varying backend shapes */
+const getIsPinned = (c: Conversation): boolean =>
+    !!(c.pinned || (c as any).isPinned);
+
+/** Normalize archived boolean from varying backend shapes */
+const getIsArchived = (c: Conversation): boolean =>
+    !!(c.archived || (c as any).isArchived);
+
+/** Detect Saved Messages / self-chat conversations */
+const getIsSavedMessages = (c: Conversation): boolean =>
+    (c as any).type === "saved_messages" ||
+    !!(c as any).isSavedMessages ||
+    !!(c as any).isSelfChat;
+
+/** Pinned-first sorting comparator */
+const sortConversations = (a: Conversation, b: Conversation): number => {
+    const pinnedA = getIsPinned(a);
+    const pinnedB = getIsPinned(b);
+
+    // Pinned conversations always appear first
+    if (pinnedA !== pinnedB) return pinnedA ? -1 : 1;
+
+    // Both pinned → newer pinnedAt first
+    if (pinnedA && pinnedB) {
+        const pa = new Date((a as any).pinnedAt || 0).getTime() || 0;
+        const pb = new Date((b as any).pinnedAt || 0).getTime() || 0;
+        if (pa !== pb) return pb - pa;
+    }
+
+    // Both unpinned (or same pin time) → newer activity first
+    const ta = new Date(
+        (a as any).lastMessageAt || (a as any).updatedAt || 0
+    ).getTime() || 0;
+    const tb = new Date(
+        (b as any).lastMessageAt || (b as any).updatedAt || 0
+    ).getTime() || 0;
+    return tb - ta;
+};
+
 export const HomeScreen: React.FC<HomeScreenProps> = ({
     onFriendPress,
     onGroupPress,
@@ -43,6 +87,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [conversationsLoading, setConversationsLoading] = useState(false);
     const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
+
+    // ── Pagination state ─────────────────────────────────────────────
+    const PAGE_SIZE = 50;
+    const currentPageRef = useRef(1);
+    const [hasMorePages, setHasMorePages] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+
+    // ── Pin / Archive state ──────────────────────────────────────────
+    const [showArchivedView, setShowArchivedView] = useState(false);
+    const [contextMenuConversation, setContextMenuConversation] = useState<Conversation | null>(null);
 
     const getConversationIdentity = useCallback((conversation: Conversation): string => {
         const id = (conversation as any)?.id || (conversation as any)?._id;
@@ -85,6 +139,39 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return Array.from(map.values());
     }, [getConversationIdentity]);
 
+    // ── Load more conversations (next page) ──────────────────────────
+    const loadMoreConversations = useCallback(async () => {
+        if (loadingMore || !hasMorePages) return;
+        setLoadingMore(true);
+        try {
+            const nextPage = currentPageRef.current + 1;
+            const items = await ConversationService.getConversations(nextPage, PAGE_SIZE);
+            if (items.length < PAGE_SIZE) {
+                setHasMorePages(false);
+            }
+            if (items.length > 0) {
+                currentPageRef.current = nextPage;
+                setConversations((prev) => dedupeConversations([...prev, ...items]));
+            }
+        } catch {
+            // Silent – user can scroll again to retry
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [loadingMore, hasMorePages, dedupeConversations]);
+
+    // ── Scroll handler – load more when near bottom ──────────────────
+    const handleScrollEnd = useCallback(
+        (event: any) => {
+            const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+            const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+            if (distanceFromBottom < 200) {
+                loadMoreConversations();
+            }
+        },
+        [loadMoreConversations]
+    );
+
     // Load friends on mount
     useEffect(() => {
         const loadHomeData = async () => {
@@ -92,7 +179,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             try {
                 await Promise.all([
                     actions.loadFriends(),
-                    ConversationService.getConversations(1, 50).then((items) => {
+                    ConversationService.getConversations(1, PAGE_SIZE).then((items) => {
+                        currentPageRef.current = 1;
+                        setHasMorePages(items.length >= PAGE_SIZE);
                         setConversations(dedupeConversations(items));
                     }),
                 ]);
@@ -166,6 +255,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
     const isSelfConversation = useCallback(
         (conversation: Conversation): boolean => {
+            // Check Saved Messages detection from guide
+            if (getIsSavedMessages(conversation)) return true;
+
             const pairKey = String(conversation.pairKey || "");
 
             if (currentUserId && pairKey === `self_${currentUserId}`) {
@@ -290,11 +382,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     })
                     .filter(Boolean) as Conversation[];
 
-                return [...next].sort((a, b) => {
-                    const ta = new Date(getLastMessageCreatedAt(a) || 0).getTime() || 0;
-                    const tb = new Date(getLastMessageCreatedAt(b) || 0).getTime() || 0;
-                    return tb - ta;
-                });
+                return [...next].sort(sortConversations);
             });
         },
         []
@@ -360,6 +448,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return "Tin nhắn";
     };
 
+    // ── Delete conversation ──────────────────────────────────────────
     const handleDeleteConversation = useCallback((conversation: Conversation) => {
         const conversationId = getConversationId(conversation);
         if (!conversationId) return;
@@ -385,6 +474,101 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 },
             ]
         );
+    }, []);
+
+    // ── Pin / Unpin with optimistic update ───────────────────────────
+    const handlePinConversation = useCallback((conversation: Conversation) => {
+        const conversationId = getConversationId(conversation);
+        if (!conversationId) return;
+
+        const wasPinned = getIsPinned(conversation);
+        const prevPinnedAt = (conversation as any).pinnedAt;
+
+        // Optimistic update
+        setConversations((prev) => {
+            const next = prev.map((c) => {
+                const id = c.id || c._id;
+                if (id !== conversationId) return c;
+                if (wasPinned) {
+                    // Unpin
+                    return { ...c, pinned: false, isPinned: false, pinnedAt: undefined } as Conversation;
+                } else {
+                    // Pin
+                    return { ...c, pinned: true, isPinned: true, pinnedAt: new Date().toISOString() } as Conversation;
+                }
+            });
+            return [...next].sort(sortConversations);
+        });
+
+        // Call API
+        const apiCall = wasPinned
+            ? ConversationService.unpinConversation(conversationId)
+            : ConversationService.pinConversation(conversationId);
+
+        apiCall.catch(() => {
+            // Rollback
+            setConversations((prev) => {
+                const next = prev.map((c) => {
+                    const id = c.id || c._id;
+                    if (id !== conversationId) return c;
+                    return { ...c, pinned: wasPinned, isPinned: wasPinned, pinnedAt: prevPinnedAt } as Conversation;
+                });
+                return [...next].sort(sortConversations);
+            });
+            Alert.alert("Lỗi", wasPinned ? "Không thể bỏ ghim" : "Không thể ghim cuộc trò chuyện");
+        });
+    }, []);
+
+    // ── Archive / Unarchive with optimistic update ───────────────────
+    const handleArchiveConversation = useCallback((conversation: Conversation) => {
+        const conversationId = getConversationId(conversation);
+        if (!conversationId) return;
+
+        // Guard: do not archive Saved Messages
+        if (isSelfConversation(conversation)) return;
+
+        const wasArchived = getIsArchived(conversation);
+
+        // Optimistic update
+        setConversations((prev) => {
+            const next = prev.map((c) => {
+                const id = c.id || c._id;
+                if (id !== conversationId) return c;
+                if (wasArchived) {
+                    return { ...c, archived: false, isArchived: false } as Conversation;
+                } else {
+                    return { ...c, archived: true, isArchived: true } as Conversation;
+                }
+            });
+            return [...next].sort(sortConversations);
+        });
+
+        // Call API
+        const apiCall = wasArchived
+            ? ConversationService.unarchiveConversation(conversationId)
+            : ConversationService.archiveConversation(conversationId);
+
+        apiCall.catch(() => {
+            // Rollback
+            setConversations((prev) => {
+                const next = prev.map((c) => {
+                    const id = c.id || c._id;
+                    if (id !== conversationId) return c;
+                    return { ...c, archived: wasArchived, isArchived: wasArchived } as Conversation;
+                });
+                return [...next].sort(sortConversations);
+            });
+            Alert.alert("Lỗi", wasArchived ? "Không thể bỏ lưu trữ" : "Không thể lưu trữ cuộc trò chuyện");
+        });
+    }, [isSelfConversation]);
+
+    // ── Context menu handler ─────────────────────────────────────────
+    const handleLongPress = useCallback((conversation: Conversation) => {
+        setContextMenuConversation(conversation);
+    }, []);
+
+    const closeContextMenu = useCallback(() => {
+        setContextMenuConversation(null);
     }, []);
 
     useEffect(() => {
@@ -486,11 +670,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     } as Conversation;
                 });
 
-                return [...next].sort((a, b) => {
-                    const ta = new Date(getLastMessageCreatedAt(a) || 0).getTime() || 0;
-                    const tb = new Date(getLastMessageCreatedAt(b) || 0).getTime() || 0;
-                    return tb - ta;
-                });
+                // Use pinned-first sort instead of simple time sort
+                return [...next].sort(sortConversations);
             });
         };
 
@@ -596,7 +777,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
         const handleGroupCreated = (data: any) => {
             // Reload conversations when a new group is created
-            ConversationService.getConversations(1, 50).then((updated) => {
+            ConversationService.getConversations(1, PAGE_SIZE).then((updated) => {
                 setConversations(dedupeConversations(updated));
             });
         };
@@ -619,7 +800,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 return;
             }
 
-            ConversationService.getConversations(1, 50).then((updated) => {
+            ConversationService.getConversations(1, PAGE_SIZE).then((updated) => {
                 setConversations(dedupeConversations(updated));
             });
         };
@@ -677,6 +858,50 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }
         };
 
+        // ── Pin socket event ─────────────────────────────────────────
+        const handlePinToggled = (data: any) => {
+            const conversationId = String(data?.conversationId || "");
+            if (!conversationId) return;
+
+            const pinned = !!data?.pinned;
+            const pinnedAt = data?.pinnedAt || (pinned ? new Date().toISOString() : undefined);
+
+            setConversations((prev) => {
+                const next = prev.map((c) => {
+                    const id = c.id || c._id;
+                    if (id !== conversationId) return c;
+                    return {
+                        ...c,
+                        pinned,
+                        isPinned: pinned,
+                        pinnedAt: pinned ? pinnedAt : undefined,
+                    } as Conversation;
+                });
+                return [...next].sort(sortConversations);
+            });
+        };
+
+        // ── Archive socket event ─────────────────────────────────────
+        const handleArchivedToggled = (data: any) => {
+            const conversationId = String(data?.conversationId || "");
+            if (!conversationId) return;
+
+            const archived = !!data?.archived;
+
+            setConversations((prev) => {
+                const next = prev.map((c) => {
+                    const id = c.id || c._id;
+                    if (id !== conversationId) return c;
+                    return {
+                        ...c,
+                        archived,
+                        isArchived: archived,
+                    } as Conversation;
+                });
+                return [...next].sort(sortConversations);
+            });
+        };
+
         socket.on("receiveMessage", handleReceiveMessage);
         socket.on("messageSeen", handleMessageSeen);
         socket.on("message:edited", handleMessageEdited);
@@ -686,6 +911,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         socket.on("conversation:members_added", handleGroupMembersAdded);
         socket.on("conversation:member_removed", handleGroupMemberRemoved);
         socket.on("conversation:updated", handleConversationUpdated);
+        socket.on("conversation:pin_toggled", handlePinToggled);
+        socket.on("conversation:archived_toggled", handleArchivedToggled);
 
         return () => {
             socket.off("receiveMessage", handleReceiveMessage);
@@ -697,6 +924,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             socket.off("conversation:members_added", handleGroupMembersAdded);
             socket.off("conversation:member_removed", handleGroupMemberRemoved);
             socket.off("conversation:updated", handleConversationUpdated);
+            socket.off("conversation:pin_toggled", handlePinToggled);
+            socket.off("conversation:archived_toggled", handleArchivedToggled);
         };
     }, [token, user?.id, (user as any)?._id, dedupeConversations, updateConversationLastMessage]);
 
@@ -710,7 +939,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
         const refreshConversations = async () => {
             try {
-                const updated = await ConversationService.getConversations(1, 50);
+                // Reload all pages that were previously loaded
+                const totalLoaded = currentPageRef.current * PAGE_SIZE;
+                const updated = await ConversationService.getConversations(1, Math.max(totalLoaded, PAGE_SIZE));
                 if (isMounted) {
                     setConversations(dedupeConversations(updated));
                 }
@@ -732,25 +963,39 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         };
     }, [token, dedupeConversations]);
 
-    const filteredConversations = useMemo(() => {
+    // ── Derived lists ────────────────────────────────────────────────
+
+    const normalConversations = useMemo(() => {
         const needle = query.trim().toLowerCase();
+        const nonArchived = conversations
+            .filter((c) => !getIsArchived(c))
+            .sort(sortConversations);
 
-        // Sort conversations by last message time (newest first)
-        const sorted = [...conversations].sort((a, b) => {
-            const tsA = new Date(getLastMessageCreatedAt(a) || 0).getTime() || 0;
-            const tsB = new Date(getLastMessageCreatedAt(b) || 0).getTime() || 0;
-            return tsB - tsA;
-        });
+        if (!needle) return nonArchived;
 
-        if (!needle) {
-            return sorted;
-        }
-
-        return sorted.filter((conv) => {
+        return nonArchived.filter((conv) => {
             const displayInfo = getConversationDisplayInfo(conv);
             return displayInfo.searchText.toLowerCase().includes(needle);
         });
     }, [conversations, query, getConversationDisplayInfo]);
+
+    const archivedConversations = useMemo(() => {
+        return conversations.filter((c) => getIsArchived(c)).sort(sortConversations);
+    }, [conversations]);
+
+    const archivedUnreadCount = useMemo(() => {
+        return archivedConversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+    }, [archivedConversations]);
+
+    const archivedPreviewNames = useMemo(() => {
+        return archivedConversations
+            .map((c) => getConversationDisplayInfo(c).displayName)
+            .filter(Boolean)
+            .join(", ");
+    }, [archivedConversations, getConversationDisplayInfo]);
+
+    // Use whichever list the current view requires
+    const displayConversations = showArchivedView ? archivedConversations : normalConversations;
 
     /**
      * Handle friend press - navigate to chat
@@ -803,63 +1048,342 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         });
     };
 
+    // ── Context Menu Modal ───────────────────────────────────────────
+    const renderContextMenu = () => {
+        if (!contextMenuConversation) return null;
+
+        const conv = contextMenuConversation;
+        const isPinned = getIsPinned(conv);
+        const isArchived = getIsArchived(conv);
+        const isSaved = isSelfConversation(conv);
+        const displayInfo = getConversationDisplayInfo(conv);
+
+        return (
+            <Modal
+                transparent
+                visible={!!contextMenuConversation}
+                animationType="fade"
+                onRequestClose={closeContextMenu}
+            >
+                <Pressable style={styles.contextOverlay} onPress={closeContextMenu}>
+                    <View style={styles.contextMenu}>
+                        {/* Header */}
+                        <View style={styles.contextHeader}>
+                            <Text style={styles.contextTitle} numberOfLines={1}>
+                                {displayInfo.displayName}
+                            </Text>
+                        </View>
+
+                        {/* Pin / Unpin */}
+                        <TouchableOpacity
+                            style={styles.contextItem}
+                            activeOpacity={0.6}
+                            onPress={() => {
+                                closeContextMenu();
+                                handlePinConversation(conv);
+                            }}
+                        >
+                            <Ionicons
+                                name={isPinned ? "pin-outline" : "pin"}
+                                size={20}
+                                color={colors.accent}
+                            />
+                            <Text style={styles.contextItemText}>
+                                {isPinned ? "Bỏ ghim" : "Ghim lên đầu"}
+                            </Text>
+                        </TouchableOpacity>
+
+                        {/* Archive / Unarchive - hidden for Saved Messages */}
+                        {!isSaved && (
+                            <TouchableOpacity
+                                style={styles.contextItem}
+                                activeOpacity={0.6}
+                                onPress={() => {
+                                    closeContextMenu();
+                                    handleArchiveConversation(conv);
+                                }}
+                            >
+                                <Ionicons
+                                    name={isArchived ? "arrow-undo-outline" : "archive-outline"}
+                                    size={20}
+                                    color={colors.accentAlt}
+                                />
+                                <Text style={styles.contextItemText}>
+                                    {isArchived ? "Bỏ lưu trữ" : "Lưu trữ"}
+                                </Text>
+                            </TouchableOpacity>
+                        )}
+
+                        {/* Delete */}
+                        <TouchableOpacity
+                            style={styles.contextItem}
+                            activeOpacity={0.6}
+                            onPress={() => {
+                                closeContextMenu();
+                                handleDeleteConversation(conv);
+                            }}
+                        >
+                            <Ionicons name="trash-outline" size={20} color={colors.danger} />
+                            <Text style={[styles.contextItemText, { color: colors.danger }]}>
+                                Xóa
+                            </Text>
+                        </TouchableOpacity>
+
+                        {/* Cancel */}
+                        <TouchableOpacity
+                            style={[styles.contextItem, styles.contextCancel]}
+                            activeOpacity={0.6}
+                            onPress={closeContextMenu}
+                        >
+                            <Text style={[styles.contextItemText, { color: colors.textMuted, textAlign: "center" }]}>
+                                Hủy
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                </Pressable>
+            </Modal>
+        );
+    };
+
+    // ── Archived view header ─────────────────────────────────────────
+    const renderArchivedHeader = () => {
+        if (!showArchivedView) return null;
+        return (
+            <View style={styles.archivedHeader}>
+                <Pressable
+                    onPress={() => setShowArchivedView(false)}
+                    style={({ pressed }) => [
+                        styles.archivedBackBtn,
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    <Ionicons name="arrow-back" size={24} color={colors.text} />
+                </Pressable>
+                <Text style={styles.archivedHeaderTitle}>Lưu trữ</Text>
+                <View style={{ width: 40 }} />
+            </View>
+        );
+    };
+
+    // ── Archived Chats row (top of normal list) ──────────────────────
+    const renderArchivedChatsRow = () => {
+        if (showArchivedView) return null;
+        if (archivedConversations.length === 0) return null;
+
+        return (
+            <Pressable
+                onPress={() => setShowArchivedView(true)}
+                style={({ pressed }) => [
+                    styles.archivedRow,
+                    pressed && { backgroundColor: "rgba(59,130,246,0.08)" },
+                ]}
+            >
+                <View style={styles.archivedRowIcon}>
+                    <Ionicons name="archive" size={22} color={colors.accent} />
+                </View>
+                <View style={styles.archivedRowMeta}>
+                    <Text style={styles.archivedRowTitle}>Lưu trữ</Text>
+                    <Text style={styles.archivedRowSubtitle} numberOfLines={1}>
+                        {archivedPreviewNames || "Không có cuộc trò chuyện"}
+                    </Text>
+                </View>
+                {archivedUnreadCount > 0 && (
+                    <View style={styles.unreadBadge}>
+                        <Text style={styles.unreadBadgeText}>
+                            {archivedUnreadCount > 99 ? "99+" : archivedUnreadCount}
+                        </Text>
+                    </View>
+                )}
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            </Pressable>
+        );
+    };
+
+    // ── Render a single conversation row ─────────────────────────────
+    const renderConversationRow = (conversation: Conversation, index: number, list: Conversation[]) => {
+        if (!conversation) return null;
+
+        const unreadCount = conversation?.unreadCount || 0;
+        const timeText = formatChatTime(getLastMessageCreatedAt(conversation));
+        const previewText = getLastMessagePreview(conversation);
+        const isPinned = getIsPinned(conversation);
+
+        const conversationType = getConversationType(conversation);
+        const { displayName, displayAvatar, otherMemberId } = getConversationDisplayInfo(conversation);
+        const presence = otherMemberId ? presenceByUserId[otherMemberId] : undefined;
+        const isOnline = !!(presence?.isOnline ?? presence?.online);
+
+        return (
+            <View
+                key={`${getConversationIdentity(conversation)}-${index}`}
+                style={[
+                    styles.chatRow,
+                    index !== list.length - 1 &&
+                    styles.rowDivider,
+                ]}
+            >
+                <Pressable
+                    onPress={() => handleConversationPress(conversation)}
+                    onLongPress={() => handleLongPress(conversation)}
+                    style={({ pressed }) => [
+                        styles.chatRowContent,
+                        pressed && styles.chatRowPressed,
+                    ]}
+                >
+                    {displayAvatar ? (
+                        <Image
+                            source={{
+                                uri: displayAvatar,
+                            }}
+                            style={[
+                                styles.avatarImage,
+                                { width: 54, height: 54, borderRadius: 27 },
+                            ]}
+                        />
+                    ) : (
+                        <Avatar
+                            label={(displayName || "U").slice(0, 1).toUpperCase()}
+                            size={54}
+                            backgroundColor="#3d6df2"
+                            textSize={16}
+                        />
+                    )}
+                    <View style={styles.chatMeta}>
+                        <View style={styles.chatTopLine}>
+                            <View style={styles.chatNameRow}>
+                                {isPinned && (
+                                    <Ionicons
+                                        name="pin"
+                                        size={14}
+                                        color={colors.accent}
+                                        style={styles.pinIcon}
+                                    />
+                                )}
+                                <Text
+                                    style={styles.chatName}
+                                    numberOfLines={1}
+                                >
+                                    {truncateName(displayName)}
+                                    {conversationType === "GROUP" && " (Nhóm)"}
+                                </Text>
+                            </View>
+                            <View
+                                style={[
+                                    styles.statusDot,
+                                    {
+                                        backgroundColor: conversationType === "GROUP" ? "#8b5cf6" : isOnline ? "#22c55e" : "#9ca3af",
+                                    },
+                                ]}
+                            />
+                        </View>
+                        <View style={styles.chatBottomLine}>
+                            <Text
+                                style={styles.chatMessage}
+                                numberOfLines={1}
+                            >
+                                {previewText}
+                            </Text>
+                            {conversation?.lastMessageStatus ? (
+                                <Ionicons
+                                    name={conversation.lastMessageStatus === "read" ? "checkmark-done" : "checkmark"}
+                                    size={14}
+                                    color={conversation.lastMessageStatus === "read" ? colors.accent : colors.textMuted}
+                                />
+                            ) : null}
+                            {timeText ? <Text style={styles.chatTime}>{timeText}</Text> : null}
+                            {unreadCount > 0 ? (
+                                <View style={styles.unreadBadge}>
+                                    <Text style={styles.unreadBadgeText}>
+                                        {unreadCount > 99 ? "99+" : unreadCount}
+                                    </Text>
+                                </View>
+                            ) : null}
+                        </View>
+                    </View>
+                </Pressable>
+
+                {/* Chat icon button on the right */}
+                <Pressable
+                    onPress={() => handleConversationPress(conversation)}
+                    style={({ pressed }) => [
+                        styles.chatIconButton,
+                        pressed && styles.chatIconButtonPressed,
+                    ]}
+                >
+                    <Ionicons
+                        name="chatbubble"
+                        size={20}
+                        color={colors.accent}
+                    />
+                </Pressable>
+            </View>
+        );
+    };
+
     return (
         <View style={styles.screen}>
+            {renderArchivedHeader()}
             <ScrollView
                 contentContainerStyle={styles.homeContent}
                 keyboardShouldPersistTaps="handled"
+                onScroll={handleScrollEnd}
+                scrollEventThrottle={400}
             >
-                <View style={styles.homeTopRow}>
-                    <View style={styles.brandPill}>
-                        <Ionicons name="paper-plane" size={14} color={colors.text} />
-                        <Text style={styles.brandText}>ChatChit</Text>
-                    </View>
-                    <Pressable
-                        style={({ pressed }) => [
-                            styles.actionCircle,
-                            pressed && { opacity: 0.7 }
-                        ]}
-                        onPress={onCreateGroupPress}
-                    >
-                        <Ionicons name="create-outline" size={22} color={colors.text} />
-                    </Pressable>
-                </View>
+                {!showArchivedView && (
+                    <>
+                        <View style={styles.homeTopRow}>
+                            <View style={styles.brandPill}>
+                                <Ionicons name="paper-plane" size={14} color={colors.text} />
+                                <Text style={styles.brandText}>ChatChit</Text>
+                            </View>
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.actionCircle,
+                                    pressed && { opacity: 0.7 }
+                                ]}
+                                onPress={onCreateGroupPress}
+                            >
+                                <Ionicons name="create-outline" size={22} color={colors.text} />
+                            </Pressable>
+                        </View>
 
-                <SectionTitle
-                    title="Chat"
-                    subtitle={
-                        user?.displayName
-                            ? `Hello, ${truncateName(user.displayName, 20)}`
-                            : "Your recent conversations"
-                    }
-                    rightLabel="Sửa"
-                />
+                        <SectionTitle
+                            title="Chat"
+                            subtitle={
+                                user?.displayName
+                                    ? `Hello, ${truncateName(user.displayName, 20)}`
+                                    : "Your recent conversations"
+                            }
+                            rightLabel="Sửa"
+                        />
 
-                <View style={styles.searchBar}>
-                    <Ionicons name="search" size={18} color={colors.textMuted} />
-                    <TextInput
-                        value={query}
-                        onChangeText={setQuery}
-                        placeholder="Search chats"
-                        placeholderTextColor={colors.textMuted}
-                        style={styles.searchInput}
-                    />
-                </View>
+                        <View style={styles.searchBar}>
+                            <Ionicons name="search" size={18} color={colors.textMuted} />
+                            <TextInput
+                                value={query}
+                                onChangeText={setQuery}
+                                placeholder="Search chats"
+                                placeholderTextColor={colors.textMuted}
+                                style={styles.searchInput}
+                            />
+                        </View>
 
-                <View style={styles.filterRow}>
-                    <View style={[styles.filterChip, styles.filterChipActive]}>
-                        <Text style={styles.filterTextActive}>All</Text>
-                    </View>
-                    <View style={styles.filterChip}>
-                        <Text style={styles.filterText}>Unread</Text>
-                    </View>
-                    <View style={styles.filterChip}>
-                        <Text style={styles.filterText}>Groups</Text>
-                    </View>
-                    <View style={styles.filterChip}>
-                        <Text style={styles.filterText}>Calls</Text>
-                    </View>
-                </View>
+                        <View style={styles.filterRow}>
+                            <View style={[styles.filterChip, styles.filterChipActive]}>
+                                <Text style={styles.filterTextActive}>All</Text>
+                            </View>
+                            <View style={styles.filterChip}>
+                                <Text style={styles.filterText}>Unread</Text>
+                            </View>
+                            <View style={styles.filterChip}>
+                                <Text style={styles.filterText}>Groups</Text>
+                            </View>
+                            <View style={styles.filterChip}>
+                                <Text style={styles.filterText}>Calls</Text>
+                            </View>
+                        </View>
+                    </>
+                )}
 
                 <Card style={styles.chatListCard}>
                     {state.friendsLoading || conversationsLoading ? (
@@ -867,7 +1391,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             <ActivityIndicator size="large" color={colors.accent} />
                             <Text style={styles.loadingText}>Đang tải danh sách chat...</Text>
                         </View>
-                    ) : filteredConversations.length === 0 ? (
+                    ) : displayConversations.length === 0 && archivedConversations.length === 0 ? (
                         <View style={styles.emptyContainer}>
                             <Ionicons
                                 name="people-outline"
@@ -881,117 +1405,45 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             </Text>
                         </View>
                     ) : (
-                        filteredConversations.map((conversation: Conversation, index: number) => {
-                            if (!conversation) return null;
+                        <>
+                            {/* Archived Chats row at top of normal view */}
+                            {renderArchivedChatsRow()}
 
-                            const unreadCount = conversation?.unreadCount || 0;
-                            const timeText = formatChatTime(getLastMessageCreatedAt(conversation));
-                            const previewText = getLastMessagePreview(conversation);
-
-                            const conversationType = getConversationType(conversation);
-                            const { displayName, displayAvatar, otherMemberId } = getConversationDisplayInfo(conversation);
-                            const presence = otherMemberId ? presenceByUserId[otherMemberId] : undefined;
-                            const isOnline = !!(presence?.isOnline ?? presence?.online);
-
-                            return (
-                                <View
-                                    key={`${getConversationIdentity(conversation)}-${index}`}
-                                    style={[
-                                        styles.chatRow,
-                                        index !== filteredConversations.length - 1 &&
-                                        styles.rowDivider,
-                                    ]}
-                                >
-                                    <Pressable
-                                        onPress={() => handleConversationPress(conversation)}
-                                        onLongPress={() => handleDeleteConversation(conversation)}
-                                        style={({ pressed }) => [
-                                            styles.chatRowContent,
-                                            pressed && styles.chatRowPressed,
-                                        ]}
-                                    >
-                                        {displayAvatar ? (
-                                            <Image
-                                                source={{
-                                                    uri: displayAvatar,
-                                                }}
-                                                style={[
-                                                    styles.avatarImage,
-                                                    { width: 54, height: 54, borderRadius: 27 },
-                                                ]}
-                                            />
-                                        ) : (
-                                            <Avatar
-                                                label={(displayName || "U").slice(0, 1).toUpperCase()}
-                                                size={54}
-                                                backgroundColor="#3d6df2"
-                                                textSize={16}
-                                            />
-                                        )}
-                                        <View style={styles.chatMeta}>
-                                            <View style={styles.chatTopLine}>
-                                                <Text
-                                                    style={styles.chatName}
-                                                    numberOfLines={1}
-                                                >
-                                                    {truncateName(displayName)}
-                                                    {conversationType === "GROUP" && " (Nhóm)"}
-                                                </Text>
-                                                <View
-                                                    style={[
-                                                        styles.statusDot,
-                                                        {
-                                                            backgroundColor: conversationType === "GROUP" ? "#8b5cf6" : isOnline ? "#22c55e" : "#9ca3af",
-                                                        },
-                                                    ]}
-                                                />
-                                            </View>
-                                            <View style={styles.chatBottomLine}>
-                                                <Text
-                                                    style={styles.chatMessage}
-                                                    numberOfLines={1}
-                                                >
-                                                    {previewText}
-                                                </Text>
-                                                {conversation?.lastMessageStatus ? (
-                                                    <Ionicons
-                                                        name={conversation.lastMessageStatus === "read" ? "checkmark-done" : "checkmark"}
-                                                        size={14}
-                                                        color={conversation.lastMessageStatus === "read" ? colors.accent : colors.textMuted}
-                                                    />
-                                                ) : null}
-                                                {timeText ? <Text style={styles.chatTime}>{timeText}</Text> : null}
-                                                {unreadCount > 0 ? (
-                                                    <View style={styles.unreadBadge}>
-                                                        <Text style={styles.unreadBadgeText}>
-                                                            {unreadCount > 99 ? "99+" : unreadCount}
-                                                        </Text>
-                                                    </View>
-                                                ) : null}
-                                            </View>
-                                        </View>
-                                    </Pressable>
-
-                                    {/* Chat icon button on the right */}
-                                    <Pressable
-                                        onPress={() => handleConversationPress(conversation)}
-                                        style={({ pressed }) => [
-                                            styles.chatIconButton,
-                                            pressed && styles.chatIconButtonPressed,
-                                        ]}
-                                    >
-                                        <Ionicons
-                                            name="chatbubble"
-                                            size={20}
-                                            color={colors.accent}
-                                        />
-                                    </Pressable>
+                            {displayConversations.length === 0 && showArchivedView ? (
+                                <View style={styles.emptyContainer}>
+                                    <Ionicons name="archive-outline" size={48} color={colors.textMuted} />
+                                    <Text style={styles.emptyText}>Không có cuộc trò chuyện lưu trữ</Text>
                                 </View>
-                            );
-                        })
+                            ) : displayConversations.length === 0 && !showArchivedView ? (
+                                <View style={styles.emptyContainer}>
+                                    <Ionicons name="people-outline" size={48} color={colors.textMuted} />
+                                    <Text style={styles.emptyText}>Không tìm thấy kết quả</Text>
+                                </View>
+                            ) : (
+                                displayConversations.map((conversation, index) =>
+                                    renderConversationRow(conversation, index, displayConversations)
+                                )
+                            )}
+
+                            {/* Load more indicator */}
+                            {loadingMore && (
+                                <View style={styles.loadMoreContainer}>
+                                    <ActivityIndicator size="small" color={colors.accent} />
+                                    <Text style={styles.loadMoreText}>Đang tải thêm...</Text>
+                                </View>
+                            )}
+                            {!hasMorePages && displayConversations.length > 0 && !loadingMore && (
+                                <View style={styles.loadMoreContainer}>
+                                    <Text style={styles.loadMoreText}>Đã tải hết cuộc trò chuyện</Text>
+                                </View>
+                            )}
+                        </>
                     )}
                 </Card>
             </ScrollView>
+
+            {/* Context menu modal */}
+            {renderContextMenu()}
         </View>
     );
 };
@@ -1145,11 +1597,20 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         gap: 10,
     },
+    chatNameRow: {
+        flex: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
     chatName: {
         flex: 1,
         color: colors.text,
         fontSize: 16,
         fontWeight: "800",
+    },
+    pinIcon: {
+        marginRight: 2,
     },
     statusDot: {
         width: 10,
@@ -1187,5 +1648,120 @@ const styles = StyleSheet.create({
     },
     avatarImage: {
         resizeMode: "cover",
+    },
+
+    // ── Archived Chats row ───────────────────────────────────────
+    archivedRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        padding: 14,
+        gap: 12,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: colors.border,
+    },
+    archivedRowIcon: {
+        width: 54,
+        height: 54,
+        borderRadius: 27,
+        backgroundColor: "rgba(63,140,255,0.12)",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    archivedRowMeta: {
+        flex: 1,
+        gap: 3,
+    },
+    archivedRowTitle: {
+        color: colors.text,
+        fontSize: 16,
+        fontWeight: "700",
+    },
+    archivedRowSubtitle: {
+        color: colors.textMuted,
+        fontSize: 13,
+    },
+
+    // ── Archived view header ─────────────────────────────────────
+    archivedHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        backgroundColor: colors.surface,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: colors.border,
+    },
+    archivedBackBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    archivedHeaderTitle: {
+        color: colors.text,
+        fontSize: 18,
+        fontWeight: "700",
+    },
+
+    // ── Context menu ─────────────────────────────────────────────
+    contextOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.55)",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 32,
+    },
+    contextMenu: {
+        width: "100%",
+        maxWidth: 320,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: 16,
+        overflow: "hidden",
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    contextHeader: {
+        paddingHorizontal: 18,
+        paddingTop: 16,
+        paddingBottom: 10,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: colors.border,
+    },
+    contextTitle: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "700",
+    },
+    contextItem: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 14,
+        paddingHorizontal: 18,
+        paddingVertical: 14,
+    },
+    contextItemText: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "500",
+    },
+    contextCancel: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: colors.border,
+        justifyContent: "center",
+    },
+
+    // ── Load more ────────────────────────────────────────────────
+    loadMoreContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: 16,
+        gap: 8,
+    },
+    loadMoreText: {
+        color: colors.textMuted,
+        fontSize: 13,
     },
 });
