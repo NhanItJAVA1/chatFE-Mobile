@@ -22,7 +22,7 @@ export type AuthContextType = {
     loading: boolean;
     error: string | null;
     isAuthenticated: boolean;
-    login: (phone: string, password: string) => Promise<User>;
+    login: (phone: string | { phone?: string; email?: string; password?: string }, password?: string) => Promise<User>;
     register: (userData: any) => Promise<AuthResponse>;
     logout: () => Promise<void>;
     updateProfile: (profileData: any) => Promise<User>;

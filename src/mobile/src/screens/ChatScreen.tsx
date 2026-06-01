@@ -39,8 +39,9 @@ import { buildMessageActionSheetOptions } from "../../../shared/utils";
 import MediaMessage from "../components/MediaMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import chatMediaService from "../../../shared/services/chatMediaService";
-import { unfriend } from "../../../shared/services/friendService";
+import { checkFriendshipStatus, sendFriendRequest, unfriend } from "../../../shared/services/friendService";
 import { FriendSocketService, type FriendshipNotification } from "../../../shared/services/friendSocket";
+import { BlockService } from "../../../shared/services/blockService";
 import type { ChatScreenProps, MessageMedia } from "@/types";
 import type { MessagePayload } from "../../../shared/services/socketService";
 
@@ -392,6 +393,11 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   const [allViewerImages, setAllViewerImages] = React.useState<Array<{ uri: string; key: string }>>([]);
   const [showAvatarMenu, setShowAvatarMenu] = React.useState(false);
   const [unfriending, setUnfriending] = React.useState(false);
+  const [friendActionLoading, setFriendActionLoading] = React.useState(false);
+  const [isFriend, setIsFriend] = React.useState(false);
+  const [friendshipStatus, setFriendshipStatus] = React.useState<string>("none");
+  const [isBlockedByMe, setIsBlockedByMe] = React.useState(false);
+  const [blockLoading, setBlockLoading] = React.useState(false);
   const imageViewerScrollRef = useRef<FlatList>(null);
   const actionsRef = useRef<any>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -400,6 +406,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   const recordingStartPromiseRef = useRef<Promise<void> | null>(null);
 
   const friendId = chatUser?.id;
+  const isSelfChat = chatUser?.isSelfChat || chatUser?.relationship === "self";
   const currentUserId = currentUser?.id || (currentUser as any)?._id || "";
 
   // DEBUG: Track when chatUser changes
@@ -413,6 +420,74 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   }, [chatUser?.id, token]);
 
   const { state, actions, flatListRef, highlightedMessageId } = useChatMessage(friendId || "", token || "");
+
+  useEffect(() => {
+    if (!friendId || !token || isSelfChat) {
+      setIsBlockedByMe(false);
+      return;
+    }
+
+    let mounted = true;
+    BlockService.checkBlockStatus(friendId)
+      .then((status) => {
+        if (mounted) setIsBlockedByMe(status.isBlocked);
+      })
+      .catch(() => { });
+
+    BlockService.connect(token);
+    BlockService.onUnblocked((data: any) => {
+      const unblockedBy = String(data?.data?.unblockedBy || data?.unblockedBy || "");
+      if (unblockedBy === friendId) {
+        setIsBlockedByMe(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      BlockService.offBlockEvents();
+    };
+  }, [friendId, token, isSelfChat]);
+
+  useEffect(() => {
+    if (!friendId || isSelfChat) {
+      setIsFriend(false);
+      setFriendshipStatus("none");
+      return;
+    }
+
+    if (isBlockedByMe) {
+      setIsFriend(false);
+      setFriendshipStatus("none");
+      return;
+    }
+
+    let mounted = true;
+    const initialRelationship = String(chatUser?.relationship || "").toLowerCase();
+    if (initialRelationship === "friend" || initialRelationship === "friends") {
+      setIsFriend(true);
+      setFriendshipStatus("accepted");
+    }
+
+    checkFriendshipStatus(friendId)
+      .then((status) => {
+        if (!mounted) return;
+        const nextStatus = String(status.status || "none").toLowerCase();
+        setFriendshipStatus(nextStatus);
+        setIsFriend(Boolean(status.isFriend || nextStatus === "accepted"));
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        console.warn("[ChatScreen] Failed to check friendship status:", error?.message || error);
+        if (isBlockedByMe) {
+          setIsFriend(false);
+          setFriendshipStatus("none");
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [friendId, isSelfChat, chatUser?.relationship, isBlockedByMe]);
 
   // Keep actions ref in sync
   React.useEffect(() => {
@@ -478,9 +553,15 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
     };
   }, [friendId, chatUser?.name, onBackPress]);
 
-  const { conversation, messages, isLoading, isSending, error, typingUsers, hasMoreMessages } = state;
+  const { conversation, messages, isLoading, isLoadingMore, isSending, error, typingUsers, hasMoreMessages } = state;
   const conversationId = conversation?._id || conversation?.id || chatUser?.conversationId || "";
-  const isSelfChat = chatUser?.isSelfChat || chatUser?.relationship === "self";
+  const isBlockedChatError = String(error || "").toLowerCase().includes("blocked") || isBlockedByMe;
+
+  React.useEffect(() => {
+    if (!isSelfChat && String(error || "").toLowerCase().includes("blocked")) {
+      setIsBlockedByMe(true);
+    }
+  }, [error, isSelfChat]);
 
   const renderableMessages = useMemo(
     () => groupMessagesForGallery(messages, currentUser?.id || currentUserId),
@@ -1229,8 +1310,23 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   /**
    * Load more messages
    */
-  const handleUnfriend = useCallback(async () => {
+  const handleFriendAction = useCallback(async () => {
     if (!chatUser?.id) return;
+
+    if (!isFriend) {
+      try {
+        setFriendActionLoading(true);
+        await sendFriendRequest(chatUser.id);
+        setFriendshipStatus("pending");
+        setShowAvatarMenu(false);
+        Alert.alert("Đã gửi", `Đã gửi lời mời kết bạn tới ${truncateName(userName)}.`);
+      } catch (error: any) {
+        Alert.alert("Lỗi", error?.message || "Không thể gửi lời mời kết bạn");
+      } finally {
+        setFriendActionLoading(false);
+      }
+      return;
+    }
 
     Alert.alert("Hủy kết bạn", `Xác nhận hủy kết bạn với ${truncateName(userName)}?`, [
       { text: "Hủy", onPress: () => { }, style: "cancel" },
@@ -1239,22 +1335,64 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         onPress: async () => {
           try {
             setUnfriending(true);
+            setFriendActionLoading(true);
             setShowAvatarMenu(false);
             await unfriend(chatUser.id!);
-            // Navigate back after unfriend success
-            setTimeout(() => {
-              onBackPress?.();
-            }, 500);
+            setIsFriend(false);
+            setFriendshipStatus("none");
           } catch (error: any) {
             Alert.alert("Lỗi", `Hủy kết bạn thất bại: ${error.message}`);
           } finally {
             setUnfriending(false);
+            setFriendActionLoading(false);
           }
         },
         style: "destructive",
       },
     ]);
-  }, [chatUser?.id, userName, onBackPress]);
+  }, [chatUser?.id, isFriend, userName]);
+
+  const handleToggleBlock = useCallback(() => {
+    if (!chatUser?.id || isSelfChat) return;
+
+    const nextBlocked = !isBlockedByMe;
+    Alert.alert(
+      nextBlocked ? "Chặn người dùng" : "Bỏ chặn người dùng",
+      nextBlocked
+        ? `Bạn sẽ không thể nhắn tin hoặc gửi lời mời kết bạn tới ${truncateName(userName)}.`
+        : `Bỏ chặn ${truncateName(userName)}?`,
+      [
+        { text: "Hủy", style: "cancel" },
+        {
+          text: nextBlocked ? "Chặn" : "Bỏ chặn",
+          style: nextBlocked ? "destructive" : "default",
+          onPress: async () => {
+            try {
+              setBlockLoading(true);
+              if (nextBlocked) {
+                await BlockService.blockUser(chatUser.id!);
+                setIsFriend(false);
+                setFriendshipStatus("none");
+              } else {
+                await BlockService.unblockUser(chatUser.id!);
+              }
+              setIsBlockedByMe(nextBlocked);
+              setShowAvatarMenu(false);
+              if (!nextBlocked) {
+                actionsRef.current?.retryLoadConversation?.().catch((retryError: any) => {
+                  console.warn("[ChatScreen] Failed to reload conversation after unblock:", retryError?.message || retryError);
+                });
+              }
+            } catch (error: any) {
+              Alert.alert("Lỗi", error?.message || "Không thể cập nhật trạng thái chặn");
+            } finally {
+              setBlockLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [chatUser?.id, isBlockedByMe, isSelfChat, userName]);
 
   const handleLoadMore = useCallback(() => {
     if (hasMoreMessages && !isLoading && actionsRef.current) {
@@ -1424,7 +1562,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   /**
    * Error state
    */
-  if (error && !conversation) {
+  if (error && !conversation && !isBlockedChatError) {
     return (
       <View style={styles.screen}>
         <View style={styles.errorContainer}>
@@ -1538,7 +1676,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.5}
             ListHeaderComponent={
-              hasMoreMessages && messages.length > 0 ? (
+              isLoadingMore && hasMoreMessages && messages.length > 0 ? (
                 <View style={styles.loadingMoreContainer}>
                   <ActivityIndicator size="small" color={colors.textMuted} />
                 </View>
@@ -1546,8 +1684,14 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             }
             ListEmptyComponent={
               <View style={styles.emptyMessagesContainer}>
-                <Ionicons name="chatbubble-outline" size={56} color={colors.textMuted} />
-                <Text style={styles.emptyMessagesText}>Hãy gửi lời chào đầu tiên</Text>
+                <Ionicons
+                  name={isBlockedChatError ? "ban-outline" : "chatbubble-outline"}
+                  size={56}
+                  color={colors.textMuted}
+                />
+                <Text style={styles.emptyMessagesText}>
+                  {isBlockedChatError ? "Cuộc trò chuyện đang bị chặn" : "Hãy gửi lời chào đầu tiên"}
+                </Text>
               </View>
             }
             ListFooterComponent={<TypingIndicator typingUsers={typingUsers} />}
@@ -1607,6 +1751,12 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           }}
         />
       )}
+      {isBlockedChatError && (
+        <View style={styles.blockBanner}>
+          <Ionicons name="ban-outline" size={18} color={colors.danger} />
+          <Text style={styles.blockBannerText}>Bạn đã chặn người dùng này. Bỏ chặn để tiếp tục nhắn tin.</Text>
+        </View>
+      )}
       <View style={styles.messageComposer}>
         <Pressable
           style={styles.composerIconButton}
@@ -1614,9 +1764,9 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             console.log("[ChatScreen] Attach button pressed, showMediaMenu:", showMediaMenu);
             setShowMediaMenu(!showMediaMenu);
           }}
-          disabled={uploading}
+          disabled={uploading || isBlockedChatError}
         >
-          <Ionicons name="attach-outline" size={24} color={uploading ? colors.textMuted : colors.text} />
+          <Ionicons name="attach-outline" size={24} color={uploading || isBlockedChatError ? colors.textMuted : colors.text} />
         </Pressable>
         <View style={styles.composerInputWrap}>
           <TextInput
@@ -1627,7 +1777,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             onChangeText={handleTextChange}
             multiline
             maxLength={1000}
-            editable={!isSending && !uploading}
+            editable={!isSending && !uploading && !isBlockedChatError}
           />
           <Pressable style={styles.composerEmojiButton}>
             <Ionicons name="happy-outline" size={22} color={colors.textMuted} />
@@ -1639,9 +1789,11 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             hasSendableContent ? styles.composerSendButton : styles.composerMicButton,
             !hasSendableContent && (isRecordingAudio || uploading) && styles.composerActionButtonDisabled,
             hasSendableContent && (isSending || uploading) && styles.composerActionButtonDisabled,
+            isBlockedChatError && styles.composerActionButtonDisabled,
           ]}
           onPress={hasSendableContent ? handleSendMessage : handlePickAudio}
           disabled={
+            isBlockedChatError ||
             (hasSendableContent && isSending) ||
             (!hasSendableContent && (isRecordingAudio || uploading)) ||
             (hasSendableContent && uploading)
@@ -1818,16 +1970,49 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       <Modal visible={showAvatarMenu} transparent animationType="fade" onRequestClose={() => setShowAvatarMenu(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => setShowAvatarMenu(false)}>
           <View style={styles.avatarMenuContainer}>
-            <Pressable style={[styles.menuItem, styles.menuItemDanger]} onPress={handleUnfriend} disabled={unfriending}>
-              {unfriending ? (
-                <ActivityIndicator color={colors.dangerStrong} />
-              ) : (
-                <>
-                  <Ionicons name="person-remove" size={20} color={colors.dangerStrong} />
-                  <Text style={[styles.menuItemText, styles.menuItemTextDanger]}>Hủy kết bạn</Text>
-                </>
-              )}
-            </Pressable>
+            {!isSelfChat && (
+              <>
+                <Pressable style={[styles.menuItem, isBlockedByMe && styles.menuItemDanger]} onPress={handleToggleBlock} disabled={blockLoading}>
+                  {blockLoading ? (
+                    <ActivityIndicator color={isBlockedByMe ? colors.dangerStrong : colors.accent} />
+                  ) : (
+                    <>
+                      <Ionicons
+                        name={isBlockedByMe ? "ban" : "ban-outline"}
+                        size={20}
+                        color={isBlockedByMe ? colors.dangerStrong : colors.text}
+                      />
+                      <Text style={[styles.menuItemText, isBlockedByMe && styles.menuItemTextDanger]}>
+                        {isBlockedByMe ? "Bỏ chặn" : "Chặn người dùng"}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+                <View style={styles.menuDivider} />
+              </>
+            )}
+            {!isSelfChat && (
+              <Pressable
+                style={[styles.menuItem, isFriend && styles.menuItemDanger]}
+                onPress={handleFriendAction}
+                disabled={friendActionLoading || friendshipStatus === "pending" || isBlockedChatError}
+              >
+                {friendActionLoading ? (
+                  <ActivityIndicator color={isFriend ? colors.dangerStrong : colors.accent} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name={isFriend ? "person-remove" : friendshipStatus === "pending" ? "time-outline" : "person-add-outline"}
+                      size={20}
+                      color={isFriend ? colors.dangerStrong : colors.text}
+                    />
+                    <Text style={[styles.menuItemText, isFriend && styles.menuItemTextDanger]}>
+                      {isFriend ? "Hủy kết bạn" : friendshipStatus === "pending" ? "Đã gửi lời mời" : "Thêm bạn lại"}
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            )}
           </View>
         </Pressable>
       </Modal>
@@ -2147,6 +2332,22 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+  },
+  blockBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: "rgba(239,68,68,0.12)",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(239,68,68,0.24)",
+  },
+  blockBannerText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "600",
   },
   composerIconButton: {
     width: 44,
@@ -2562,6 +2763,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.dangerSoft,
+  },
+  menuDivider: {
+    height: 10,
   },
   menuItemText: {
     fontSize: 16,

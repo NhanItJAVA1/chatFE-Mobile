@@ -782,11 +782,16 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     const removePollFromState = useCallback((pollId: string) => {
         if (!pollId) return;
 
-        setState((prev) => ({
-            ...prev,
-            polls: prev.polls.filter((poll) => poll.id !== pollId),
-            messages: prev.messages.filter((message) => getMessagePollId(message) !== pollId),
-        }));
+        setState((prev) => {
+            const nextPinnedMessages = removePinnedPollMessage(prev.pinnedMessages, pollId);
+            return {
+                ...prev,
+                polls: prev.polls.filter((poll) => poll.id !== pollId),
+                messages: prev.messages.filter((message) => getMessagePollId(message) !== pollId),
+                pinnedMessages: nextPinnedMessages,
+                pinnedMessageIndex: Math.min(prev.pinnedMessageIndex, Math.max(0, nextPinnedMessages.length - 1)),
+            };
+        });
     }, []);
 
     const loadPolls = useCallback(async () => {
@@ -1565,31 +1570,6 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     const incomingConvId = String(event.conversationId || event.groupId || event.poll?.conversationId || event.poll?.groupId || "");
                     if (incomingConvId && incomingConvId !== String(conversationId) && incomingConvId !== String(groupId)) {
                         return;
-                    }
-
-                    const activityMessage = normalizePollActivityMessage(event, conversationId);
-                    if (activityMessage) {
-                        setState((prev) => {
-                            return {
-                                ...prev,
-                                messages: upsertActivityMessage(prev.messages, activityMessage),
-                            };
-                        });
-                    } else if (event.type === "poll:vote" && event.poll?.lastVoteActivityMessageId) {
-                        ConversationService.getMessageById(event.poll.lastVoteActivityMessageId)
-                            .then((message) => {
-                                if (!message) return;
-                                setState((prev) => ({
-                                    ...prev,
-                                    messages: upsertActivityMessage(prev.messages, {
-                                        ...message,
-                                        type: (message.type || "system") as any,
-                                    } as MessagePayload),
-                                }));
-                            })
-                            .catch((error: any) => {
-                                console.warn("[useGroupChatMessage] Failed to fetch poll activity message:", error?.message);
-                            });
                     }
 
                     const pollId = getSocketPollId(event);

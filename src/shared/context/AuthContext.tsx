@@ -26,6 +26,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                     setToken(savedToken);
 
                     try {
+                        const introspection = await authService.introspect(savedToken);
+                        if (!introspection.active) {
+                            await authService.logout();
+                            setToken(null);
+                            setUser(null);
+                            return;
+                        }
+
                         const profileResponse = await authService.getProfile(savedToken);
                         let profile = profileResponse;
 
@@ -108,13 +116,32 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         }
     };
 
-    const login = async (phone: string, password: string): Promise<User> => {
+    const login = async (phone: string | { phone?: string; email?: string; password?: string }, password?: string): Promise<User> => {
         try {
             setError(null);
             setLoading(true);
-            console.log("[AuthContext] Logging in with phone:", phone);
+            const credentials = typeof phone === "object"
+                ? phone
+                : { phone, password };
+            const loginPhone = credentials.phone?.trim();
+            const loginEmail = credentials.email?.trim();
+            const loginPassword = credentials.password;
 
-            const response = await authService.login({ phone, password });
+            console.log("[AuthContext] Logging in:", {
+                hasPhone: !!loginPhone,
+                hasEmail: !!loginEmail,
+                hasPassword: typeof loginPassword === "string" && loginPassword.length > 0,
+            });
+
+            if ((!loginPhone && !loginEmail) || typeof loginPassword !== "string" || !loginPassword) {
+                throw new Error("Phone/email and password are required");
+            }
+
+            const response = await authService.login({
+                ...(loginPhone ? { phone: loginPhone } : {}),
+                ...(loginEmail ? { email: loginEmail } : {}),
+                password: loginPassword,
+            });
             console.log("[AuthContext] Login response:", response);
 
             const token =
@@ -128,6 +155,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
             if (!token) {
                 throw new Error("No token in login response");
+            }
+
+            const introspection = await authService.introspect(token);
+            if (!introspection.active) {
+                throw new Error("Access token is not active");
             }
 
             setToken(token);

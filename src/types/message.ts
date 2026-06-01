@@ -193,13 +193,14 @@ export type GroupResponse = {
 // GROUP POLL TYPES
 // =====================================================
 
-export type PollStatus = "open" | "closed" | "expired" | "deleted";
+export type PollStatus = "active" | "open" | "closed" | "expired" | "deleted";
 
 export type PollOption = {
     id: string;
     text: string;
     voteCount: number;
     votedUserIds?: string[];
+    addedBy?: string;
     createdBy?: string;
     createdAt?: string;
 };
@@ -214,6 +215,8 @@ export type Poll = {
     isMultipleChoice: boolean;
     allowAddOption: boolean;
     allowChangeVote?: boolean;
+    showResultsBeforeClose?: boolean;
+    hideVoters?: boolean;
     status?: PollStatus | string;
     isClosed?: boolean;
     pinned?: boolean;
@@ -233,6 +236,8 @@ export type CreatePollRequest = {
     isMultipleChoice?: boolean;
     allowAddOption?: boolean;
     allowChangeVote?: boolean;
+    showResultsBeforeClose?: boolean;
+    hideVoters?: boolean;
     expiresAt?: string;
 };
 

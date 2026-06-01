@@ -1,6 +1,7 @@
 import { api } from "./api";
 import { authStorage } from "../runtime/storage";
 import { getApiBaseUrl } from "../runtime/config";
+import { getDeviceHeaders } from "./sessionService";
 import type { AuthResponse, User } from "@/types";
 
 const readAccessToken = (payload: any): string => {
@@ -11,10 +12,28 @@ const readUserProfile = (payload: any): User | null => {
     return payload?.user || payload?.profile || null;
 };
 
+export type TokenIntrospection = {
+    active: boolean;
+    payload?: {
+        sub?: string;
+        role?: string;
+        type?: string;
+        jti?: string;
+        tokenVersion?: number;
+        exp?: number;
+        iat?: number;
+        [key: string]: any;
+    };
+};
+
 export const authService = {
     register: async (userData: any): Promise<AuthResponse> => {
         try {
-            const response = await api.post("/auth/register", userData);
+            const response = await api.post("/auth/register", userData, {
+                headers: await getDeviceHeaders(),
+                skipAuth: true,
+                skipRefresh: true,
+            });
             return response;
         } catch (error: any) {
             throw new Error(error.message || "Registration failed");
@@ -23,7 +42,31 @@ export const authService = {
 
     login: async (payload: any): Promise<AuthResponse> => {
         try {
-            let authData = await api.post("/auth/login", payload);
+            const phone = typeof payload?.phone === "string" ? payload.phone.trim() : undefined;
+            const email = typeof payload?.email === "string" ? payload.email.trim() : undefined;
+            const password = payload?.password;
+
+            if ((!phone && !email) || typeof password !== "string" || !password) {
+                throw new Error("Phone/email and password are required");
+            }
+
+            const loginPayload = {
+                ...(phone ? { phone } : {}),
+                ...(email ? { email } : {}),
+                password,
+            };
+
+            console.log("[AUTH] Login payload:", {
+                hasPhone: !!loginPayload.phone,
+                hasEmail: !!loginPayload.email,
+                hasPassword: typeof loginPayload.password === "string" && loginPayload.password.length > 0,
+            });
+
+            let authData = await api.post("/auth/login", loginPayload, {
+                headers: await getDeviceHeaders(),
+                skipAuth: true,
+                skipRefresh: true,
+            });
 
             if (authData?.data && !authData?.token && !authData?.accessToken) {
                 authData = authData.data;
@@ -49,6 +92,33 @@ export const authService = {
             return authData;
         } catch (error: any) {
             throw new Error(error.message || "Login failed");
+        }
+    },
+
+    introspect: async (token: string): Promise<TokenIntrospection> => {
+        try {
+            const response = await fetch(`${getApiBaseUrl()}/auth/introspect`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({ token }),
+            });
+
+            if (!response.ok) {
+                return { active: false };
+            }
+
+            const result = await response.json();
+            const data = result?.data || result;
+            return {
+                active: !!data?.active,
+                payload: data?.payload,
+            };
+        } catch (error: any) {
+            console.error("[authService] Introspect error:", error?.message || error);
+            throw new Error("Token introspection failed");
         }
     },
 
@@ -133,7 +203,10 @@ export const authService = {
     },
 
     forgotPassword: async (payload: any): Promise<any> => {
-        const responseData = await api.post("/auth/forgot-password", payload);
+        const responseData = await api.post("/auth/forgot-password", payload, {
+            skipAuth: true,
+            skipRefresh: true,
+        });
         return responseData;
     },
 
@@ -160,7 +233,10 @@ export const authService = {
                 throw new Error("No refresh token available");
             }
 
-            const response = await api.post("/auth/refresh", { refreshToken });
+            const response = await api.post("/auth/refresh", { refreshToken }, {
+                skipAuth: true,
+                skipRefresh: true,
+            });
             const payload = response?.data || response;
             const newToken = payload?.accessToken || payload?.token;
 

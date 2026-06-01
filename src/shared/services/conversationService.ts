@@ -70,13 +70,15 @@ export class ConversationService {
         try {
             const response = await api.post("/conversations/private", {
                 targetUserId,
+            }, {
+                suppressErrorLog: true,
             });
 
             const data = response.data || response;
 
             return data.data || data;
         } catch (error: any) {
-            throw new Error(error.message || "Failed to get/create conversation");
+            throw error;
         }
     }
 
@@ -356,7 +358,7 @@ export class ConversationService {
      */
     static async deleteConversation(conversationId: string): Promise<void> {
         try {
-            await api.delete(`/groups/${conversationId}`);
+            await api.delete(`/conversations/${conversationId}`);
         } catch (error: any) {
             console.error("[ConversationService] Error deleting conversation:", error);
             throw error;

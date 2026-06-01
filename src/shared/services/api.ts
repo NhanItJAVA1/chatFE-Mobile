@@ -100,14 +100,19 @@ export const apiCall = async (
     options: ApiCallOptions = {}
 ): Promise<any> => {
     const url = buildUrl(endpoint);
-    let token = await getAuthToken();
-    const { suppressErrorLog, ...fetchOptions } = options as ApiCallOptions & { suppressErrorLog?: boolean };
+    const { suppressErrorLog, skipAuth, skipRefresh, headers: optionHeaders, ...fetchOptions } = options as ApiCallOptions & {
+        suppressErrorLog?: boolean;
+        skipAuth?: boolean;
+        skipRefresh?: boolean;
+        headers?: Record<string, string>;
+    };
+    let token = skipAuth ? null : await getAuthToken();
 
     try {
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            ...(options.headers || {}),
+            ...(optionHeaders || {}),
         };
 
         // Commented out debug log to reduce console spam
@@ -122,7 +127,7 @@ export const apiCall = async (
         });
 
         // Handle 401 - try to refresh token and retry
-        if (response.status === 401) {
+        if (response.status === 401 && !skipRefresh) {
             console.warn(`[API] Got 401 on ${options.method || "GET"} ${endpoint}`);
 
             // If already refreshing, queue this request
@@ -156,11 +161,11 @@ export const apiCall = async (
             if (refreshed) {
                 // Retry with new token
                 console.log("[API] Retrying request with new token...");
-                token = await getAuthToken();
+                token = skipAuth ? null : await getAuthToken();
                 const newHeaders: Record<string, string> = {
                     "Content-Type": "application/json",
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                    ...(options.headers || {}),
+                    ...(optionHeaders || {}),
                 };
 
                 response = await fetch(url, {
@@ -175,11 +180,12 @@ export const apiCall = async (
 
         if (!response.ok) {
             let errorDetails = "";
+            let parsedError: any = null;
             try {
                 const bodyText = await response.text();
                 try {
-                    const errorBody = JSON.parse(bodyText);
-                    errorDetails = JSON.stringify(errorBody, null, 2);
+                    parsedError = JSON.parse(bodyText);
+                    errorDetails = JSON.stringify(parsedError, null, 2);
                 } catch {
                     errorDetails = bodyText;
                 }
@@ -191,7 +197,12 @@ export const apiCall = async (
                 console.error(`[API] ${errorMsg} on ${options.method || "GET"} ${endpoint}`);
                 console.error(`[API] Response body:`, errorDetails);
             }
-            throw new Error(errorMsg);
+            const apiError: any = new Error(parsedError?.msg || parsedError?.message || errorMsg);
+            apiError.status = response.status;
+            apiError.code = parsedError?.code;
+            apiError.details = parsedError?.details;
+            apiError.responseBody = parsedError;
+            throw apiError;
         }
 
         if (response.status === 204) {

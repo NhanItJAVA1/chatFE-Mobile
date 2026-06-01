@@ -62,6 +62,12 @@ const formatPollTime = (poll: Poll): string => {
     return "";
 };
 
+const sameSet = (left: string[], right: string[]): boolean => {
+    if (left.length !== right.length) return false;
+    const rightSet = new Set(right);
+    return left.every((item) => rightSet.has(item));
+};
+
 export const PollCard: React.FC<PollCardProps> = ({
     poll,
     currentUserId,
@@ -74,7 +80,7 @@ export const PollCard: React.FC<PollCardProps> = ({
     onDelete,
     onAddOption,
 }) => {
-    const [selectedOptionIds, setSelectedOptionIds] = useState<string[]>([]);
+    const [pendingOptionIds, setPendingOptionIds] = useState<string[] | null>(null);
     const [showAddOption, setShowAddOption] = useState(false);
     const [showVotersModal, setShowVotersModal] = useState(false);
     const [newOptionText, setNewOptionText] = useState("");
@@ -84,6 +90,8 @@ export const PollCard: React.FC<PollCardProps> = ({
     const pinned = !!(poll.pinned || poll.isPinned);
     const canChangeVote = !!poll.allowChangeVote;
     const totalVotes = poll.totalVotes || poll.options.reduce((sum, option) => sum + (option.voteCount || 0), 0);
+    const showResults = poll.showResultsBeforeClose !== false || closed || currentUserId === poll.createdBy || currentUserId === poll.creatorId;
+    const canShowVoters = showResults && !poll.hideVoters;
 
     const userVotedOptionIds = useMemo(() => {
         return poll.options
@@ -92,6 +100,9 @@ export const PollCard: React.FC<PollCardProps> = ({
     }, [poll.options, currentUserId]);
 
     const hasVoted = userVotedOptionIds.length > 0;
+    const effectiveOptionIds = pendingOptionIds ?? userVotedOptionIds;
+    const hasSelectionChanges = pendingOptionIds !== null && !sameSet(pendingOptionIds, userVotedOptionIds);
+
     const getVoterName = (userId: string): string => {
         const member = members.find((item) => String(item.userId || item.id || item._id || "") === String(userId));
         return member?.displayName || member?.name || userId;
@@ -102,11 +113,16 @@ export const PollCard: React.FC<PollCardProps> = ({
         if (hasVoted && !canChangeVote) return;
 
         if (poll.isMultipleChoice) {
-            setSelectedOptionIds((prev) =>
-                prev.includes(optionId)
-                    ? prev.filter((id) => id !== optionId)
-                    : [...prev, optionId]
+            const baseSelection = pendingOptionIds ?? userVotedOptionIds;
+            setPendingOptionIds(
+                baseSelection.includes(optionId)
+                    ? baseSelection.filter((id) => id !== optionId)
+                    : [...baseSelection, optionId]
             );
+            return;
+        }
+
+        if (userVotedOptionIds.includes(optionId) && hasVoted) {
             return;
         }
 
@@ -121,17 +137,31 @@ export const PollCard: React.FC<PollCardProps> = ({
     };
 
     const submitMultipleChoice = async () => {
-        if (selectedOptionIds.length === 0 || isVoting) return;
+        if (!hasSelectionChanges || isVoting || pendingOptionIds === null) return;
 
         try {
             setIsVoting(true);
-            await onVote(poll.id, selectedOptionIds);
-            setSelectedOptionIds([]);
+            await onVote(poll.id, pendingOptionIds);
+            setPendingOptionIds(null);
         } catch (error: any) {
             Alert.alert("Lỗi", error?.message || "Không thể bình chọn");
         } finally {
             setIsVoting(false);
         }
+    };
+
+    const openVotersModal = () => {
+        if (!showResults) {
+            Alert.alert("Kết quả đang ẩn", "Kết quả sẽ hiển thị khi bình chọn được đóng.");
+            return;
+        }
+
+        if (poll.hideVoters) {
+            Alert.alert("Đã ẩn người bình chọn", "Bình chọn này không hiển thị danh sách người đã chọn.");
+            return;
+        }
+
+        setShowVotersModal(true);
     };
 
     const openActions = () => {
@@ -210,32 +240,55 @@ export const PollCard: React.FC<PollCardProps> = ({
             <View style={styles.options}>
                 {poll.options.map((option) => {
                     const voteCount = option.voteCount || 0;
-                    const percentage = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
-                    const selected = selectedOptionIds.includes(option.id);
+                    const percentage = showResults && totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
+                    const selected = effectiveOptionIds.includes(option.id);
                     const voted = userVotedOptionIds.includes(option.id);
+                    const pendingChanged = pendingOptionIds !== null;
+                    const pendingAdded = pendingChanged && selected && !voted;
+                    const pendingRemoved = pendingChanged && voted && !selected;
+                    const selectedLabel = !showResults && selected
+                        ? "Đã chọn"
+                        : pendingAdded
+                            ? "Thêm"
+                            : pendingRemoved
+                                ? "Bỏ"
+                                : "";
 
                     return (
                         <Pressable
                             key={option.id}
                             style={[
                                 styles.option,
-                                (selected || voted) && styles.optionSelected,
+                                selected && styles.optionSelected,
+                                pendingRemoved && styles.optionRemoving,
                                 closed && styles.optionDisabled,
                             ]}
                             onPress={() => handleOptionPress(option.id)}
                             disabled={closed || isVoting || (hasVoted && !canChangeVote)}
                         >
-                            <View style={[styles.optionFill, { width: `${percentage}%` }]} />
+                            {showResults && <View style={[styles.optionFill, { width: `${percentage}%` }]} />}
                             <View style={styles.optionContent}>
-                                <View style={[styles.selectMark, (selected || voted) && styles.selectMarkActive]}>
-                                    {(selected || voted) && <Ionicons name="checkmark" size={12} color={colors.textOnAccent} />}
+                                <View style={[styles.selectMark, selected && styles.selectMarkActive]}>
+                                    {selected && <Ionicons name="checkmark" size={12} color={colors.textOnAccent} />}
                                 </View>
                                 <Text style={styles.optionText} numberOfLines={2}>{option.text}</Text>
-                                <Text style={styles.optionCount}>{percentage}%</Text>
+                                {selectedLabel ? (
+                                    <Text style={[styles.optionCount, pendingRemoved && styles.removeLabel]}>{selectedLabel}</Text>
+                                ) : showResults ? (
+                                    <Text style={styles.optionCount}>{percentage}%</Text>
+                                ) : null}
                             </View>
-                            <Pressable style={styles.voteCountButton} onPress={() => setShowVotersModal(true)}>
-                                <Text style={styles.voteCount}>{voteCount} lượt chọn</Text>
-                            </Pressable>
+                            {showResults && (
+                                <Pressable
+                                    style={styles.voteCountButton}
+                                    onPress={openVotersModal}
+                                    disabled={!canShowVoters}
+                                >
+                                    <Text style={styles.voteCount}>
+                                        {poll.hideVoters ? "Ẩn người chọn" : `${voteCount} lượt chọn`}
+                                    </Text>
+                                </Pressable>
+                            )}
                         </Pressable>
                     );
                 })}
@@ -243,12 +296,18 @@ export const PollCard: React.FC<PollCardProps> = ({
 
             <View style={styles.footerRow}>
                 <Text style={styles.footerText}>
-                    {totalVotes} lượt bình chọn{poll.isMultipleChoice ? " • Chọn nhiều" : ""}
+                    {showResults ? `${totalVotes} lượt bình chọn` : "Kết quả đang ẩn"}{poll.isMultipleChoice ? " • Chọn nhiều" : ""}
                 </Text>
                 {isVoting && <ActivityIndicator size="small" color={colors.accentStrong} />}
-                {!closed && poll.isMultipleChoice && selectedOptionIds.length > 0 && (
-                    <Pressable style={styles.submitButton} onPress={submitMultipleChoice}>
-                        <Text style={styles.submitButtonText}>Gửi</Text>
+                {!closed && poll.isMultipleChoice && (
+                    <Pressable
+                        style={[styles.submitButton, (!hasSelectionChanges || isVoting) && styles.submitButtonDisabled]}
+                        onPress={submitMultipleChoice}
+                        disabled={!hasSelectionChanges || isVoting}
+                    >
+                        <Text style={styles.submitButtonText}>
+                            {hasVoted ? `Cập nhật (${effectiveOptionIds.length})` : `Bình chọn (${effectiveOptionIds.length})`}
+                        </Text>
                     </Pressable>
                 )}
                 {closed && <Text style={styles.closedText}>Đã khóa</Text>}
@@ -258,10 +317,12 @@ export const PollCard: React.FC<PollCardProps> = ({
 
             <Pressable
                 style={styles.resultsButton}
-                onPress={() => setShowVotersModal(true)}
+                onPress={openVotersModal}
             >
                 <Ionicons name="people-outline" size={15} color={colors.accentStrong} />
-                <Text style={styles.resultsButtonText}>Xem tổng hợp bình chọn</Text>
+                <Text style={styles.resultsButtonText}>
+                    {showResults ? (poll.hideVoters ? "Người bình chọn đang ẩn" : "Xem tổng hợp bình chọn") : "Kết quả đang ẩn"}
+                </Text>
             </Pressable>
 
             {!closed && poll.allowAddOption && onAddOption && (
@@ -449,6 +510,10 @@ const styles = StyleSheet.create({
     optionSelected: {
         borderColor: colors.accentStrong,
     },
+    optionRemoving: {
+        borderColor: colors.danger || "#dc2626",
+        backgroundColor: "rgba(220, 38, 38, 0.08)",
+    },
     optionDisabled: {
         opacity: 0.78,
     },
@@ -493,6 +558,9 @@ const styles = StyleSheet.create({
         minWidth: 36,
         textAlign: "right",
     },
+    removeLabel: {
+        color: colors.danger || "#dc2626",
+    },
     voteCount: {
         fontSize: 11,
         color: colors.textMuted,
@@ -518,6 +586,9 @@ const styles = StyleSheet.create({
         paddingVertical: 7,
         borderRadius: 8,
         backgroundColor: colors.accentStrong,
+    },
+    submitButtonDisabled: {
+        opacity: 0.45,
     },
     submitButtonText: {
         fontSize: 13,

@@ -9,6 +9,7 @@ export interface UseChatMessageState {
     conversation: Conversation | null;
     messages: MessagePayload[];
     isLoading: boolean;
+    isLoadingMore: boolean;
     isSending: boolean;
     error: string | null;
     typingUsers: Set<string>;
@@ -185,6 +186,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         conversation: null,
         messages: [],
         isLoading: false,
+        isLoadingMore: false,
         isSending: false,
         error: null,
         typingUsers: new Set(),
@@ -435,7 +437,16 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 // Don't fail the entire conversation load if pinned messages fail
             }
         } catch (error: any) {
-            console.error('[useChat] Initialize error:', error);
+            const errorMessage = error.message || "Failed to initialize chat";
+            const isBlockedError =
+                (error?.status === 403 && error?.details?.code === "blocked") ||
+                String(errorMessage).toLowerCase().includes("blocked");
+
+            if (!isBlockedError) {
+                console.error('[useChat] Initialize error:', error);
+            } else {
+                console.log('[useChat] Conversation is blocked; keeping chat UI available for unblock');
+            }
 
             // Clear timeout on error
             if (loadingTimeoutRef.current) {
@@ -447,7 +458,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             setState((prev) => {
                 const newState = {
                     ...prev,
-                    error: error.message || "Failed to initialize chat",
+                    error: isBlockedError ? "blocked" : errorMessage,
                     isLoading: false,
                 };
                 console.log('[useChat] new isLoading:', newState.isLoading);
@@ -552,7 +563,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
             // Message seen events
             SocketService.onMessageSeen((data) => {
-                if (data.conversationId !== conversationId) {
+                if (data.conversationId !== conversationId && data.userId !== friendId) {
                     return;
                 }
 
@@ -865,7 +876,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
     const handleTyping = useCallback(() => {
         if (!state.conversation) return;
 
-        SocketService.startTyping(state.conversation._id || state.conversation.id);
+        SocketService.startTyping(state.conversation._id || state.conversation.id, { toUserId: friendId });
 
         // Auto-stop after TYPING_DEBOUNCE_TIME
         if (typingTimeoutRef.current) {
@@ -873,7 +884,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         }
 
         typingTimeoutRef.current = setTimeout(() => {
-            SocketService.stopTyping(state.conversation!._id || state.conversation!.id);
+            SocketService.stopTyping(state.conversation!._id || state.conversation!.id, { toUserId: friendId });
         }, TYPING_DEBOUNCE_TIME);
     }, [state.conversation]);
 
@@ -887,19 +898,24 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             clearTimeout(typingTimeoutRef.current);
         }
 
-        SocketService.stopTyping(state.conversation._id || state.conversation.id);
-    }, [state.conversation]);
+        SocketService.stopTyping(state.conversation._id || state.conversation.id, { toUserId: friendId });
+    }, [state.conversation, friendId]);
 
     /**
      * Load more messages (pagination)
      */
     const loadMoreMessages = useCallback(
         async () => {
-            if (!state.conversation || !state.hasMoreMessages) {
+            if (!state.conversation || !state.hasMoreMessages || state.isLoadingMore) {
                 return;
             }
 
             try {
+                setState((prev) => ({
+                    ...prev,
+                    isLoadingMore: true,
+                }));
+
                 const response = await ConversationService.loadMessages(
                     state.conversation._id || state.conversation.id,
                     state.nextCursor,
@@ -912,6 +928,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                         messages: mergeUniqueMessages(prev.messages, response.items || []),
                         hasMoreMessages: response.hasMore || false,
                         nextCursor: response.nextCursor || null,
+                        isLoadingMore: false,
                     };
 
                     // Save updated messages to cache
@@ -927,11 +944,12 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             } catch (error: any) {
                 setState((prev) => ({
                     ...prev,
+                    isLoadingMore: false,
                     error: error.message || "Failed to load more messages",
                 }));
             }
         },
-        [state.conversation, state.hasMoreMessages, state.nextCursor]
+        [state.conversation, state.hasMoreMessages, state.isLoadingMore, state.nextCursor]
     );
 
     /**

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import {
     ActivityIndicator,
+    Alert,
     AppState,
     Image,
     Pressable,
@@ -14,6 +15,7 @@ import {
 import { useAuth, useFriendship } from "../../../shared/hooks";
 import { ConversationService, type Conversation, type ConversationLastMessageSummary } from "../../../shared/services/conversationService";
 import { SocketService } from "../../../shared/services/socketService";
+import { PresenceService, type PresenceStatus } from "../../../shared/services/presenceService";
 import { Avatar, Card, SectionTitle } from "../components";
 import { colors } from "../theme";
 import type { Friend } from "@/types";
@@ -40,6 +42,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const [query, setQuery] = useState("");
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [conversationsLoading, setConversationsLoading] = useState(false);
+    const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
 
     const getConversationIdentity = useCallback((conversation: Conversation): string => {
         const id = (conversation as any)?.id || (conversation as any)?._id;
@@ -356,6 +359,72 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
         return "Tin nhắn";
     };
+
+    const handleDeleteConversation = useCallback((conversation: Conversation) => {
+        const conversationId = getConversationId(conversation);
+        if (!conversationId) return;
+
+        Alert.alert(
+            "Xóa cuộc trò chuyện",
+            "Thao tác này chỉ xóa cuộc trò chuyện ở phía bạn.",
+            [
+                { text: "Hủy", style: "cancel" },
+                {
+                    text: "Xóa",
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            await ConversationService.deleteConversation(conversationId);
+                            setConversations((prev) =>
+                                prev.filter((item) => getConversationId(item) !== conversationId)
+                            );
+                        } catch (error: any) {
+                            Alert.alert("Lỗi", error?.message || "Không thể xóa cuộc trò chuyện");
+                        }
+                    },
+                },
+            ]
+        );
+    }, []);
+
+    useEffect(() => {
+        if (!token) {
+            return;
+        }
+
+        PresenceService.connect(token);
+
+        const privateUserIds = conversations
+            .filter((conversation) => getConversationType(conversation) !== "GROUP")
+            .map((conversation) => getConversationDisplayInfo(conversation).otherMemberId)
+            .filter(Boolean) as string[];
+
+        PresenceService.getBatchOnlineStatus(privateUserIds)
+            .then((statuses) => {
+                setPresenceByUserId((prev) => ({ ...prev, ...statuses }));
+            })
+            .catch(() => { });
+
+        const updatePresence = (status: PresenceStatus) => {
+            const userId = String(status?.userId || (status as any)?.id || "");
+            if (!userId) return;
+            setPresenceByUserId((prev) => ({
+                ...prev,
+                [userId]: {
+                    ...prev[userId],
+                    ...status,
+                    userId,
+                },
+            }));
+        };
+
+        PresenceService.onOnline((status) => updatePresence({ ...status, online: true, isOnline: true }));
+        PresenceService.onOffline((status) => updatePresence({ ...status, online: false, isOnline: false }));
+
+        return () => {
+            PresenceService.offPresenceEvents();
+        };
+    }, [token, conversations, getConversationDisplayInfo]);
 
     useEffect(() => {
         if (!token) {
@@ -858,7 +927,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             const previewText = getLastMessagePreview(conversation);
 
                             const conversationType = getConversationType(conversation);
-                            const { displayName, displayAvatar } = getConversationDisplayInfo(conversation);
+                            const { displayName, displayAvatar, otherMemberId } = getConversationDisplayInfo(conversation);
+                            const presence = otherMemberId ? presenceByUserId[otherMemberId] : undefined;
+                            const isOnline = !!(presence?.isOnline ?? presence?.online);
 
                             return (
                                 <View
@@ -871,6 +942,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                                 >
                                     <Pressable
                                         onPress={() => handleConversationPress(conversation)}
+                                        onLongPress={() => handleDeleteConversation(conversation)}
                                         style={({ pressed }) => [
                                             styles.chatRowContent,
                                             pressed && styles.chatRowPressed,
@@ -907,7 +979,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                                                     style={[
                                                         styles.statusDot,
                                                         {
-                                                            backgroundColor: conversationType === "GROUP" ? "#8b5cf6" : "#ef4444",
+                                                            backgroundColor: conversationType === "GROUP" ? "#8b5cf6" : isOnline ? "#22c55e" : "#9ca3af",
                                                         },
                                                     ]}
                                                 />

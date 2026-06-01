@@ -57,6 +57,8 @@ export interface MessagePayload {
 export interface TypingData {
     userId: string;
     conversationId: string;
+    toUserId?: string;
+    groupId?: string;
     isTyping: boolean;
 }
 
@@ -658,9 +660,9 @@ export class SocketService {
     /**
      * Start typing indicator
      */
-    static startTyping(conversationId: string): void {
+    static startTyping(conversationId: string, target?: { toUserId?: string; groupId?: string }): void {
         if (!this.socket) return;
-        this.socket.emit("typing:start", { groupId: conversationId });
+        this.socket.emit("typing:start", target || { groupId: conversationId });
 
         // Clear previous timeout
         if (this.typingTimeout) {
@@ -669,16 +671,16 @@ export class SocketService {
 
         // Stop typing after 3 seconds
         this.typingTimeout = setTimeout(() => {
-            this.stopTyping(conversationId);
+            this.stopTyping(conversationId, target);
         }, 3000);
     }
 
     /**
      * Stop typing indicator
      */
-    static stopTyping(conversationId: string): void {
+    static stopTyping(conversationId: string, target?: { toUserId?: string; groupId?: string }): void {
         if (!this.socket) return;
-        this.socket.emit("typing:stop", { groupId: conversationId });
+        this.socket.emit("typing:stop", target || { groupId: conversationId });
 
         if (this.typingTimeout) {
             clearTimeout(this.typingTimeout);
@@ -696,7 +698,9 @@ export class SocketService {
             console.log("[SocketService] User typing:", data);
             callback({
                 userId: data.userId,
-                conversationId: data.groupId,
+                conversationId: data.conversationId || data.groupId || data.toUserId,
+                toUserId: data.toUserId,
+                groupId: data.groupId,
                 isTyping: true,
             });
         });
@@ -705,7 +709,9 @@ export class SocketService {
             console.log("[SocketService] User stopped typing:", data);
             callback({
                 userId: data.userId,
-                conversationId: data.groupId,
+                conversationId: data.conversationId || data.groupId || data.toUserId,
+                toUserId: data.toUserId,
+                groupId: data.groupId,
                 isTyping: false,
             });
         });

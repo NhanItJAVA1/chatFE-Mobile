@@ -29,9 +29,10 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
     const [question, setQuestion] = useState("");
     const [options, setOptions] = useState(["", ""]);
     const [isMultipleChoice, setIsMultipleChoice] = useState(false);
-    const [allowAddOption, setAllowAddOption] = useState(false);
-    const [allowChangeVote, setAllowChangeVote] = useState(false);
-    const [expiresHours, setExpiresHours] = useState("");
+    const [allowChangeVote, setAllowChangeVote] = useState(true);
+    const [showResultsBeforeClose, setShowResultsBeforeClose] = useState(true);
+    const [allowAddOption, setAllowAddOption] = useState(true);
+    const [hideVoters, setHideVoters] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const trimmedOptions = useMemo(
@@ -43,9 +44,10 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
         setQuestion("");
         setOptions(["", ""]);
         setIsMultipleChoice(false);
-        setAllowAddOption(false);
-        setAllowChangeVote(false);
-        setExpiresHours("");
+        setAllowChangeVote(true);
+        setShowResultsBeforeClose(true);
+        setAllowAddOption(true);
+        setHideVoters(false);
         setError(null);
     };
 
@@ -56,7 +58,13 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
     };
 
     const updateOption = (index: number, value: string) => {
-        setOptions((prev) => prev.map((item, idx) => (idx === index ? value : item)));
+        setOptions((prev) => {
+            const next = prev.map((item, idx) => (idx === index ? value : item));
+            if (index === prev.length - 1 && value.trim() && prev.length < 10) {
+                next.push("");
+            }
+            return next;
+        });
     };
 
     const addOption = () => {
@@ -81,12 +89,6 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
             return;
         }
 
-        const hours = expiresHours.trim() ? Number(expiresHours.trim()) : 0;
-        if (expiresHours.trim() && (!Number.isFinite(hours) || hours <= 0)) {
-            setError("Thời hạn phải là số giờ hợp lệ");
-            return;
-        }
-
         setError(null);
 
         const payload: CreatePollRequest = {
@@ -95,11 +97,9 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
             isMultipleChoice,
             allowAddOption,
             allowChangeVote,
+            showResultsBeforeClose,
+            hideVoters,
         };
-
-        if (hours > 0) {
-            payload.expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
-        }
 
         await onSubmit(payload);
         reset();
@@ -158,24 +158,6 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
                             <Text style={styles.addOptionText}>Thêm phương án</Text>
                         </Pressable>
 
-                        <Pressable style={styles.toggleRow} onPress={() => setIsMultipleChoice((prev) => !prev)}>
-                            <Ionicons
-                                name={isMultipleChoice ? "checkbox" : "square-outline"}
-                                size={22}
-                                color={colors.accentStrong}
-                            />
-                            <Text style={styles.toggleText}>Cho phép chọn nhiều</Text>
-                        </Pressable>
-
-                        <Pressable style={styles.toggleRow} onPress={() => setAllowAddOption((prev) => !prev)}>
-                            <Ionicons
-                                name={allowAddOption ? "checkbox" : "square-outline"}
-                                size={22}
-                                color={colors.accentStrong}
-                            />
-                            <Text style={styles.toggleText}>Cho phép thêm phương án</Text>
-                        </Pressable>
-
                         <Pressable style={styles.toggleRow} onPress={() => setAllowChangeVote((prev) => !prev)}>
                             <Ionicons
                                 name={allowChangeVote ? "checkbox" : "square-outline"}
@@ -185,14 +167,41 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
                             <Text style={styles.toggleText}>Cho phép thay đổi bình chọn</Text>
                         </Pressable>
 
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Thời hạn sau bao nhiêu giờ (tùy chọn)"
-                            placeholderTextColor={colors.textMuted}
-                            value={expiresHours}
-                            onChangeText={setExpiresHours}
-                            keyboardType="numeric"
-                        />
+                        <Pressable style={styles.toggleRow} onPress={() => setShowResultsBeforeClose((prev) => !prev)}>
+                            <Ionicons
+                                name={showResultsBeforeClose ? "checkbox" : "square-outline"}
+                                size={22}
+                                color={colors.accentStrong}
+                            />
+                            <Text style={styles.toggleText}>Hiện kết quả trước khi đóng</Text>
+                        </Pressable>
+
+                        <Pressable style={styles.toggleRow} onPress={() => setAllowAddOption((prev) => !prev)}>
+                            <Ionicons
+                                name={allowAddOption ? "checkbox" : "square-outline"}
+                                size={22}
+                                color={colors.accentStrong}
+                            />
+                            <Text style={styles.toggleText}>Thành viên thêm phương án</Text>
+                        </Pressable>
+
+                        <Pressable style={styles.toggleRow} onPress={() => setIsMultipleChoice((prev) => !prev)}>
+                            <Ionicons
+                                name={isMultipleChoice ? "checkbox" : "square-outline"}
+                                size={22}
+                                color={colors.accentStrong}
+                            />
+                            <Text style={styles.toggleText}>Cho phép chọn nhiều</Text>
+                        </Pressable>
+
+                        <Pressable style={styles.toggleRow} onPress={() => setHideVoters((prev) => !prev)}>
+                            <Ionicons
+                                name={hideVoters ? "checkbox" : "square-outline"}
+                                size={22}
+                                color={colors.accentStrong}
+                            />
+                            <Text style={styles.toggleText}>Ẩn người bình chọn</Text>
+                        </Pressable>
 
                         {error && <Text style={styles.errorText}>{error}</Text>}
                     </ScrollView>
