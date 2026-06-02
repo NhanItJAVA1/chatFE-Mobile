@@ -27,7 +27,8 @@ import { useCall } from "../../../shared/context";
 import { GroupChatService } from "../../../shared/services/groupChatService";
 import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
-import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage, PollCard, CreatePollModal } from "../components";
+import profileCardService from "../../../shared/services/profileCardService";
+import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage, PollCard, CreatePollModal, ProfileCardMessage, ContactPickerSheet } from "../components";
 import { JUMBO_EMOJI_ASSETS } from "../components/AnimatedEmojiMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import MediaMessage from "../components/MediaMessage";
@@ -184,8 +185,9 @@ export const GroupChatScreen: React.FC<{
     onBackPress?: () => void;
     onSettingsPress?: () => void;
     onAddMembersPress?: () => void;
-}> = ({ route, navigation, onBackPress, onSettingsPress, onAddMembersPress }) => {
-    const { groupId } = route.params || {};
+    onOpenPrivateChat?: (user: any) => void;
+}> = ({ route, navigation, onBackPress, onSettingsPress, onAddMembersPress, onOpenPrivateChat }) => {
+    const { groupId, searchTargetMessageId, searchTargetMessage, searchContextMessages } = route.params || {};
     const authContext = useAuth();
     const token = authContext.token;
     const { user } = authContext;
@@ -223,6 +225,9 @@ export const GroupChatScreen: React.FC<{
     const [messageText, setMessageText] = useState("");
     const [isSending, setIsSending] = useState(false);
     const [showMediaMenu, setShowMediaMenu] = useState(false);
+    const [showContactPicker, setShowContactPicker] = useState(false);
+    const [profileCardSendingUserId, setProfileCardSendingUserId] = useState<string | null>(null);
+    const [profileCardSentUserIds, setProfileCardSentUserIds] = useState<Set<string>>(new Set());
     const [draftMedia, setDraftMedia] = useState<DraftMediaAsset[]>([]);
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
@@ -509,6 +514,52 @@ export const GroupChatScreen: React.FC<{
             Alert.alert("Lỗi", err.message || "Failed to load group data");
         }
     }, [groupId]);
+
+    const searchTargetHandledRef = useRef<string | null>(null);
+
+    const normalizeSearchMessage = useCallback((raw: any): any | null => {
+        if (!raw) return null;
+        const id = raw._id || raw.id || raw.messageId;
+        if (!id || !groupId) return null;
+
+        return {
+            ...raw,
+            _id: String(id),
+            id: String(id),
+            conversationId: raw.conversationId || groupId,
+            senderId: raw.senderId || "",
+            senderName: raw.senderName || "Người dùng",
+            senderAvatar: raw.senderAvatar || "",
+            text: raw.text || "",
+            media: raw.media || [],
+            status: raw.status || "sent",
+            createdAt: raw.createdAt || new Date().toISOString(),
+            updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
+        };
+    }, [groupId]);
+
+    useEffect(() => {
+        const targetId = String(searchTargetMessageId || "");
+        if (!targetId || chatState.isLoading || !groupId || searchTargetHandledRef.current === targetId) return;
+
+        searchTargetHandledRef.current = targetId;
+        const extraMessages = [
+            normalizeSearchMessage(searchTargetMessage),
+            ...(Array.isArray(searchContextMessages) ? searchContextMessages.map(normalizeSearchMessage) : []),
+        ].filter(Boolean);
+
+        if (extraMessages.length > 0) {
+            chatActions.addMessages(extraMessages as any);
+        }
+
+        setTimeout(() => {
+            chatActions.scrollToMessage(targetId).then((success: boolean) => {
+                if (!success) {
+                    Alert.alert("Thông báo", "Không tìm thấy tin nhắn trong nhóm");
+                }
+            });
+        }, 250);
+    }, [searchTargetMessageId, searchTargetMessage, searchContextMessages, chatState.isLoading, groupId, chatActions, normalizeSearchMessage]);
 
     const appendDraftMedia = useCallback((assets: any[]) => {
         setDraftMedia((prev) => {
@@ -918,6 +969,34 @@ export const GroupChatScreen: React.FC<{
         );
     }, [currentUserId, handleToggleReaction]);
 
+    const handleOpenProfileCardUser = useCallback((profileUser: any) => {
+        const targetUserId = profileUser?.id || profileUser?._id || profileUser?.userId;
+        if (!targetUserId) return;
+        onOpenPrivateChat?.({
+            ...profileUser,
+            id: targetUserId,
+            displayName: profileUser.displayName || profileUser.name || "Người dùng",
+            conversationType: "PRIVATE",
+            relationship: String(targetUserId) === String(currentUserId) ? "self" : (profileUser.relationship || "stranger"),
+        });
+    }, [currentUserId, onOpenPrivateChat]);
+
+    const handleSendProfileCard = useCallback(async (targetUser: { id: string; displayName: string }) => {
+        if (!groupId || !targetUser.id) return;
+        setProfileCardSendingUserId(targetUser.id);
+        try {
+            await profileCardService.sendProfileCard(groupId, { userId: targetUser.id });
+            setProfileCardSentUserIds((prev) => new Set(prev).add(targetUser.id));
+        } catch (error: any) {
+            const message = error?.status === 403
+                ? "Người này đang ẩn danh thiếp hoặc không cho phép chia sẻ."
+                : error?.message || "Không gửi được danh thiếp";
+            Alert.alert("Lỗi", message);
+        } finally {
+            setProfileCardSendingUserId(null);
+        }
+    }, [groupId]);
+
     const handleMessageLongPress = useCallback((message: any) => {
         const messageId = message._id || message.id;
         if (!messageId) return;
@@ -1141,6 +1220,33 @@ export const GroupChatScreen: React.FC<{
                             onUnpin={(targetPollId) => actionsRef.current.unpinPoll(targetPollId)}
                             onDelete={(targetPollId) => actionsRef.current.deletePoll(targetPollId)}
                             onAddOption={(targetPollId, text) => actionsRef.current.addPollOption(targetPollId, { text })}
+                        />
+                    </HighlightableMessage>
+                );
+            }
+
+            if (itemType === "profile_card") {
+                const messageId = item._id || item.id;
+                const isHighlighted = !!messageId && messageId === highlightedMessageId;
+                const isOwn = item.senderId === user?.id;
+
+                return (
+                    <HighlightableMessage
+                        onLongPress={() => handleMessageLongPress(item)}
+                        delayLongPress={300}
+                        isHighlighted={isHighlighted}
+                        style={[
+                            styles.messageBubbleRow,
+                            isOwn ? styles.outgoingRow : styles.incomingRow,
+                            isHighlighted && styles.messageHighlighted,
+                        ]}
+                    >
+                        <ProfileCardMessage
+                            user={item.profileCard}
+                            userId={item.profileCardUserId}
+                            isOwn={isOwn}
+                            onMessagePress={handleOpenProfileCardUser}
+                            onViewProfilePress={handleOpenProfileCardUser}
                         />
                     </HighlightableMessage>
                 );
@@ -1390,7 +1496,7 @@ export const GroupChatScreen: React.FC<{
                 </HighlightableMessage>
             );
         },
-        [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId]
+        [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId, handleOpenProfileCardUser]
     );
 
     const handleViewableItemsChanged = useCallback(
@@ -1738,6 +1844,16 @@ export const GroupChatScreen: React.FC<{
                         <Ionicons name="document" size={24} color={colors.mediaDocumentIcon} />
                         <Text style={styles.mediaMenuItemText}>Tài Liệu</Text>
                     </Pressable>
+                    <Pressable
+                        style={styles.mediaMenuItem}
+                        onPress={() => {
+                            setShowMediaMenu(false);
+                            setShowContactPicker(true);
+                        }}
+                    >
+                        <Ionicons name="person-circle-outline" size={24} color={colors.accent} />
+                        <Text style={styles.mediaMenuItemText}>Chia sẻ liên hệ</Text>
+                    </Pressable>
                 </View>
             )}
 
@@ -1828,6 +1944,15 @@ export const GroupChatScreen: React.FC<{
                         `Đã chuyển tiếp tới ${result.sentToCount} cuộc trò chuyện`
                     );
                 }}
+            />
+
+            <ContactPickerSheet
+                visible={showContactPicker}
+                currentUserId={currentUserId}
+                sentUserIds={profileCardSentUserIds}
+                sendingUserId={profileCardSendingUserId}
+                onDismiss={() => setShowContactPicker(false)}
+                onSend={handleSendProfileCard}
             />
 
             <CreatePollModal

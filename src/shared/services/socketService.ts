@@ -31,8 +31,20 @@ export interface MessagePayload {
     status: "sent" | "delivered" | "seen";
     createdAt: string;
     updatedAt: string;
-    type?: "text" | "image" | "file" | "link" | "system" | "poll";
+    type?: "text" | "image" | "file" | "link" | "system" | "poll" | "profile_card";
     messageType?: string;
+    profileCardUserId?: string;
+    profileCard?: {
+        id: string;
+        displayName?: string;
+        name?: string;
+        avatar?: string;
+        avatarUrl?: string;
+        phone?: string;
+        phoneNumber?: string;
+        relationship?: string;
+        [key: string]: any;
+    };
     pollId?: string;
     poll?: Poll;
     links?: string[];
@@ -103,6 +115,29 @@ export class SocketService {
     private static currentToken: string | null = null;
     private static isRefreshingSocketToken = false;
     private static joinedConversationIds = new Set<string>();
+    private static registeredListeners = new Map<string, Set<(...args: any[]) => void>>();
+
+    private static addRegisteredListener(eventName: string, handler: (...args: any[]) => void): void {
+        if (!this.socket) return;
+
+        this.socket.on(eventName, handler);
+
+        const handlers = this.registeredListeners.get(eventName) || new Set();
+        handlers.add(handler);
+        this.registeredListeners.set(eventName, handlers);
+    }
+
+    private static offRegisteredListeners(eventName: string): void {
+        if (!this.socket) return;
+
+        const handlers = this.registeredListeners.get(eventName);
+        if (!handlers) return;
+
+        handlers.forEach((handler) => {
+            this.socket?.off(eventName, handler);
+        });
+        this.registeredListeners.delete(eventName);
+    }
 
     private static isAuthError(error: any): boolean {
         const message = String(error?.message || error || "").toLowerCase();
@@ -113,6 +148,7 @@ export class SocketService {
         this.currentToken = token;
 
         if (this.socket) {
+            this.registeredListeners.clear();
             this.socket.removeAllListeners();
             this.socket.disconnect();
         }
@@ -231,6 +267,7 @@ export class SocketService {
             this.socket.disconnect();
             this.socket = null;
             this.currentToken = null;
+            this.registeredListeners.clear();
             if (this.typingTimeout) {
                 clearTimeout(this.typingTimeout);
             }
@@ -453,7 +490,7 @@ export class SocketService {
         if (!this.socket) {
             console.warn('[SocketService] Cannot setup onMessage listener - socket not initialized');
             return;
-        }        this.socket.on("receiveMessage", (data: any) => {
+        }        this.addRegisteredListener("receiveMessage", (data: any) => {
             const message = data.message || data.systemMessage || data.activityMessage || data;            // Debug: check if quoted message fields present
             if (message?.quotedMessageId) {            }
             callback(message);
@@ -464,9 +501,7 @@ export class SocketService {
      * Remove message listener
      */
     static offMessage(): void {
-        if (this.socket) {
-            this.socket.off("receiveMessage");
-        }
+        this.offRegisteredListeners("receiveMessage");
     }
 
     /**
@@ -477,7 +512,7 @@ export class SocketService {
             console.warn("[SocketService] Socket not available for onMessageQuoted");
             return;
         }
-        this.socket.on("message:quoted", (data: any) => {            callback(data);
+        this.addRegisteredListener("message:quoted", (data: any) => {            callback(data);
         });
     }
 
@@ -485,9 +520,7 @@ export class SocketService {
      * Remove quoted message listener
      */
     static offMessageQuoted(): void {
-        if (this.socket) {
-            this.socket.off("message:quoted");
-        }
+        this.offRegisteredListeners("message:quoted");
     }
 
     /**
@@ -532,7 +565,7 @@ export class SocketService {
     static onMessageSeen(callback: (data: SeenData) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("messageSeen", (data: SeenData) => {
+        this.addRegisteredListener("messageSeen", (data: SeenData) => {
             callback(data);
         });
     }
@@ -541,9 +574,7 @@ export class SocketService {
      * Remove message seen listener
      */
     static offMessageSeen(): void {
-        if (this.socket) {
-            this.socket.off("messageSeen");
-        }
+        this.offRegisteredListeners("messageSeen");
     }
 
     /**
@@ -583,7 +614,7 @@ export class SocketService {
     static onTyping(callback: (data: TypingData) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("typing:start", (data: any) => {            callback({
+        this.addRegisteredListener("typing:start", (data: any) => {            callback({
                 userId: data.userId,
                 conversationId: data.conversationId || data.groupId || data.toUserId,
                 toUserId: data.toUserId,
@@ -592,7 +623,7 @@ export class SocketService {
             });
         });
 
-        this.socket.on("typing:stop", (data: any) => {            callback({
+        this.addRegisteredListener("typing:stop", (data: any) => {            callback({
                 userId: data.userId,
                 conversationId: data.conversationId || data.groupId || data.toUserId,
                 toUserId: data.toUserId,
@@ -607,8 +638,8 @@ export class SocketService {
      */
     static offTyping(): void {
         if (this.socket) {
-            this.socket.off("typing:start");
-            this.socket.off("typing:stop");
+            this.offRegisteredListeners("typing:start");
+            this.offRegisteredListeners("typing:stop");
         }
     }
 
@@ -907,10 +938,10 @@ export class SocketService {
     static onMessageUpdated(callback: (message: MessagePayload) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("message:edited", (data: any) => {            callback(data.message || data);
+        this.addRegisteredListener("message:edited", (data: any) => {            callback(data.message || data);
         });
 
-        this.socket.on("message:deleted", (data: any) => {            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
+        this.addRegisteredListener("message:deleted", (data: any) => {            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
             callback({
                 ...(data.message || {}),
                 id: messageId,
@@ -923,7 +954,7 @@ export class SocketService {
             } as any);
         });
 
-        this.socket.on("message:deleted_for_everyone", (data: any) => {            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
+        this.addRegisteredListener("message:deleted_for_everyone", (data: any) => {            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
             callback({
                 ...(data.message || {}),
                 id: messageId,
@@ -935,7 +966,7 @@ export class SocketService {
             } as any);
         });
 
-        this.socket.on("message:revoked", (data: any) => {            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
+        this.addRegisteredListener("message:revoked", (data: any) => {            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
             callback({
                 ...(data.message || data),
                 id: messageId,
@@ -954,12 +985,10 @@ export class SocketService {
      * Remove message update listener
      */
     static offMessageUpdated(): void {
-        if (this.socket) {
-            this.socket.off("message:edited");
-            this.socket.off("message:deleted");
-            this.socket.off("message:deleted_for_everyone");
-            this.socket.off("message:revoked");
-        }
+        this.offRegisteredListeners("message:edited");
+        this.offRegisteredListeners("message:deleted");
+        this.offRegisteredListeners("message:deleted_for_everyone");
+        this.offRegisteredListeners("message:revoked");
     }
 
     /**
@@ -968,7 +997,7 @@ export class SocketService {
     static onMessageReaction(callback: (data: { messageId: string; reaction: any }) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("message:reaction", (data: any) => {            callback(data);
+        this.addRegisteredListener("message:reaction", (data: any) => {            callback(data);
         });
     }
 
@@ -976,9 +1005,7 @@ export class SocketService {
      * Remove message reaction listener
      */
     static offMessageReaction(): void {
-        if (this.socket) {
-            this.socket.off("message:reaction");
-        }
+        this.offRegisteredListeners("message:reaction");
     }
 
     /**
@@ -987,7 +1014,7 @@ export class SocketService {
     static onMessageReactionRemove(callback: (data: { messageId: string; userId: string; emoji?: string }) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("message:reaction:remove", (data: any) => {            callback(data);
+        this.addRegisteredListener("message:reaction:remove", (data: any) => {            callback(data);
         });
     }
 
@@ -995,9 +1022,7 @@ export class SocketService {
      * Remove message reaction removal listener
      */
     static offMessageReactionRemove(): void {
-        if (this.socket) {
-            this.socket.off("message:reaction:remove");
-        }
+        this.offRegisteredListeners("message:reaction:remove");
     }
 
     /**
@@ -1006,7 +1031,7 @@ export class SocketService {
     static onMessageDelivered(callback: (data: { conversationId: string; userId: string; lastDeliveredMessageId: string }) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("messageDelivered", (data: any) => {            callback(data);
+        this.addRegisteredListener("messageDelivered", (data: any) => {            callback(data);
         });
     }
 
@@ -1014,9 +1039,7 @@ export class SocketService {
      * Remove message delivered listener
      */
     static offMessageDelivered(): void {
-        if (this.socket) {
-            this.socket.off("messageDelivered");
-        }
+        this.offRegisteredListeners("messageDelivered");
     }
 
     // ========================================================================
@@ -1031,7 +1054,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("conversation:created", (data: any) => {            callback(data);
+        this.addRegisteredListener("conversation:created", (data: any) => {            callback(data);
         });
     }
 
@@ -1039,9 +1062,7 @@ export class SocketService {
      * Remove group created listener
      */
     static offGroupCreated(): void {
-        if (this.socket) {
-            this.socket.off("conversation:created");
-        }
+        this.offRegisteredListeners("conversation:created");
     }
 
     /**
@@ -1052,7 +1073,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("conversation:members_added", (data: any) => {            callback(data);
+        this.addRegisteredListener("conversation:members_added", (data: any) => {            callback(data);
         });
     }
 
@@ -1060,9 +1081,7 @@ export class SocketService {
      * Remove members added listener
      */
     static offGroupMembersAdded(): void {
-        if (this.socket) {
-            this.socket.off("conversation:members_added");
-        }
+        this.offRegisteredListeners("conversation:members_added");
     }
 
     /**
@@ -1073,7 +1092,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("conversation:member_removed", (data: any) => {            callback(data);
+        this.addRegisteredListener("conversation:member_removed", (data: any) => {            callback(data);
         });
     }
 
@@ -1102,9 +1121,7 @@ export class SocketService {
      * Remove member removed listener
      */
     static offGroupMemberRemoved(): void {
-        if (this.socket) {
-            this.socket.off("conversation:member_removed");
-        }
+        this.offRegisteredListeners("conversation:member_removed");
     }
 
     /**
@@ -1115,7 +1132,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("conversation:updated", (data: any) => {            callback(data);
+        this.addRegisteredListener("conversation:updated", (data: any) => {            callback(data);
         });
     }
 
@@ -1123,9 +1140,7 @@ export class SocketService {
      * Remove group updated listener
      */
     static offGroupUpdated(): void {
-        if (this.socket) {
-            this.socket.off("conversation:updated");
-        }
+        this.offRegisteredListeners("conversation:updated");
     }
 
     /**
@@ -1136,7 +1151,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:admin_changed", (data: any) => {            callback(data);
+        this.addRegisteredListener("group:admin_changed", (data: any) => {            callback(data);
         });
     }
 
@@ -1144,9 +1159,7 @@ export class SocketService {
      * Remove admin changed listener
      */
     static offGroupAdminChanged(): void {
-        if (this.socket) {
-            this.socket.off("group:admin_changed");
-        }
+        this.offRegisteredListeners("group:admin_changed");
     }
 
     /**
@@ -1157,7 +1170,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:owner_transferred", (data: any) => {            callback(data);
+        this.addRegisteredListener("group:owner_transferred", (data: any) => {            callback(data);
         });
     }
 
@@ -1165,9 +1178,7 @@ export class SocketService {
      * Remove owner transferred listener
      */
     static offGroupOwnerTransferred(): void {
-        if (this.socket) {
-            this.socket.off("group:owner_transferred");
-        }
+        this.offRegisteredListeners("group:owner_transferred");
     }
 
     /**
@@ -1178,7 +1189,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:member_approved", (data: any) => {            callback(data);
+        this.addRegisteredListener("group:member_approved", (data: any) => {            callback(data);
         });
     }
 
@@ -1186,9 +1197,7 @@ export class SocketService {
      * Remove member approved listener
      */
     static offGroupMemberApproved(): void {
-        if (this.socket) {
-            this.socket.off("group:member_approved");
-        }
+        this.offRegisteredListeners("group:member_approved");
     }
 
     /**
@@ -1199,7 +1208,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:member_rejected", (data: any) => {            callback(data);
+        this.addRegisteredListener("group:member_rejected", (data: any) => {            callback(data);
         });
     }
 
@@ -1207,9 +1216,7 @@ export class SocketService {
      * Remove member rejected listener
      */
     static offGroupMemberRejected(): void {
-        if (this.socket) {
-            this.socket.off("group:member_rejected");
-        }
+        this.offRegisteredListeners("group:member_rejected");
     }
 
     /**
@@ -1220,7 +1227,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:settings_updated", (data: any) => {            callback(data);
+        this.addRegisteredListener("group:settings_updated", (data: any) => {            callback(data);
         });
     }
 
@@ -1228,9 +1235,7 @@ export class SocketService {
      * Remove settings updated listener
      */
     static offGroupSettingsUpdated(): void {
-        if (this.socket) {
-            this.socket.off("group:settings_updated");
-        }
+        this.offRegisteredListeners("group:settings_updated");
     }
 
     /**
@@ -1241,7 +1246,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:dissolved", (data: any) => {            callback(data);
+        this.addRegisteredListener("group:dissolved", (data: any) => {            callback(data);
         });
     }
 
@@ -1249,9 +1254,7 @@ export class SocketService {
      * Remove group dissolved listener
      */
     static offGroupDissolved(): void {
-        if (this.socket) {
-            this.socket.off("group:dissolved");
-        }
+        this.offRegisteredListeners("group:dissolved");
     }
 
     /**
@@ -1262,7 +1265,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("poll:new", (data: any) => {            callback(data);
+        this.addRegisteredListener("poll:new", (data: any) => {            callback(data);
         });
     }
 
@@ -1270,9 +1273,7 @@ export class SocketService {
      * Remove poll new listener
      */
     static offPollNew(): void {
-        if (this.socket) {
-            this.socket.off("poll:new");
-        }
+        this.offRegisteredListeners("poll:new");
     }
 
     /**
@@ -1283,7 +1284,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("poll:vote", (data: any) => {            callback(data);
+        this.addRegisteredListener("poll:vote", (data: any) => {            callback(data);
         });
     }
 
@@ -1291,9 +1292,7 @@ export class SocketService {
      * Remove poll vote listener
      */
     static offPollVote(): void {
-        if (this.socket) {
-            this.socket.off("poll:vote");
-        }
+        this.offRegisteredListeners("poll:vote");
     }
 
     /**
@@ -1386,11 +1385,11 @@ export class SocketService {
             return;
         }
         // New message pinned
-        this.socket.on("message:pinned", (data: any) => {            callback({ type: "pinned", pinnedMessage: data });
+        this.addRegisteredListener("message:pinned", (data: any) => {            callback({ type: "pinned", pinnedMessage: data });
         });
 
         // Message unpinned
-        this.socket.on("message:unpinned", (data: any) => {            callback({ type: "unpinned", pinnedMessage: data });
+        this.addRegisteredListener("message:unpinned", (data: any) => {            callback({ type: "unpinned", pinnedMessage: data });
         });
 
         // Debug: Log all socket events
@@ -1404,8 +1403,8 @@ export class SocketService {
      */
     static offPinnedMessage(): void {
         if (this.socket) {
-            this.socket.off("message:pinned");
-            this.socket.off("message:unpinned");
+            this.offRegisteredListeners("message:pinned");
+            this.offRegisteredListeners("message:unpinned");
         }
     }
 
@@ -1430,7 +1429,7 @@ export class SocketService {
         ];
 
         eventNames.forEach((eventName) => {
-            this.socket?.on(eventName, (data: PollSocketEvent) => {                callback({ ...data, type: eventName });
+            this.addRegisteredListener(eventName, (data: PollSocketEvent) => {                callback({ ...data, type: eventName });
             });
         });
     }
@@ -1440,14 +1439,14 @@ export class SocketService {
      */
     static offPollEvent(): void {
         if (this.socket) {
-            this.socket.off("poll:new");
-            this.socket.off("poll:vote");
-            this.socket.off("poll:closed");
-            this.socket.off("poll:locked");
-            this.socket.off("poll:pinned");
-            this.socket.off("poll:unpinned");
-            this.socket.off("poll:deleted");
-            this.socket.off("poll:option_added");
+            this.offRegisteredListeners("poll:new");
+            this.offRegisteredListeners("poll:vote");
+            this.offRegisteredListeners("poll:closed");
+            this.offRegisteredListeners("poll:locked");
+            this.offRegisteredListeners("poll:pinned");
+            this.offRegisteredListeners("poll:unpinned");
+            this.offRegisteredListeners("poll:deleted");
+            this.offRegisteredListeners("poll:option_added");
         }
     }
 

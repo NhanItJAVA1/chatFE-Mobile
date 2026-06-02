@@ -33,6 +33,9 @@ import {
   HighlightableMessage,
   AnimatedEmojiMessage,
   JUMBO_EMOJI_ASSETS,
+  ProfileCardMessage,
+  ContactPickerSheet,
+  ShareProfileCardSheet,
 } from "../components";
 import { colors, assets } from "../theme";
 import { buildMessageActionSheetOptions } from "../../../shared/utils";
@@ -42,6 +45,7 @@ import chatMediaService from "../../../shared/services/chatMediaService";
 import { checkFriendshipStatus, sendFriendRequest, unfriend } from "../../../shared/services/friendService";
 import { FriendSocketService, type FriendshipNotification } from "../../../shared/services/friendSocket";
 import { BlockService } from "../../../shared/services/blockService";
+import profileCardService from "../../../shared/services/profileCardService";
 import type { ChatScreenProps, MessageMedia } from "@/types";
 import type { MessagePayload } from "../../../shared/services/socketService";
 
@@ -55,9 +59,10 @@ const MessageBubble: React.FC<{
   onLongPress?: () => void;
   onPressQuoted?: (quotedMessageId: string) => void;
   onToggleReaction?: (emoji: string, selected: boolean) => void;
+  onProfileCardPress?: (user: any) => void;
   isHighlighted?: boolean;
   messageMap?: Record<string, MessagePayload | undefined>;
-}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, onToggleReaction, isHighlighted, messageMap = {} }) => {
+}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, onToggleReaction, onProfileCardPress, isHighlighted, messageMap = {} }) => {
   const formatTime = (date: string) => {
     const d = new Date(date);
     return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
@@ -82,6 +87,7 @@ const MessageBubble: React.FC<{
 
   // Check if message has media
   const hasMedia = message.media && message.media.length > 0;
+  const isProfileCard = String(message.type || message.messageType || "").toLowerCase() === "profile_card";
   const reactionGroups = Object.values(
     (message.reactions || []).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
       const emoji = reaction?.emoji;
@@ -112,8 +118,18 @@ const MessageBubble: React.FC<{
         isHighlighted && styles.messageHighlighted,
       ]}
     >
+      {isProfileCard && (
+        <ProfileCardMessage
+          user={message.profileCard}
+          userId={message.profileCardUserId}
+          isOwn={isOwn}
+          onMessagePress={onProfileCardPress}
+          onViewProfilePress={onProfileCardPress}
+        />
+      )}
+
       {/* Media display */}
-      {hasMedia && (
+      {!isProfileCard && hasMedia && (
         <View style={styles.mediaContainer}>
           {message.media.map((m: any, idx: number) => (
             <MediaMessage
@@ -127,7 +143,7 @@ const MessageBubble: React.FC<{
       )}
 
       {/* Text bubble */}
-      {message.text && (
+      {!isProfileCard && message.text && (
         <View style={[styles.bubble, isOwn ? styles.outgoingBubble : styles.incomingBubble]}>
           {/* Quoted message block if this is a reply */}
           {(() => {
@@ -390,7 +406,7 @@ const TypingIndicator: React.FC<{ typingUsers: Set<string> }> = ({ typingUsers }
 /**
  * Chat Screen Component
  */
-export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) => {
+export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: ChatScreenProps) => {
   const authContext = useAuth();
   const callContext = useCall();
   const currentUser = authContext.user;
@@ -399,6 +415,10 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   const [showMediaMenu, setShowMediaMenu] = React.useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = React.useState(false);
   const [showForwardDialog, setShowForwardDialog] = React.useState(false);
+  const [showContactPicker, setShowContactPicker] = React.useState(false);
+  const [showShareProfileSheet, setShowShareProfileSheet] = React.useState(false);
+  const [profileCardSendingUserId, setProfileCardSendingUserId] = React.useState<string | null>(null);
+  const [profileCardSentUserIds, setProfileCardSentUserIds] = React.useState<Set<string>>(new Set());
   const [forwardMessageIds, setForwardMessageIds] = React.useState<string[]>([]);
   const [draftMedia, setDraftMedia] = React.useState<DraftMediaAsset[]>([]);
   const [uploading, setUploading] = React.useState(false);
@@ -571,6 +591,52 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       setIsBlockedByMe(true);
     }
   }, [error, isSelfChat]);
+
+  const searchTargetHandledRef = useRef<string | null>(null);
+
+  const normalizeSearchMessage = useCallback((raw: any): MessagePayload | null => {
+    if (!raw) return null;
+    const id = raw._id || raw.id || raw.messageId;
+    if (!id || !conversationId) return null;
+
+    return {
+      ...raw,
+      _id: String(id),
+      id: String(id),
+      conversationId: raw.conversationId || conversationId,
+      senderId: raw.senderId || "",
+      senderName: raw.senderName || "Người dùng",
+      senderAvatar: raw.senderAvatar || "",
+      text: raw.text || "",
+      media: raw.media || [],
+      status: raw.status || "sent",
+      createdAt: raw.createdAt || new Date().toISOString(),
+      updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
+    } as MessagePayload;
+  }, [conversationId]);
+
+  useEffect(() => {
+    const targetId = String(chatUser?.searchTargetMessageId || "");
+    if (!targetId || isLoading || !conversationId || searchTargetHandledRef.current === targetId) return;
+
+    searchTargetHandledRef.current = targetId;
+    const extraMessages = [
+      normalizeSearchMessage(chatUser?.searchTargetMessage),
+      ...(Array.isArray(chatUser?.searchContextMessages) ? chatUser.searchContextMessages.map(normalizeSearchMessage) : []),
+    ].filter(Boolean) as MessagePayload[];
+
+    if (extraMessages.length > 0) {
+      actions.addMessages(extraMessages);
+    }
+
+    setTimeout(() => {
+      actions.scrollToMessage(targetId).then((success) => {
+        if (!success) {
+          Alert.alert("Thông báo", "Không tìm thấy tin nhắn trong cuộc trò chuyện");
+        }
+      });
+    }, 250);
+  }, [chatUser?.searchTargetMessageId, chatUser?.searchTargetMessage, chatUser?.searchContextMessages, isLoading, conversationId, actions, normalizeSearchMessage]);
 
   const renderableMessages = useMemo(
     () => groupMessagesForGallery(messages, currentUser?.id || currentUserId),
@@ -1341,6 +1407,34 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
     }
   }, []);
 
+  const handleOpenProfileCardUser = useCallback((profileUser: any) => {
+    const targetUserId = profileUser?.id || profileUser?._id || profileUser?.userId;
+    if (!targetUserId) return;
+    onOpenPrivateChat?.({
+      ...profileUser,
+      id: targetUserId,
+      displayName: profileUser.displayName || profileUser.name || "Người dùng",
+      conversationType: "PRIVATE",
+      relationship: String(targetUserId) === String(currentUserId) ? "self" : (profileUser.relationship || "stranger"),
+    });
+  }, [currentUserId, onOpenPrivateChat]);
+
+  const handleSendProfileCard = useCallback(async (targetUser: { id: string; displayName: string }) => {
+    if (!conversationId || !targetUser.id) return;
+    setProfileCardSendingUserId(targetUser.id);
+    try {
+      await profileCardService.sendProfileCard(conversationId, { userId: targetUser.id });
+      setProfileCardSentUserIds((prev) => new Set(prev).add(targetUser.id));
+    } catch (error: any) {
+      const message = error?.status === 403
+        ? "Người này đang ẩn danh thiếp hoặc không cho phép chia sẻ."
+        : error?.message || "Không gửi được danh thiếp";
+      Alert.alert("Lỗi", message);
+    } finally {
+      setProfileCardSendingUserId(null);
+    }
+  }, [conversationId]);
+
   const handleShowReactionPicker = useCallback((message: MessagePayload) => {
     const messageId = message._id || message.id;
     if (!messageId) return;
@@ -1492,6 +1586,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
                 handleToggleReaction(messageId, emoji, selected);
               }
             }}
+            onProfileCardPress={handleOpenProfileCardUser}
             onPressQuoted={async (quotedId) => {
               if (actions.scrollToMessage) {
                 const success = await actions.scrollToMessage(quotedId);
@@ -1523,7 +1618,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         />
       );
     },
-    [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages],
+    [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages, handleOpenProfileCardUser],
   );
 
   /**
@@ -1824,6 +1919,30 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         }}
       />
 
+      <ContactPickerSheet
+        visible={showContactPicker}
+        currentUserId={currentUserId}
+        sentUserIds={profileCardSentUserIds}
+        sendingUserId={profileCardSendingUserId}
+        onDismiss={() => setShowContactPicker(false)}
+        onSend={handleSendProfileCard}
+      />
+
+      <ShareProfileCardSheet
+        visible={showShareProfileSheet}
+        profileUser={{
+          ...chatUser,
+          id: friendId,
+          displayName: userName,
+          avatar: userAvatar,
+          avatarUrl: userAvatar,
+        }}
+        currentConversationId={conversationId}
+        onDismiss={() => setShowShareProfileSheet(false)}
+        onSent={() => Alert.alert("Thành công", "Đã gửi danh thiếp")}
+        onError={(message) => Alert.alert("Lỗi", message)}
+      />
+
       {/* Full-Screen Image Viewer */}
       {viewingGalleryMessages && viewingGalleryMessages.length > 0 && (
         <Modal
@@ -1938,6 +2057,18 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           <View style={styles.avatarMenuContainer}>
             {!isSelfChat && (
               <>
+                <Pressable
+                  style={styles.menuItem}
+                  onPress={() => {
+                    setShowAvatarMenu(false);
+                    setShowShareProfileSheet(true);
+                  }}
+                  disabled={!friendId}
+                >
+                  <Ionicons name="share-social-outline" size={20} color={colors.text} />
+                  <Text style={styles.menuItemText}>Chia sẻ hồ sơ</Text>
+                </Pressable>
+                <View style={styles.menuDivider} />
                 <Pressable style={[styles.menuItem, isBlockedByMe && styles.menuItemDanger]} onPress={handleToggleBlock} disabled={blockLoading}>
                   {blockLoading ? (
                     <ActivityIndicator color={isBlockedByMe ? colors.dangerStrong : colors.accent} />
@@ -2029,6 +2160,17 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             <Pressable style={styles.mediaMenuButton} onPress={handlePickDocument}>
               <Ionicons name="document" size={24} color={colors.mediaDocumentIcon} />
               <Text style={styles.mediaMenuButtonText}>Tài Liệu</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.mediaMenuButton}
+              onPress={() => {
+                setShowMediaMenu(false);
+                setShowContactPicker(true);
+              }}
+            >
+              <Ionicons name="person-circle-outline" size={24} color={colors.accent} />
+              <Text style={styles.mediaMenuButtonText}>Chia sẻ liên hệ</Text>
             </Pressable>
 
             <Pressable style={styles.mediaMenuCloseButton} onPress={() => setShowMediaMenu(false)}>

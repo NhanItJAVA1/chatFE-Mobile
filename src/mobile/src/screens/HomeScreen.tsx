@@ -6,6 +6,7 @@ import {
     AppState,
     Dimensions,
     Image,
+    Linking,
     Modal,
     Pressable,
     ScrollView,
@@ -19,6 +20,14 @@ import { useAuth, useFriendship } from "../../../shared/hooks";
 import { ConversationService, type Conversation, type ConversationLastMessageSummary } from "../../../shared/services/conversationService";
 import { SocketService } from "../../../shared/services/socketService";
 import { PresenceService, type PresenceStatus } from "../../../shared/services/presenceService";
+import searchService, {
+    type GlobalSearchLink,
+    type GlobalSearchMedia,
+    type GlobalSearchMessage,
+    type GlobalSearchResult,
+    type GlobalSearchUser,
+    type SearchTabKey,
+} from "../../../shared/services/searchService";
 import { Avatar, Card, SectionTitle } from "../components";
 import { colors } from "../theme";
 import type { Friend } from "@/types";
@@ -84,6 +93,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const { user, token } = useAuth();
     const { state, actions } = useFriendship();
     const [query, setQuery] = useState("");
+    const [isSearchMode, setIsSearchMode] = useState(false);
+    const [activeSearchTab, setActiveSearchTab] = useState<SearchTabKey>("Chats");
+    const [globalSearchResult, setGlobalSearchResult] = useState<GlobalSearchResult>({
+        users: [],
+        conversations: [],
+        groups: [],
+        messages: [],
+        media: [],
+        links: [],
+        hasMore: false,
+    });
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [searchError, setSearchError] = useState<string | null>(null);
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [conversationsLoading, setConversationsLoading] = useState(false);
     const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
@@ -252,6 +274,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const getConversationType = (conversation: Conversation): string => {
         return String(conversation.type || "").toUpperCase();
     };
+
+    const getAnyId = (value: any): string => String(value?.id || value?._id || value?.userId || value?.messageId || "");
 
     const isSelfConversation = useCallback(
         (conversation: Conversation): boolean => {
@@ -448,6 +472,32 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return "Tin nhắn";
     };
 
+    const normalizeConversationFromSocket = useCallback((raw: any): Conversation | null => {
+        const source = raw?.conversation || raw?.data?.conversation || raw?.data || raw;
+        const id = source?._id || source?.id || source?.conversationId;
+
+        if (!id) {
+            return null;
+        }
+
+        return {
+            ...source,
+            _id: String(id),
+            id: String(id),
+            type: String(source?.type || "GROUP").toUpperCase() === "PRIVATE" ? "PRIVATE" : "GROUP",
+            name: source?.name,
+            members: source?.members || [],
+            avatarUrl: source?.avatarUrl || source?.avatar || "",
+            ownerId: source?.ownerId,
+            adminIds: source?.adminIds || source?.admins || [],
+            lastMessage: source?.lastMessage,
+            lastMessageAt: source?.lastMessageAt,
+            unreadCount: source?.unreadCount || 0,
+            createdAt: source?.createdAt || new Date().toISOString(),
+            updatedAt: source?.updatedAt || new Date().toISOString(),
+        } as Conversation;
+    }, []);
+
     // ── Delete conversation ──────────────────────────────────────────
     const handleDeleteConversation = useCallback((conversation: Conversation) => {
         const conversationId = getConversationId(conversation);
@@ -634,8 +684,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         const currentUserId = userCandidateIds[0] || "";
 
         const handleReceiveMessage = (data: any) => {
-            const message = data?.message || data;
-            const conversationId = message?.conversationId;
+            const message = data?.message || data?.systemMessage || data?.activityMessage || data;
+            const conversationId = String(message?.conversationId || data?.conversationId || "");
             if (!conversationId) return;
 
             setConversations((prev) => {
@@ -645,6 +695,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
                     const textPreview = message?.text?.trim()
                         ? message.text
+                        : message?.content?.trim()
+                            ? message.content
+                            : message?.message?.trim()
+                                ? message.message
                         : getPreviewFromMessageType(message?.type || "");
 
                     const nextUnread =
@@ -776,7 +830,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         };
 
         const handleGroupCreated = (data: any) => {
-            // Reload conversations when a new group is created
+            const conversation = normalizeConversationFromSocket(data);
+            if (conversation) {
+                setConversations((prev) => dedupeConversations([conversation, ...prev]).sort(sortConversations));
+            }
+
+            // Reload conversations when a new group is created or approved for current user.
             ConversationService.getConversations(1, PAGE_SIZE).then((updated) => {
                 setConversations(dedupeConversations(updated));
             });
@@ -927,7 +986,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             socket.off("conversation:pin_toggled", handlePinToggled);
             socket.off("conversation:archived_toggled", handleArchivedToggled);
         };
-    }, [token, user?.id, (user as any)?._id, dedupeConversations, updateConversationLastMessage]);
+    }, [token, user?.id, (user as any)?._id, dedupeConversations, updateConversationLastMessage, normalizeConversationFromSocket]);
 
     // Refresh conversations when app returns to foreground
     useEffect(() => {
@@ -997,6 +1056,108 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     // Use whichever list the current view requires
     const displayConversations = showArchivedView ? archivedConversations : normalConversations;
 
+    useEffect(() => {
+        if (!isSearchMode) return;
+
+        const trimmed = query.trim();
+        if (!trimmed) {
+            setGlobalSearchResult({
+                users: [],
+                conversations: [],
+                groups: [],
+                messages: [],
+                media: [],
+                links: [],
+                hasMore: false,
+            });
+            setSearchLoading(false);
+            setSearchError(null);
+            return;
+        }
+
+        let active = true;
+        const timeout = setTimeout(() => {
+            setSearchLoading(true);
+            setSearchError(null);
+            searchService.globalSearch({ query: trimmed, type: "ALL", limit: 10, contextLimit: 1 })
+                .then((result) => {
+                    if (active) setGlobalSearchResult(result);
+                })
+                .catch((error: any) => {
+                    if (!active) return;
+                    setSearchError(error?.message || "Không thể tìm kiếm");
+                    setGlobalSearchResult({
+                        users: [],
+                        conversations: [],
+                        groups: [],
+                        messages: [],
+                        media: [],
+                        links: [],
+                        hasMore: false,
+                    });
+                })
+                .finally(() => {
+                    if (active) setSearchLoading(false);
+                });
+        }, 350);
+
+        return () => {
+            active = false;
+            clearTimeout(timeout);
+        };
+    }, [isSearchMode, query]);
+
+    const searchTabs: SearchTabKey[] = ["Chats", "Groups", "Messages", "Media", "Links", "Files", "Voice"];
+
+    const localPrivateSearchResults = useMemo(() => {
+        const needle = query.trim().toLowerCase();
+        if (!needle) return [];
+        return conversations
+            .filter((conversation) => getConversationType(conversation) !== "GROUP" && !getIsArchived(conversation))
+            .filter((conversation) => getConversationDisplayInfo(conversation).searchText.toLowerCase().includes(needle))
+            .sort(sortConversations);
+    }, [conversations, query, getConversationDisplayInfo]);
+
+    const localGroupSearchResults = useMemo(() => {
+        const needle = query.trim().toLowerCase();
+        if (!needle) return [];
+        return conversations
+            .filter((conversation) => getConversationType(conversation) === "GROUP" && !getIsArchived(conversation))
+            .filter((conversation) => getConversationDisplayInfo(conversation).searchText.toLowerCase().includes(needle))
+            .sort(sortConversations);
+    }, [conversations, query, getConversationDisplayInfo]);
+
+    const dedupedGlobalGroups = useMemo(() => {
+        const map = new Map<string, Conversation>();
+        [...globalSearchResult.groups, ...globalSearchResult.conversations]
+            .filter((conversation) => getConversationType(conversation) === "GROUP")
+            .forEach((conversation) => {
+                const id = getAnyId(conversation);
+                if (id && !map.has(id)) map.set(id, conversation);
+            });
+        return Array.from(map.values());
+    }, [globalSearchResult.groups, globalSearchResult.conversations]);
+
+    const getMediaKind = (media: GlobalSearchMedia): string => {
+        return String(media.type || media.mediaType || media.mimeType || media.mimetype || "").toLowerCase();
+    };
+
+    const tabMediaResults = useMemo(() => {
+        return globalSearchResult.media.filter((media) => {
+            const kind = getMediaKind(media);
+            if (activeSearchTab === "Media") {
+                return kind.includes("image") || kind.includes("video");
+            }
+            if (activeSearchTab === "Files") {
+                return kind.includes("file") || kind.includes("document") || kind.includes("audio") || kind.includes("music");
+            }
+            if (activeSearchTab === "Voice") {
+                return kind.includes("voice");
+            }
+            return false;
+        });
+    }, [globalSearchResult.media, activeSearchTab]);
+
     /**
      * Handle friend press - navigate to chat
      */
@@ -1051,6 +1212,236 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             isSelfChat: isSelfConversation(conversation),
             relationship: isSelfConversation(conversation) ? "self" : "stranger",
         });
+    };
+
+    const closeSearchMode = () => {
+        setIsSearchMode(false);
+        setQuery("");
+        setActiveSearchTab("Chats");
+        setSearchError(null);
+    };
+
+    const openConversationFromSearchPayload = (payload: any) => {
+        const conversation = payload?.conversation || payload;
+        const conversationId = String(payload?.conversationId || conversation?._id || conversation?.id || "");
+        const conversationType = String(payload?.conversationType || conversation?.type || "").toUpperCase();
+        const messageId = String(payload?.messageId || payload?.id || payload?._id || "");
+        const searchTarget = {
+            searchTargetMessageId: messageId,
+            searchTargetMessage: payload,
+            searchContextMessages: Array.isArray(payload?.context) ? payload.context : [],
+        };
+
+        if (conversationType === "GROUP" || getConversationType(conversation) === "GROUP") {
+            onGroupPress?.({
+                ...(conversation || {}),
+                _id: conversationId || conversation?._id,
+                id: conversationId || conversation?.id,
+                type: "GROUP",
+                ...searchTarget,
+            } as Conversation);
+            return;
+        }
+
+        const members = Array.isArray(conversation?.members) ? conversation.members : [];
+        const otherMemberId = members.find((memberId: string) => String(memberId) !== currentUserId);
+        const targetUserId = String(payload?.targetUserId || payload?.userId || otherMemberId || payload?.senderId || "");
+        if (!targetUserId && !conversationId) return;
+
+        onFriendPress?.({
+            id: targetUserId,
+            displayName: payload?.senderName || conversation?.name || "Người dùng",
+            conversationId,
+            conversationType: "PRIVATE",
+            relationship: targetUserId === currentUserId ? "self" : "stranger",
+            ...searchTarget,
+        });
+    };
+
+    const openGlobalUser = (userItem: GlobalSearchUser) => {
+        const userId = getAnyId(userItem);
+        if (!userId) return;
+        onFriendPress?.({
+            id: userId,
+            displayName: userItem.displayName || userItem.name || userItem.username || "Người dùng",
+            avatar: userItem.avatar || userItem.avatarUrl,
+            avatarUrl: userItem.avatarUrl || userItem.avatar,
+            phone: userItem.phone || userItem.phoneNumber,
+            conversationType: "PRIVATE",
+            relationship: "stranger",
+        });
+    };
+
+    const openSearchItemMenu = (item: GlobalSearchMedia | GlobalSearchLink) => {
+        const isLink = !!(item as GlobalSearchLink).url && activeSearchTab === "Links";
+        Alert.alert(
+            isLink ? "Tùy chọn liên kết" : "Tùy chọn tệp",
+            isLink ? (item as GlobalSearchLink).url : ((item as GlobalSearchMedia).name || (item as GlobalSearchMedia).fileName || "Nội dung"),
+            [
+                ...(isLink
+                    ? [{
+                        text: "Mở liên kết",
+                        onPress: () => Linking.openURL((item as GlobalSearchLink).url).catch(() => Alert.alert("Lỗi", "Không mở được liên kết")),
+                    }]
+                    : []),
+                {
+                    text: "Hiện trong chat",
+                    onPress: () => openConversationFromSearchPayload(item),
+                },
+                { text: "Hủy", style: "cancel" },
+            ],
+        );
+    };
+
+    const renderSearchPersonRow = (item: GlobalSearchUser | Conversation, source: "user" | "conversation") => {
+        const isConversation = source === "conversation";
+        const displayInfo = isConversation
+            ? getConversationDisplayInfo(item as Conversation)
+            : {
+                displayName: (item as GlobalSearchUser).displayName || (item as GlobalSearchUser).name || (item as GlobalSearchUser).username || "Người dùng",
+                displayAvatar: (item as GlobalSearchUser).avatarUrl || (item as GlobalSearchUser).avatar,
+            };
+        const key = `${source}-${getAnyId(item)}-${displayInfo.displayName}`;
+        return (
+            <Pressable
+                key={key}
+                style={({ pressed }) => [styles.searchResultRow, pressed && styles.chatRowPressed]}
+                onPress={() => isConversation ? handleConversationPress(item as Conversation) : openGlobalUser(item as GlobalSearchUser)}
+            >
+                {displayInfo.displayAvatar ? (
+                    <Image source={{ uri: displayInfo.displayAvatar }} style={styles.searchAvatar} />
+                ) : (
+                    <Avatar label={displayInfo.displayName.slice(0, 1).toUpperCase()} size={46} backgroundColor={colors.accentStrong} />
+                )}
+                <View style={styles.searchResultMeta}>
+                    <Text style={styles.searchResultTitle} numberOfLines={1}>{displayInfo.displayName}</Text>
+                    <Text style={styles.searchResultSubtitle} numberOfLines={1}>
+                        {isConversation && getConversationType(item as Conversation) === "GROUP" ? "Nhóm chat" : "Cuộc trò chuyện"}
+                    </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            </Pressable>
+        );
+    };
+
+    const renderSearchMessageRow = (message: GlobalSearchMessage) => {
+        const messageId = String(message.messageId || message.id || message._id || "");
+        return (
+            <Pressable
+                key={`message-${messageId}-${message.conversationId}`}
+                style={({ pressed }) => [styles.searchResultRow, pressed && styles.chatRowPressed]}
+                onPress={() => openConversationFromSearchPayload(message)}
+            >
+                <View style={styles.searchIconWrap}>
+                    <Ionicons name="chatbubble-ellipses-outline" size={22} color={colors.accent} />
+                </View>
+                <View style={styles.searchResultMeta}>
+                    <Text style={styles.searchResultTitle} numberOfLines={1}>
+                        {message.senderName || "Tin nhắn"}
+                    </Text>
+                    <Text style={styles.searchResultSubtitle} numberOfLines={2}>
+                        {message.text || "Không có nội dung văn bản"}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    };
+
+    const renderSearchMediaRow = (media: GlobalSearchMedia) => (
+        <Pressable
+            key={`media-${media.messageId || media.id || media._id || media.url}`}
+            style={({ pressed }) => [styles.searchResultRow, pressed && styles.chatRowPressed]}
+            onPress={() => media.url ? Linking.openURL(media.url).catch(() => { }) : openConversationFromSearchPayload(media)}
+            onLongPress={() => openSearchItemMenu(media)}
+        >
+            <View style={styles.searchIconWrap}>
+                <Ionicons
+                    name={getMediaKind(media).includes("image") ? "image-outline" : getMediaKind(media).includes("video") ? "videocam-outline" : "document-outline"}
+                    size={22}
+                    color={colors.accent}
+                />
+            </View>
+            <View style={styles.searchResultMeta}>
+                <Text style={styles.searchResultTitle} numberOfLines={1}>{media.name || media.fileName || "Tệp đính kèm"}</Text>
+                <Text style={styles.searchResultSubtitle} numberOfLines={1}>Nhấn giữ để xem tùy chọn</Text>
+            </View>
+        </Pressable>
+    );
+
+    const renderSearchLinkRow = (link: GlobalSearchLink) => (
+        <Pressable
+            key={`link-${link.messageId || link.id || link._id || link.url}`}
+            style={({ pressed }) => [styles.searchResultRow, pressed && styles.chatRowPressed]}
+            onPress={() => Linking.openURL(link.url).catch(() => Alert.alert("Lỗi", "Không mở được liên kết"))}
+            onLongPress={() => openSearchItemMenu(link)}
+        >
+            <View style={styles.searchIconWrap}>
+                <Ionicons name="link-outline" size={22} color={colors.accent} />
+            </View>
+            <View style={styles.searchResultMeta}>
+                <Text style={styles.searchResultTitle} numberOfLines={1}>{link.title || link.url}</Text>
+                <Text style={styles.searchResultSubtitle} numberOfLines={1}>{link.description || link.url}</Text>
+            </View>
+        </Pressable>
+    );
+
+    const renderGlobalSearchResults = () => {
+        if (!query.trim()) {
+            return (
+                <View style={styles.searchEmptyState}>
+                    <Ionicons name="search" size={46} color={colors.textMuted} />
+                    <Text style={styles.emptyText}>Nhập từ khóa để tìm kiếm</Text>
+                </View>
+            );
+        }
+
+        if (searchLoading) {
+            return (
+                <View style={styles.searchEmptyState}>
+                    <ActivityIndicator color={colors.accent} />
+                    <Text style={styles.emptyText}>Đang tìm kiếm...</Text>
+                </View>
+            );
+        }
+
+        if (searchError) {
+            return (
+                <View style={styles.searchEmptyState}>
+                    <Ionicons name="warning-outline" size={42} color={colors.dangerSoft} />
+                    <Text style={styles.emptyText}>{searchError}</Text>
+                </View>
+            );
+        }
+
+        let content: React.ReactNode[] = [];
+        if (activeSearchTab === "Chats") {
+            content = [
+                ...localPrivateSearchResults.map((item) => renderSearchPersonRow(item, "conversation")),
+                ...globalSearchResult.users.map((item) => renderSearchPersonRow(item, "user")),
+            ];
+        } else if (activeSearchTab === "Groups") {
+            content = [
+                ...localGroupSearchResults.map((item) => renderSearchPersonRow(item, "conversation")),
+                ...dedupedGlobalGroups.map((item) => renderSearchPersonRow(item, "conversation")),
+            ];
+        } else if (activeSearchTab === "Messages") {
+            content = globalSearchResult.messages.map(renderSearchMessageRow);
+        } else if (activeSearchTab === "Links") {
+            content = globalSearchResult.links.map(renderSearchLinkRow);
+        } else {
+            content = tabMediaResults.map(renderSearchMediaRow);
+        }
+
+        if (content.length === 0) {
+            return (
+                <View style={styles.searchEmptyState}>
+                    <Ionicons name="file-tray-outline" size={46} color={colors.textMuted} />
+                    <Text style={styles.emptyText}>Không có nội dung</Text>
+                </View>
+            );
+        }
+
+        return <View style={styles.searchResultList}>{content}</View>;
     };
 
     // ── Context Menu Modal ───────────────────────────────────────────
@@ -1334,7 +1725,47 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 onScroll={handleScrollEnd}
                 scrollEventThrottle={400}
             >
-                {!showArchivedView && (
+                {!showArchivedView && isSearchMode && (
+                    <>
+                        <View style={styles.searchHeaderRow}>
+                            <Pressable style={styles.searchBackButton} onPress={closeSearchMode}>
+                                <Ionicons name="chevron-back" size={24} color={colors.text} />
+                            </Pressable>
+                            <View style={[styles.searchBar, styles.searchBarInHeader]}>
+                                <Ionicons name="search" size={18} color={colors.textMuted} />
+                                <TextInput
+                                    value={query}
+                                    onChangeText={setQuery}
+                                    placeholder="Tìm kiếm..."
+                                    placeholderTextColor={colors.textMuted}
+                                    style={styles.searchInput}
+                                    autoFocus
+                                />
+                            </View>
+                        </View>
+
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.searchTabContent}
+                        >
+                            {searchTabs.map((tab) => {
+                                const active = activeSearchTab === tab;
+                                return (
+                                    <Pressable
+                                        key={tab}
+                                        style={[styles.searchTab, active && styles.searchTabActive]}
+                                        onPress={() => setActiveSearchTab(tab)}
+                                    >
+                                        <Text style={[styles.searchTabText, active && styles.searchTabTextActive]}>{tab}</Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </ScrollView>
+                    </>
+                )}
+
+                {!showArchivedView && !isSearchMode && (
                     <>
                         <View style={styles.homeTopRow}>
                             <View style={styles.brandPill}>
@@ -1367,6 +1798,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             <TextInput
                                 value={query}
                                 onChangeText={setQuery}
+                                onFocus={() => setIsSearchMode(true)}
                                 placeholder="Search chats"
                                 placeholderTextColor={colors.textMuted}
                                 style={styles.searchInput}
@@ -1391,7 +1823,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 )}
 
                 <Card style={styles.chatListCard}>
-                    {state.friendsLoading || conversationsLoading ? (
+                    {isSearchMode ? (
+                        renderGlobalSearchResults()
+                    ) : state.friendsLoading || conversationsLoading ? (
                         <View style={styles.loadingContainer}>
                             <ActivityIndicator size="large" color={colors.accent} />
                             <Text style={styles.loadingText}>Đang tải danh sách chat...</Text>
@@ -1515,6 +1949,100 @@ const styles = StyleSheet.create({
         flex: 1,
         color: colors.text,
         fontSize: 15,
+    },
+    searchHeaderRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    searchBackButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.border,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    searchBarInHeader: {
+        flex: 1,
+    },
+    searchTabContent: {
+        gap: 8,
+        paddingRight: 8,
+    },
+    searchTab: {
+        minHeight: 40,
+        borderRadius: 999,
+        paddingHorizontal: 14,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.surfaceSoftTransparent,
+        borderWidth: 1,
+        borderColor: colors.overlayWhite10,
+    },
+    searchTabActive: {
+        backgroundColor: "rgba(79, 140, 255, 0.18)",
+        borderColor: "rgba(79, 140, 255, 0.42)",
+    },
+    searchTabText: {
+        color: colors.textSoft,
+        fontSize: 13,
+        fontWeight: "700",
+    },
+    searchTabTextActive: {
+        color: colors.text,
+    },
+    searchResultList: {
+        gap: 0,
+    },
+    searchResultRow: {
+        minHeight: 68,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 11,
+        backgroundColor: colors.surfaceSoftTransparent,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: colors.border,
+    },
+    searchAvatar: {
+        width: 46,
+        height: 46,
+        borderRadius: 23,
+        backgroundColor: colors.border,
+    },
+    searchIconWrap: {
+        width: 46,
+        height: 46,
+        borderRadius: 23,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(79,140,255,0.14)",
+    },
+    searchResultMeta: {
+        flex: 1,
+        minWidth: 0,
+        gap: 4,
+    },
+    searchResultTitle: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "800",
+    },
+    searchResultSubtitle: {
+        color: colors.textMuted,
+        fontSize: 12,
+        lineHeight: 16,
+    },
+    searchEmptyState: {
+        minHeight: 260,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 24,
+        gap: 10,
     },
     filterRow: {
         flexDirection: "row",

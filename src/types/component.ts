@@ -62,6 +62,7 @@ export type TabItem = {
 export type ChatScreenProps = {
     onBackPress: () => void;
     chatUser?: any;
+    onOpenPrivateChat?: (user: any) => void;
 };
 
 // FriendRequestsScreen Component

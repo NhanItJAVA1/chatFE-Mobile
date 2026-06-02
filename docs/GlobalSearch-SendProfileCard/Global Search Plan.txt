@@ -1,0 +1,225 @@
+**Global Search Plan**
+
+Mục tiêu: search giống Telegram, dùng API `GET /v1/search`, hiển thị theo tab và hỗ trợ điều hướng tới đúng message.
+
+**API**
+
+Endpoint:
+
+```ts
+GET /v1/search
+```
+
+Query params chính:
+
+```ts
+{
+  query: string,
+  type: "ALL",
+  limit: 10,
+  contextLimit: 1
+}
+```
+
+Response data:
+
+```ts
+{
+  users: [],
+  conversations: [],
+  groups: [],
+  messages: [],
+  media: [],
+  links: [],
+  hasMore: boolean,
+  nextCursor?: string
+}
+```
+
+**Search Mode UX**
+
+Khi user focus vào ô search:
+
+- Vào search mode ngay, chưa cần nhập keyword.
+- Nút menu 3 gạch đổi thành nút back bằng animation xoay.
+- Hiện tab bar ngay:
+  `Chats / Groups / Messages / Media / Links / Files / Voice`
+- Nếu chưa nhập keyword: hiện text kiểu `Enter a keyword to search`.
+- Khi nhấn back:
+  - chạy animation đóng search panel
+  - clear keyword
+  - thoát search mode
+  - quay lại chat list bình thường
+
+**Search Flow**
+
+1. User focus search input.
+2. App set `isSearchMode = true`.
+3. User nhập keyword.
+4. Debounce keyword khoảng `300-500ms`.
+5. Gọi `/v1/search?query=...&type=ALL&limit=10&contextLimit=1`.
+6. Lưu result vào state:
+   - `globalUsers`
+   - `globalGroups`
+   - `globalMessages`
+   - `globalMedia`
+   - `globalLinks`
+7. Render theo tab hiện tại.
+
+**Tab Mapping**
+
+`Chats`:
+
+- Local private chats match keyword.
+- Users từ `data.users`.
+- Không hiển thị group trong tab này.
+
+`Groups`:
+
+- Local group chats match keyword.
+- Groups từ `data.groups` hoặc `data.conversations`.
+- Deduplicate theo `id`.
+
+`Messages`:
+
+- Render `data.messages`.
+- Mỗi item có `id`, `conversationId`, `text`, `senderId`, `createdAt`, `context`.
+
+`Media`:
+
+- Render `data.media` có type `image` hoặc `video`.
+
+`Files`:
+
+- Render `data.media` có type `file`, `audio`, `music`.
+
+`Voice`:
+
+- Render `data.media` có type `voice`.
+
+`Links`:
+
+- Render `data.links`.
+
+Tab không có data vẫn bấm được, hiển thị empty state như:
+
+```text
+No content
+No chats found
+No media found
+```
+
+**Click Behavior**
+
+Messages:
+
+- Click item sẽ mở conversation.
+- Truyền thêm `searchTargetMessageId`.
+- Sau khi load messages, scroll tới element message tương ứng và highlight.
+
+Media:
+
+- Image: click mở image viewer.
+- Video: click mở player hoặc external preview.
+- File/audio/voice: click open/download tùy platform.
+- Right click hoặc long press: mở action menu.
+
+Links:
+
+- Click mở URL.
+- Long press/right click mở action menu.
+
+**Action Menu**
+
+Cho media/link/file/voice:
+
+- `Forward`
+- `Download` hoặc `Open link`
+- `Copy link` nếu là link
+- `Show in chat`
+
+`Show in chat`:
+
+- Mở đúng conversation.
+- Scroll tới message theo `messageId`.
+
+`Forward`:
+
+- Dùng flow forward message có sẵn.
+- Tạo payload message giả đủ field:
+  - `id/messageId`
+  - `conversationId`
+  - `senderId`
+  - `createdAt`
+  - `text` nếu link/message
+  - `media` array nếu media/file
+
+**Scroll To Message**
+
+Khi mở chat từ search:
+
+```ts
+{
+  ...chat,
+  searchTargetMessageId,
+  searchTargetMessage,
+  searchContextMessages
+}
+```
+
+Sau khi load conversation messages:
+
+- Merge `searchTargetMessage` và `searchContextMessages` vào list nếu message không nằm trong page 100 message mới nhất.
+- Sort theo `createdAt`.
+- Render message.
+- Scroll tới DOM/message item có id tương ứng.
+- Highlight khoảng 2 giây.
+
+**Animation**
+
+Nên có các animation nhẹ:
+
+- Search panel enter: fade + slide ngang nhẹ.
+- Search panel exit khi back: fade + slide ngang ngược.
+- Tab bar enter: fade + slide xuống nhẹ.
+- Active tab: scale nhẹ.
+- Result item: fade + slide up.
+- Empty state: fade in.
+- Menu/back icon: xoay khi chuyển trạng thái.
+
+**Mobile Notes**
+
+Trên mobile nên thay right click bằng long press.
+
+Tab bar nên hỗ trợ:
+
+- Horizontal scroll.
+- Vuốt ngang.
+- Mouse wheel horizontal nếu chạy webview/desktop.
+- Không disable tab rỗng.
+
+State tối thiểu:
+
+```ts
+isSearchMode
+isSearchClosing
+searchQuery
+debouncedSearchQuery
+activeSearchTab
+
+globalUsers
+globalGroups
+globalMessages
+globalMedia
+globalLinks
+```
+
+**Important Rules**
+
+- Không gọi search API khi query rỗng.
+- Nhưng vẫn hiển thị search tab screen khi input focus.
+- Không trộn Recent Chats với Global Search.
+- Không active nhiều message results theo conversationId.
+- Message search result phải là item riêng, không dùng chat item active state.
+- Group phải tách khỏi Chats.
+- Empty tabs vẫn accessible.

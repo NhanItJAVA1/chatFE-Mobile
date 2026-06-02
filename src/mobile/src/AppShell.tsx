@@ -154,7 +154,14 @@ const MainShell = () => {
                 return (
                     <GroupChatScreen
                         key={`${groupId}-${groupChatVersion}`}
-                        route={{ params: { groupId } }}
+                        route={{
+                            params: {
+                                groupId,
+                                searchTargetMessageId: selectedChat?.searchTargetMessageId,
+                                searchTargetMessage: selectedChat?.searchTargetMessage,
+                                searchContextMessages: selectedChat?.searchContextMessages,
+                            },
+                        }}
                         navigation={{}}
                         onBackPress={() => {
                             setActiveTab("home");
@@ -166,6 +173,18 @@ const MainShell = () => {
                         onAddMembersPress={() => {
                             setActiveTab("addMembers");
                         }}
+                        onOpenPrivateChat={(targetUser) => {
+                            setSelectedChat({
+                                id: targetUser.id || targetUser._id || targetUser.userId,
+                                displayName: targetUser.displayName || targetUser.name || "Người dùng",
+                                avatar: targetUser.avatar || targetUser.avatarUrl,
+                                avatarUrl: targetUser.avatarUrl || targetUser.avatar,
+                                phone: targetUser.phone || targetUser.phoneNumber,
+                                conversationType: "PRIVATE",
+                                relationship: targetUser.relationship || "stranger",
+                            });
+                            setActiveTab("chat");
+                        }}
                     />
                 );
             }
@@ -176,6 +195,18 @@ const MainShell = () => {
                     onBackPress={() => {
                         setActiveTab("home");
                         setSelectedChat(null);
+                    }}
+                    onOpenPrivateChat={(targetUser) => {
+                        setSelectedChat({
+                            id: targetUser.id || targetUser._id || targetUser.userId,
+                            displayName: targetUser.displayName || targetUser.name || "Người dùng",
+                            avatar: targetUser.avatar || targetUser.avatarUrl,
+                            avatarUrl: targetUser.avatarUrl || targetUser.avatar,
+                            phone: targetUser.phone || targetUser.phoneNumber,
+                            conversationType: "PRIVATE",
+                            relationship: targetUser.relationship || "stranger",
+                        });
+                        setActiveTab("chat");
                     }}
                 />
             );
