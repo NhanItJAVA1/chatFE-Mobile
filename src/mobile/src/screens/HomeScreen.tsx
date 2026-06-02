@@ -1138,6 +1138,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return Array.from(map.values());
     }, [globalSearchResult.groups, globalSearchResult.conversations]);
 
+    const mergeUniqueConversations = (items: Conversation[]): Conversation[] => {
+        const map = new Map<string, Conversation>();
+        items.forEach((conversation) => {
+            const id = getAnyId(conversation) || getConversationIdentity(conversation);
+            if (id && !map.has(id)) {
+                map.set(id, conversation);
+            }
+        });
+        return Array.from(map.values());
+    };
+
     const getMediaKind = (media: GlobalSearchMedia): string => {
         return String(media.type || media.mediaType || media.mimeType || media.mimetype || "").toLowerCase();
     };
@@ -1420,10 +1431,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 ...globalSearchResult.users.map((item) => renderSearchPersonRow(item, "user")),
             ];
         } else if (activeSearchTab === "Groups") {
-            content = [
-                ...localGroupSearchResults.map((item) => renderSearchPersonRow(item, "conversation")),
-                ...dedupedGlobalGroups.map((item) => renderSearchPersonRow(item, "conversation")),
-            ];
+            content = mergeUniqueConversations([...localGroupSearchResults, ...dedupedGlobalGroups])
+                .map((item) => renderSearchPersonRow(item, "conversation"));
         } else if (activeSearchTab === "Messages") {
             content = globalSearchResult.messages.map(renderSearchMessageRow);
         } else if (activeSearchTab === "Links") {
