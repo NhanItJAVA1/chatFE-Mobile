@@ -38,7 +38,7 @@ import {
   ShareProfileCardSheet,
 } from "../components";
 import { colors, assets } from "../theme";
-import { buildMessageActionSheetOptions } from "../../../shared/utils";
+import { buildMessageActionSheetOptions, type MessageActionButton } from "../../../shared/utils";
 import MediaMessage from "../components/MediaMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import chatMediaService from "../../../shared/services/chatMediaService";
@@ -59,10 +59,12 @@ const MessageBubble: React.FC<{
   onLongPress?: () => void;
   onPressQuoted?: (quotedMessageId: string) => void;
   onToggleReaction?: (emoji: string, selected: boolean) => void;
+  onClearMyReactions?: () => void;
   onProfileCardPress?: (user: any) => void;
   isHighlighted?: boolean;
   messageMap?: Record<string, MessagePayload | undefined>;
-}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, onToggleReaction, onProfileCardPress, isHighlighted, messageMap = {} }) => {
+}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, onToggleReaction, onClearMyReactions, onProfileCardPress, isHighlighted, messageMap = {} }) => {
+  const [showReactionPicker, setShowReactionPicker] = React.useState(false);
   const formatTime = (date: string) => {
     const d = new Date(date);
     return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
@@ -102,6 +104,48 @@ const MessageBubble: React.FC<{
       return acc;
     }, {})
   );
+  const reactionSummary = {
+    emojis: reactionGroups.map((reaction) => reaction.emoji),
+    total: reactionGroups.reduce((sum, reaction) => sum + reaction.count, 0),
+    selected: reactionGroups.some((reaction) => reaction.selected),
+  };
+  const myLastReaction = [...(message.reactions || [])]
+    .reverse()
+    .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
+  const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
+  const hasDefaultReaction = !!myLastReaction;
+  const renderReactionPicker = () => (
+    <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+      {QUICK_REACTIONS.map((emoji) => {
+        const selected = (message.reactions || []).some(
+          (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId,
+        );
+        return (
+          <Pressable
+            key={emoji}
+            style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+            onPress={() => {
+              setShowReactionPicker(false);
+              onToggleReaction?.(emoji, false);
+            }}
+          >
+            <Text style={styles.quickReactionText}>{emoji}</Text>
+          </Pressable>
+        );
+      })}
+      {hasDefaultReaction && (
+        <Pressable
+          style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
+          onPress={() => {
+            setShowReactionPicker(false);
+            onClearMyReactions?.();
+          }}
+        >
+          <Ionicons name="close" size={17} color={colors.danger} />
+        </Pressable>
+      )}
+    </View>
+  );
 
   React.useEffect(() => {
     if (hasMedia) { }
@@ -130,7 +174,8 @@ const MessageBubble: React.FC<{
 
       {/* Media display */}
       {!isProfileCard && hasMedia && (
-        <View style={styles.mediaContainer}>
+        <View style={[styles.mediaContainer, !message.text && styles.mediaReactionWrap]}>
+          {!message.text && showReactionPicker && renderReactionPicker()}
           {message.media.map((m: any, idx: number) => (
             <MediaMessage
               key={idx}
@@ -139,12 +184,42 @@ const MessageBubble: React.FC<{
               layoutMode={message.text ? "compact" : "standalone"}
             />
           ))}
+          {!message.text && reactionGroups.length > 0 && (
+            <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+              <Pressable
+                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+              >
+                <Text style={styles.reactionText}>
+                  {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+          {!message.text && (
+            <Pressable
+              style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+              hitSlop={8}
+              onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+              onLongPress={() => setShowReactionPicker((value) => !value)}
+              delayLongPress={220}
+            >
+              {hasDefaultReaction ? (
+                <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                  {defaultReactionEmoji}
+                </Text>
+              ) : (
+                <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+              )}
+            </Pressable>
+          )}
         </View>
       )}
 
       {/* Text bubble */}
       {!isProfileCard && message.text && (
         <View style={[styles.bubble, isOwn ? styles.outgoingBubble : styles.incomingBubble]}>
+          {showReactionPicker && renderReactionPicker()}
           {/* Quoted message block if this is a reply */}
           {(() => {
             const hasQuoted = resolvedQuotedMessage || message.quotedMessageId;
@@ -181,19 +256,31 @@ const MessageBubble: React.FC<{
           </View>
           {reactionGroups.length > 0 && (
             <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
-              {reactionGroups.map((reaction) => (
-                <Pressable
-                  key={reaction.emoji}
-                  style={[styles.reactionPill, reaction.selected && styles.reactionPillSelected]}
-                  onPress={() => onToggleReaction?.(reaction.emoji, reaction.selected)}
-                >
-                  <Text style={styles.reactionText}>
-                    {reaction.emoji}{reaction.count > 1 ? ` ${reaction.count}` : ""}
-                  </Text>
-                </Pressable>
-              ))}
+              <Pressable
+                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+              >
+                <Text style={styles.reactionText}>
+                  {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                </Text>
+              </Pressable>
             </View>
           )}
+          <Pressable
+            style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+            hitSlop={8}
+            onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+            onLongPress={() => setShowReactionPicker((value) => !value)}
+            delayLongPress={220}
+          >
+            {hasDefaultReaction ? (
+              <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                {defaultReactionEmoji}
+              </Text>
+            ) : (
+              <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+            )}
+          </Pressable>
         </View>
       )}
     </HighlightableMessage>
@@ -427,6 +514,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
   const [isCancelingAudio, setIsCancelingAudio] = React.useState(false);
   const [recordingSeconds, setRecordingSeconds] = React.useState(0);
   const [selectedMessageId, setSelectedMessageId] = React.useState<string | null>(null);
+  const [actionMenuMessage, setActionMenuMessage] = React.useState<MessagePayload | null>(null);
+  const [actionMenuButtons, setActionMenuButtons] = React.useState<MessageActionButton[]>([]);
   const [showEditDialog, setShowEditDialog] = React.useState(false);
   const [editText, setEditText] = React.useState("");
   const [viewingGalleryMessages, setViewingGalleryMessages] = React.useState<MessagePayload[] | null>(null);
@@ -1435,23 +1524,10 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
     }
   }, [conversationId]);
 
-  const handleShowReactionPicker = useCallback((message: MessagePayload) => {
-    const messageId = message._id || message.id;
-    if (!messageId) return;
-
-    const myReaction = (message.reactions || []).find((reaction: any) => reaction.userId === currentUserId);
-    Alert.alert(
-      "React tin nhắn",
-      "Chọn cảm xúc",
-      [
-        ...QUICK_REACTIONS.map((emoji) => ({
-          text: emoji,
-          onPress: () => handleToggleReaction(messageId, emoji, myReaction?.emoji === emoji),
-        })),
-        { text: "Hủy", style: "cancel" as const, onPress: () => { } },
-      ]
-    );
-  }, [currentUserId, handleToggleReaction]);
+  const closeActionMenu = useCallback(() => {
+    setActionMenuMessage(null);
+    setActionMenuButtons([]);
+  }, []);
 
   /**
    * Handle message long press - show action menu
@@ -1462,9 +1538,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
       if (!messageId) return;
 
       const isOwn = message.senderId === currentUser?.id;
-      Alert.alert(
-        "Tùy chọn tin nhắn",
-        `${message.text?.substring(0, 50) || "[Media]"}`,
+      setActionMenuMessage(message);
+      setActionMenuButtons(
         buildMessageActionSheetOptions({
           isOwn,
           onDeleteForMe: async () => {
@@ -1526,11 +1601,10 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
               actionsRef.current.setReplyingTo(message);
             }
           },
-          onReact: () => handleShowReactionPicker(message),
         }),
       );
     },
-    [currentUser?.id, handleShowReactionPicker],
+    [currentUser?.id],
   );
 
   /**
@@ -1586,6 +1660,12 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
                 handleToggleReaction(messageId, emoji, selected);
               }
             }}
+            onClearMyReactions={() => {
+              const messageId = item.message._id || item.message.id;
+              if (messageId) {
+                handleToggleReaction(messageId, "", true);
+              }
+            }}
             onProfileCardPress={handleOpenProfileCardUser}
             onPressQuoted={async (quotedId) => {
               if (actions.scrollToMessage) {
@@ -1620,6 +1700,16 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
     },
     [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages, handleOpenProfileCardUser],
   );
+
+  const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
+    if (label.includes("Trả lời")) return "return-up-back-outline";
+    if (label.includes("Ghim")) return "pin";
+    if (label.includes("Sửa")) return "create-outline";
+    if (label.includes("Thu hồi")) return "refresh-outline";
+    if (label.includes("Chuyển tiếp")) return "arrow-redo-outline";
+    if (label.includes("Xóa")) return "trash-outline";
+    return "ellipse-outline";
+  }, []);
 
   /**
    * Error state
@@ -1903,6 +1993,54 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
           </View>
         </View>
       )}
+
+      <Modal
+        transparent
+        visible={!!actionMenuMessage}
+        animationType="fade"
+        onRequestClose={closeActionMenu}
+      >
+        <Pressable style={styles.contextOverlay} onPress={closeActionMenu}>
+          <View style={styles.contextMenu}>
+            <View style={styles.contextHeader}>
+              <Text style={styles.contextTitle} numberOfLines={1}>
+                {actionMenuMessage?.text?.trim() || "[Media]"}
+              </Text>
+            </View>
+
+            {actionMenuButtons
+              .filter((button) => button.style !== "cancel")
+              .map((button) => (
+                <Pressable
+                  key={button.text}
+                  style={styles.contextItem}
+                  onPress={() => {
+                    closeActionMenu();
+                    button.onPress();
+                  }}
+                >
+                  <Ionicons
+                    name={getActionIconName(button.text)}
+                    size={20}
+                    color={button.style === "destructive" ? colors.danger : colors.accent}
+                  />
+                  <Text
+                    style={[
+                      styles.contextItemText,
+                      button.style === "destructive" && { color: colors.danger },
+                    ]}
+                  >
+                    {button.text}
+                  </Text>
+                </Pressable>
+              ))}
+
+            <Pressable style={[styles.contextItem, styles.contextCancel]} onPress={closeActionMenu}>
+              <Text style={[styles.contextItemText, { color: colors.textMuted, textAlign: "center" }]}>Hủy</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
 
       <ForwardDialog
         visible={showForwardDialog}
@@ -2312,9 +2450,13 @@ const styles = StyleSheet.create({
   },
   bubble: {
     maxWidth: "82%",
+    minWidth: 76,
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    paddingBottom: 18,
+    marginBottom: 10,
+    position: "relative",
   },
   galleryBubble: {
     paddingHorizontal: 10,
@@ -2350,32 +2492,104 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   reactionRow: {
+    position: "absolute",
+    left: 0,
+    bottom: -12,
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 4,
-    marginTop: 6,
+    zIndex: 5,
+    elevation: 5,
   },
   reactionRowOwn: {
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
   },
   reactionRowOther: {
     justifyContent: "flex-start",
   },
   reactionPill: {
-    minHeight: 24,
-    paddingHorizontal: 7,
-    borderRadius: 12,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    minHeight: 22,
+    paddingHorizontal: 8,
+    borderRadius: 11,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
   },
   reactionPillSelected: {
-    backgroundColor: "rgba(79,140,255,0.35)",
+    backgroundColor: "rgba(79,140,255,0.28)",
   },
   reactionText: {
     color: colors.text,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
+  },
+  mediaReactionWrap: {
+    marginBottom: 10,
+    minWidth: 76,
+    position: "relative",
+  },
+  quickHeartButton: {
+    position: "absolute",
+    bottom: -10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickHeartButtonOwn: {
+    right: -8,
+  },
+  quickHeartButtonOther: {
+    right: -8,
+  },
+  quickHeartButtonText: {
+    fontSize: 14,
+    opacity: 0.85,
+  },
+  quickHeartButtonTextSelected: {
+    opacity: 1,
+  },
+  quickReactionBar: {
+    position: "absolute",
+    bottom: "100%",
+    flexDirection: "row",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    zIndex: 10,
+    elevation: 10,
+  },
+  quickReactionBarOwn: {
+    right: 0,
+  },
+  quickReactionBarOther: {
+    left: 0,
+  },
+  quickReactionOption: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickReactionOptionSelected: {
+    backgroundColor: "rgba(79,140,255,0.28)",
+  },
+  quickReactionDeleteOption: {
+    backgroundColor: "rgba(239,68,68,0.16)",
+  },
+  quickReactionText: {
+    fontSize: 17,
   },
   galleryGrid: {
     flexDirection: "row",
@@ -2757,6 +2971,52 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: colors.contrastText,
+  },
+
+  contextOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 32,
+  },
+  contextMenu: {
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  contextHeader: {
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  contextTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  contextItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  contextItemText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  contextCancel: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    justifyContent: "center",
   },
 
   // Edit dialog styles

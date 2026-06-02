@@ -33,7 +33,7 @@ import { JUMBO_EMOJI_ASSETS } from "../components/AnimatedEmojiMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import MediaMessage from "../components/MediaMessage";
 import { colors, assets } from "../theme";
-import { buildMessageActionSheetOptions } from "../../../shared/utils";
+import { buildMessageActionSheetOptions, type MessageActionButton } from "../../../shared/utils";
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"];
 
@@ -237,6 +237,9 @@ export const GroupChatScreen: React.FC<{
     const [showEditDialog, setShowEditDialog] = useState(false);
     const [editText, setEditText] = useState("");
     const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+    const [actionMenuMessage, setActionMenuMessage] = useState<any | null>(null);
+    const [actionMenuButtons, setActionMenuButtons] = useState<MessageActionButton[]>([]);
+    const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
     const [selectedImageIndex, setSelectedImageIndex] = useState(0);
     const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
     const [showCreatePollModal, setShowCreatePollModal] = useState(false);
@@ -868,7 +871,12 @@ export const GroupChatScreen: React.FC<{
     );
 
     const isCurrentUserOwner = currentUserIds.includes(String(groupState.group?.ownerId || ""));
-    const isCurrentUserAdmin = (groupState.group?.admins || []).some((id: any) => currentUserIds.includes(String(id)));
+    const isCurrentUserAdmin = (groupState.group?.admins || []).some((admin: any) => {
+        const adminId = typeof admin === "string"
+            ? admin
+            : admin?.userId || admin?._id || admin?.id || "";
+        return currentUserIds.includes(String(adminId));
+    });
     const pollPermission = (groupState.group?.settings as any)?.utilityPermissions?.poll || "all";
     const canCreatePoll = pollPermission === "all" || isCurrentUserOwner || isCurrentUserAdmin;
 
@@ -951,23 +959,10 @@ export const GroupChatScreen: React.FC<{
         }
     }, []);
 
-    const handleShowReactionPicker = useCallback((message: any) => {
-        const messageId = message._id || message.id;
-        if (!messageId) return;
-
-        const myReaction = (message.reactions || []).find((reaction: any) => reaction.userId === currentUserId);
-        Alert.alert(
-            "React tin nhắn",
-            "Chọn cảm xúc",
-            [
-                ...QUICK_REACTIONS.map((emoji) => ({
-                    text: emoji,
-                    onPress: () => handleToggleReaction(messageId, emoji, myReaction?.emoji === emoji),
-                })),
-                { text: "Hủy", style: "cancel" as const, onPress: () => { } },
-            ]
-        );
-    }, [currentUserId, handleToggleReaction]);
+    const closeActionMenu = useCallback(() => {
+        setActionMenuMessage(null);
+        setActionMenuButtons([]);
+    }, []);
 
     const handleOpenProfileCardUser = useCallback((profileUser: any) => {
         const targetUserId = profileUser?.id || profileUser?._id || profileUser?.userId;
@@ -1002,11 +997,8 @@ export const GroupChatScreen: React.FC<{
         if (!messageId) return;
 
         const isOwn = !!currentUserId && String(message.senderId || "") === String(currentUserId);
-        const isAdmin = groupState?.group?.admins?.includes(currentUserId);
-
-        Alert.alert(
-            "Tùy chọn tin nhắn",
-            `${message.text?.substring(0, 50) || "[Media]"}`,
+        setActionMenuMessage(message);
+        setActionMenuButtons(
             buildMessageActionSheetOptions({
                 isOwn,
                 onDeleteForMe: async () => {
@@ -1062,7 +1054,7 @@ export const GroupChatScreen: React.FC<{
                     setForwardMessageIds([messageId]);
                     setShowForwardDialog(true);
                 },
-                onPin: isAdmin ? async () => {
+                onPin: async () => {
                     try {
                         if (actionsRef.current?.pinMessage) {
                             await actionsRef.current.pinMessage(messageId);
@@ -1070,16 +1062,15 @@ export const GroupChatScreen: React.FC<{
                     } catch (error: any) {
                         Alert.alert("Lỗi", error.message || "Không thể ghim tin nhắn");
                     }
-                } : undefined,
+                },
                 onReply: () => {
                     if (actionsRef.current?.setReplyingTo) {
                         actionsRef.current.setReplyingTo(message);
                     }
                 },
-                onReact: () => handleShowReactionPicker(message),
             })
         );
-    }, [currentUserId, groupState?.group?.admins, handleShowReactionPicker]);
+    }, [currentUserId]);
 
     const handleSaveEdit = useCallback(async () => {
         if (!selectedMessageId || !editText.trim()) {
@@ -1331,6 +1322,16 @@ export const GroupChatScreen: React.FC<{
                     return acc;
                 }, {})
             );
+            const reactionSummary = {
+                emojis: reactionGroups.map((reaction) => reaction.emoji),
+                total: reactionGroups.reduce((sum, reaction) => sum + reaction.count, 0),
+                selected: reactionGroups.some((reaction) => reaction.selected),
+            };
+            const myLastReaction = [...((item.reactions || []) as any[])]
+                .reverse()
+                .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
+            const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
+            const hasDefaultReaction = !!myLastReaction;
 
             return (
                 <HighlightableMessage
@@ -1366,7 +1367,43 @@ export const GroupChatScreen: React.FC<{
                     ]}>
                         {/* Render Media - Outside bubble for better sizing */}
                         {hasMedia && (
-                            <View style={styles.mediaContainer}>
+                            <View style={[styles.mediaContainer, !hasText && styles.mediaReactionWrap]}>
+                                {!hasText && reactionPickerMessageId === messageId && (
+                                    <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+                                        {QUICK_REACTIONS.map((emoji) => {
+                                            const selected = ((item.reactions || []) as any[]).some(
+                                                (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
+                                            );
+                                            return (
+                                                <Pressable
+                                                    key={emoji}
+                                                    style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                                                    onPress={() => {
+                                                        setReactionPickerMessageId(null);
+                                                        if (messageId) {
+                                                            handleToggleReaction(messageId, emoji, false);
+                                                        }
+                                                    }}
+                                                >
+                                                    <Text style={styles.quickReactionText}>{emoji}</Text>
+                                                </Pressable>
+                                            );
+                                        })}
+                                        {hasDefaultReaction && (
+                                            <Pressable
+                                                style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
+                                                onPress={() => {
+                                                    setReactionPickerMessageId(null);
+                                                    if (messageId) {
+                                                        handleToggleReaction(messageId, "", true);
+                                                    }
+                                                }}
+                                            >
+                                                <Ionicons name="close" size={17} color={colors.danger} />
+                                            </Pressable>
+                                        )}
+                                    </View>
+                                )}
                                 {hasGalleryMedia ? (
                                     <View style={styles.galleryBubble}>
                                         <View style={styles.galleryGrid}>
@@ -1399,6 +1436,35 @@ export const GroupChatScreen: React.FC<{
                                         />
                                     ))
                                 )}
+                                {!hasText && reactionGroups.length > 0 && (
+                                    <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+                                        <Pressable
+                                            style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                                            onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                        >
+                                            <Text style={styles.reactionText}>
+                                                {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                                            </Text>
+                                        </Pressable>
+                                    </View>
+                                )}
+                                {!hasText && (
+                                    <Pressable
+                                        style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+                                        hitSlop={8}
+                                        onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                        onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
+                                        delayLongPress={220}
+                                    >
+                                        {hasDefaultReaction ? (
+                                            <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                                                {defaultReactionEmoji}
+                                            </Text>
+                                        ) : (
+                                            <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+                                        )}
+                                    </Pressable>
+                                )}
                             </View>
                         )}
 
@@ -1410,6 +1476,42 @@ export const GroupChatScreen: React.FC<{
                                     isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
                                 ]}
                             >
+                                {reactionPickerMessageId === messageId && (
+                                    <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+                                        {QUICK_REACTIONS.map((emoji) => {
+                                            const selected = ((item.reactions || []) as any[]).some(
+                                                (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
+                                            );
+                                            return (
+                                                <Pressable
+                                                    key={emoji}
+                                                    style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                                                    onPress={() => {
+                                                        setReactionPickerMessageId(null);
+                                                        if (messageId) {
+                                                            handleToggleReaction(messageId, emoji, false);
+                                                        }
+                                                    }}
+                                                >
+                                                    <Text style={styles.quickReactionText}>{emoji}</Text>
+                                                </Pressable>
+                                            );
+                                        })}
+                                        {hasDefaultReaction && (
+                                            <Pressable
+                                                style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
+                                                onPress={() => {
+                                                    setReactionPickerMessageId(null);
+                                                    if (messageId) {
+                                                        handleToggleReaction(messageId, "", true);
+                                                    }
+                                                }}
+                                            >
+                                                <Ionicons name="close" size={17} color={colors.danger} />
+                                            </Pressable>
+                                        )}
+                                    </View>
+                                )}
                                 {!isOwn && (
                                     <View style={styles.senderNameRow}>
                                         <Text style={styles.senderName}>
@@ -1465,19 +1567,31 @@ export const GroupChatScreen: React.FC<{
                                 </Text>
                                 {reactionGroups.length > 0 && (
                                     <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
-                                        {reactionGroups.map((reaction) => (
-                                            <Pressable
-                                                key={reaction.emoji}
-                                                style={[styles.reactionPill, reaction.selected && styles.reactionPillSelected]}
-                                                onPress={() => messageId && handleToggleReaction(messageId, reaction.emoji, reaction.selected)}
-                                            >
-                                                <Text style={styles.reactionText}>
-                                                    {reaction.emoji}{reaction.count > 1 ? ` ${reaction.count}` : ""}
-                                                </Text>
-                                            </Pressable>
-                                        ))}
+                                        <Pressable
+                                            style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                                            onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                        >
+                                            <Text style={styles.reactionText}>
+                                                {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                                            </Text>
+                                        </Pressable>
                                     </View>
                                 )}
+                                <Pressable
+                                    style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+                                    hitSlop={8}
+                                    onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                    onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
+                                    delayLongPress={220}
+                                >
+                                    {hasDefaultReaction ? (
+                                        <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                                            {defaultReactionEmoji}
+                                        </Text>
+                                    ) : (
+                                        <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+                                    )}
+                                </Pressable>
                             </View>
                         )}
 
@@ -1496,7 +1610,7 @@ export const GroupChatScreen: React.FC<{
                 </HighlightableMessage>
             );
         },
-        [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId, handleOpenProfileCardUser]
+        [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId, handleOpenProfileCardUser, reactionPickerMessageId]
     );
 
     const handleViewableItemsChanged = useCallback(
@@ -1530,6 +1644,16 @@ export const GroupChatScreen: React.FC<{
         () => groupMessagesForGallery(keepLatestPollCards(chatState.messages)),
         [chatState.messages]
     );
+
+    const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
+        if (label.includes("Trả lời")) return "return-up-back-outline";
+        if (label.includes("Ghim")) return "pin";
+        if (label.includes("Sửa")) return "create-outline";
+        if (label.includes("Thu hồi")) return "refresh-outline";
+        if (label.includes("Chuyển tiếp")) return "arrow-redo-outline";
+        if (label.includes("Xóa")) return "trash-outline";
+        return "ellipse-outline";
+    }, []);
 
     if (!groupState.group) {
         return (
@@ -1927,6 +2051,54 @@ export const GroupChatScreen: React.FC<{
                 </Pressable>
             </View>
 
+            <Modal
+                transparent
+                visible={!!actionMenuMessage}
+                animationType="fade"
+                onRequestClose={closeActionMenu}
+            >
+                <Pressable style={styles.contextOverlay} onPress={closeActionMenu}>
+                    <View style={styles.contextMenu}>
+                        <View style={styles.contextHeader}>
+                            <Text style={styles.contextTitle} numberOfLines={1}>
+                                {actionMenuMessage?.text?.trim() || "[Media]"}
+                            </Text>
+                        </View>
+
+                        {actionMenuButtons
+                            .filter((button) => button.style !== "cancel")
+                            .map((button) => (
+                                <Pressable
+                                    key={button.text}
+                                    style={styles.contextItem}
+                                    onPress={() => {
+                                        closeActionMenu();
+                                        button.onPress();
+                                    }}
+                                >
+                                    <Ionicons
+                                        name={getActionIconName(button.text)}
+                                        size={20}
+                                        color={button.style === "destructive" ? colors.danger : colors.accent}
+                                    />
+                                    <Text
+                                        style={[
+                                            styles.contextItemText,
+                                            button.style === "destructive" && { color: colors.danger },
+                                        ]}
+                                    >
+                                        {button.text}
+                                    </Text>
+                                </Pressable>
+                            ))}
+
+                        <Pressable style={[styles.contextItem, styles.contextCancel]} onPress={closeActionMenu}>
+                            <Text style={[styles.contextItemText, { color: colors.textMuted, textAlign: "center" }]}>Hủy</Text>
+                        </Pressable>
+                    </View>
+                </Pressable>
+            </Modal>
+
             {/* Forward Dialog Modal */}
             <ForwardDialog
                 visible={showForwardDialog}
@@ -2197,9 +2369,13 @@ const styles = StyleSheet.create({
     },
     messageBubble: {
         maxWidth: "100%",
+        minWidth: 76,
         borderRadius: 18,
         paddingHorizontal: 14,
         paddingVertical: 10,
+        paddingBottom: 18,
+        marginBottom: 10,
+        position: "relative",
     },
     messageBubbleOwn: {
         backgroundColor: colors.bubbleOutgoingBgTransparent,
@@ -2239,32 +2415,104 @@ const styles = StyleSheet.create({
         marginTop: 6,
     },
     reactionRow: {
+        position: "absolute",
+        left: 0,
+        bottom: -12,
         flexDirection: "row",
         flexWrap: "wrap",
         gap: 4,
-        marginTop: 6,
+        zIndex: 5,
+        elevation: 5,
     },
     reactionRowOwn: {
-        justifyContent: "flex-end",
+        justifyContent: "flex-start",
     },
     reactionRowOther: {
         justifyContent: "flex-start",
     },
     reactionPill: {
-        minHeight: 24,
-        paddingHorizontal: 7,
-        borderRadius: 12,
-        backgroundColor: "rgba(255,255,255,0.18)",
+        minHeight: 22,
+        paddingHorizontal: 8,
+        borderRadius: 11,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.border,
         alignItems: "center",
         justifyContent: "center",
     },
     reactionPillSelected: {
-        backgroundColor: "rgba(79,140,255,0.35)",
+        backgroundColor: "rgba(79,140,255,0.28)",
     },
     reactionText: {
         color: colors.text,
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: "700",
+    },
+    mediaReactionWrap: {
+        marginBottom: 10,
+        minWidth: 76,
+        position: "relative",
+    },
+    quickHeartButton: {
+        position: "absolute",
+        bottom: -10,
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.border,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    quickHeartButtonOwn: {
+        right: -8,
+    },
+    quickHeartButtonOther: {
+        right: -8,
+    },
+    quickHeartButtonText: {
+        fontSize: 14,
+        opacity: 0.85,
+    },
+    quickHeartButtonTextSelected: {
+        opacity: 1,
+    },
+    quickReactionBar: {
+        position: "absolute",
+        bottom: "100%",
+        flexDirection: "row",
+        gap: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        borderRadius: 18,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.border,
+        zIndex: 10,
+        elevation: 10,
+    },
+    quickReactionBarOwn: {
+        right: 0,
+    },
+    quickReactionBarOther: {
+        left: 0,
+    },
+    quickReactionOption: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    quickReactionOptionSelected: {
+        backgroundColor: "rgba(79,140,255,0.28)",
+    },
+    quickReactionDeleteOption: {
+        backgroundColor: "rgba(239,68,68,0.16)",
+    },
+    quickReactionText: {
+        fontSize: 17,
     },
     mediaContainer: {
         gap: 8,
@@ -2528,6 +2776,51 @@ const styles = StyleSheet.create({
     modalContent: {
         width: "80%",
         maxWidth: 360,
+    },
+    contextOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.55)",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 32,
+    },
+    contextMenu: {
+        width: "100%",
+        maxWidth: 320,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: 16,
+        overflow: "hidden",
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    contextHeader: {
+        paddingHorizontal: 18,
+        paddingTop: 16,
+        paddingBottom: 10,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: colors.border,
+    },
+    contextTitle: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "700",
+    },
+    contextItem: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 14,
+        paddingHorizontal: 18,
+        paddingVertical: 14,
+    },
+    contextItemText: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "500",
+    },
+    contextCancel: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: colors.border,
+        justifyContent: "center",
     },
     forwardDialogContent: {
         backgroundColor: colors.surface,

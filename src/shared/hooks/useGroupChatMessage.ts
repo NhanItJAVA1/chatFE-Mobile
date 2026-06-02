@@ -417,7 +417,7 @@ export interface UseChatMessageActions {
     deleteMessage: (messageId: string) => Promise<void>;
     revokeMessage: (messageId: string) => Promise<void>;
     addReaction: (messageId: string, emoji: string) => Promise<void>;
-    removeReaction: (messageId: string, emoji: string) => Promise<void>;
+    removeReaction: (messageId: string, emoji?: string) => Promise<void>;
     pinMessage: (messageId: string) => Promise<void>;
     unpinMessage: (messageId: string) => Promise<void>;
     navigatePinnedMessages: (direction: "prev" | "next") => void;
@@ -1126,6 +1126,8 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
 
             try {
                 const reaction = await SocketService.addReaction(messageId, emoji);
+                const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
+                const reactionId = reaction?._id || reaction?.id;
                 setState((prev) => ({
                     ...prev,
                     messages: prev.messages.map((msg) =>
@@ -1133,8 +1135,10 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                             ? {
                                 ...msg,
                                 reactions: [
-                                    ...(msg.reactions || []).filter((item: any) => item.userId !== user?.id),
-                                    reaction || { emoji, userId: user?.id },
+                                    ...(msg.reactions || []).filter((item: any) =>
+                                        reactionId ? (item._id || item.id) !== reactionId : true
+                                    ),
+                                    reaction || { emoji, userId: currentUserId },
                                 ],
                             }
                             : msg
@@ -1145,24 +1149,27 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 throw error;
             }
         },
-        [state.conversation, user?.id]
+        [state.conversation, user?.id, (user as any)?._id, (user as any)?.userId]
     );
 
     const removeReaction = useCallback(
-        async (messageId: string, emoji: string) => {
+        async (messageId: string, emoji?: string) => {
             if (!state.conversation) return;
             if (messageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
 
             try {
                 await SocketService.removeReaction(messageId, emoji);
+                const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
                 setState((prev) => ({
                     ...prev,
                     messages: prev.messages.map((msg) =>
                         getMessageId(msg) === messageId
                             ? {
                                 ...msg,
-                                reactions: (msg.reactions || []).filter(
-                                    (reaction: any) => !(reaction.emoji === emoji && (!user?.id || reaction.userId === user.id))
+                                reactions: (msg.reactions || []).filter((reaction: any) =>
+                                    currentUserId
+                                        ? reaction.userId !== currentUserId || (!!emoji && reaction.emoji !== emoji)
+                                        : !!emoji && reaction.emoji !== emoji
                                 ),
                             }
                             : msg
@@ -1173,7 +1180,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 throw error;
             }
         },
-        [state.conversation, user?.id]
+        [state.conversation, user?.id, (user as any)?._id, (user as any)?.userId]
     );
 
     /**
@@ -1486,6 +1493,74 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     updateStateAndCache({ messages: enriched });
                 });
 
+                SocketService.onMessageReaction((data: any) => {
+                    const incomingConvId = data.conversationId || data.reaction?.conversationId;
+                    if (incomingConvId && incomingConvId !== conversationId && incomingConvId !== groupId) {
+                        return;
+                    }
+
+                    const messageId = data.messageId || data.reaction?.messageId;
+                    const reaction = data.reaction || data;
+                    const reactionUserId = reaction?.userId || data.userId;
+                    if (!messageId || !reaction?.emoji || !reactionUserId || !messagesStateRef.current) {
+                        return;
+                    }
+                    const reactionId = reaction?._id || reaction?.id;
+
+                    const messages = messagesStateRef.current.messages.map((msg) =>
+                        getMessageId(msg) === messageId
+                            ? {
+                                ...msg,
+                                reactions: [
+                                    ...(msg.reactions || []).filter((item: any) =>
+                                        reactionId ? (item._id || item.id) !== reactionId : true
+                                    ),
+                                    { ...reaction, userId: reactionUserId },
+                                ],
+                            }
+                            : msg
+                    );
+                    const enriched = collapsePollMessages(attachPollsToMessages(
+                        enrichMessagesWithQuotedData(messages),
+                        messagesStateRef.current.polls
+                    ));
+
+                    updateStateAndCache({ messages: enriched });
+                });
+
+                SocketService.onMessageReactionRemove((data: any) => {
+                    const incomingConvId = data.conversationId || data.reaction?.conversationId;
+                    if (incomingConvId && incomingConvId !== conversationId && incomingConvId !== groupId) {
+                        return;
+                    }
+
+                    const messageId = data.messageId || data.reaction?.messageId;
+                    const reactionUserId = data.userId || data.reaction?.userId;
+                    const emoji = data.emoji || data.reaction?.emoji;
+                    if (!messageId || !reactionUserId || !messagesStateRef.current) {
+                        return;
+                    }
+
+                    const messages = messagesStateRef.current.messages.map((msg) =>
+                        getMessageId(msg) === messageId
+                            ? {
+                                ...msg,
+                                reactions: (msg.reactions || []).filter(
+                                    (reaction: any) =>
+                                        reaction.userId !== reactionUserId ||
+                                        (!!emoji && reaction.emoji !== emoji)
+                                ),
+                            }
+                            : msg
+                    );
+                    const enriched = collapsePollMessages(attachPollsToMessages(
+                        enrichMessagesWithQuotedData(messages),
+                        messagesStateRef.current.polls
+                    ));
+
+                    updateStateAndCache({ messages: enriched });
+                });
+
                 // Quoted (Reply) messages - specific event from BE
                 SocketService.onMessageQuoted((data) => {
                     const { conversationId: incomingConvId, message } = data;
@@ -1654,6 +1729,8 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             }
             SocketService.offMessage();
             SocketService.offMessageUpdated();
+            SocketService.offMessageReaction();
+            SocketService.offMessageReactionRemove();
             SocketService.offTyping();
             SocketService.offPinnedMessage();
             SocketService.offMessageQuoted();

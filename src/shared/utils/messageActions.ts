@@ -14,7 +14,6 @@ export interface BuildMessageActionSheetOptions {
     onForward?: () => void;
     onPin?: () => void;
     onReply?: () => void;
-    onReact?: () => void;
 }
 
 export const buildMessageActionSheetOptions = ({
@@ -25,19 +24,23 @@ export const buildMessageActionSheetOptions = ({
     onForward,
     onPin,
     onReply,
-    onReact,
 }: BuildMessageActionSheetOptions): MessageActionButton[] => {
     const buttons: MessageActionButton[] = [
         { text: "Hủy", style: "cancel", onPress: () => { } },
-        { text: "Xóa phía tôi", style: "destructive", onPress: onDeleteForMe },
     ];
+
+    if (isOwn && onRevoke) {
+        buttons.push({ text: "Xóa", style: "destructive", onPress: onRevoke });
+    }
+
+    buttons.push({ text: "Xóa phía tôi", style: "destructive", onPress: onDeleteForMe });
 
     if (onReply) {
         buttons.push({ text: "Trả lời", style: "default", onPress: onReply });
     }
 
-    if (onReact) {
-        buttons.push({ text: "React", style: "default", onPress: onReact });
+    if (onForward) {
+        buttons.push({ text: "Chuyển tiếp", style: "default", onPress: onForward });
     }
 
     if (onPin) {
@@ -46,14 +49,6 @@ export const buildMessageActionSheetOptions = ({
 
     if (isOwn && onEdit) {
         buttons.push({ text: "Sửa", style: "default", onPress: onEdit });
-    }
-
-    if (isOwn && onRevoke) {
-        buttons.push({ text: "Thu hồi", style: "destructive", onPress: onRevoke });
-    }
-
-    if (onForward) {
-        buttons.push({ text: "Chuyển tiếp", style: "default", onPress: onForward });
     }
 
     return buttons;

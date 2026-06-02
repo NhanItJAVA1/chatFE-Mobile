@@ -32,7 +32,7 @@ export interface UseChatMessageActions {
     deleteMessage: (messageId: string) => Promise<void>;
     revokeMessage: (messageId: string) => Promise<void>;
     addReaction: (messageId: string, emoji: string) => Promise<void>;
-    removeReaction: (messageId: string, emoji: string) => Promise<void>;
+    removeReaction: (messageId: string, emoji?: string) => Promise<void>;
     pinMessage: (messageId: string) => Promise<void>;
     unpinMessage: (messageId: string) => Promise<void>;
     navigatePinnedMessages: (direction: "prev" | "next") => void;
@@ -524,6 +524,94 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 });
             });
 
+            SocketService.onMessageReaction((data: any) => {
+                if (data.conversationId && data.conversationId !== conversationId) {
+                    return;
+                }
+
+                const messageId = data.messageId || data.reaction?.messageId;
+                const reaction = data.reaction || data;
+                const reactionUserId = reaction?.userId || data.userId;
+                if (!messageId || !reaction?.emoji || !reactionUserId) {
+                    return;
+                }
+                const reactionId = reaction?._id || reaction?.id;
+
+                setState((prev) => {
+                    const messages = prev.messages.map((msg) =>
+                        getMessageId(msg) === messageId
+                            ? {
+                                ...msg,
+                                reactions: [
+                                    ...(msg.reactions || []).filter((item: any) =>
+                                        reactionId ? (item._id || item.id) !== reactionId : true
+                                    ),
+                                    { ...reaction, userId: reactionUserId },
+                                ],
+                            }
+                            : msg
+                    );
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, messages).catch((error) => {
+                            console.error("[useChat] Failed to save reaction to cache:", error);
+                        });
+                    }
+
+                    return { ...prev, messages };
+                });
+            });
+
+            SocketService.onMessageReactionRemove((data: any) => {
+                if (data.conversationId && data.conversationId !== conversationId) {
+                    return;
+                }
+
+                const messageId = data.messageId || data.reaction?.messageId;
+                const reactionUserId = data.userId || data.reaction?.userId;
+                const emoji = data.emoji || data.reaction?.emoji;
+                if (!messageId || !reactionUserId) {
+                    return;
+                }
+
+                setState((prev) => {
+                    const messages = prev.messages.map((msg) =>
+                        getMessageId(msg) === messageId
+                            ? {
+                                ...msg,
+                                reactions: (msg.reactions || []).filter(
+                                    (reaction: any) =>
+                                        reaction.userId !== reactionUserId ||
+                                        (!!emoji && reaction.emoji !== emoji)
+                                ),
+                            }
+                            : msg
+                    );
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, messages).catch((error) => {
+                            console.error("[useChat] Failed to save reaction removal to cache:", error);
+                        });
+                    }
+
+                    return { ...prev, messages };
+                });
+            });
+
             // Pinned message events
             SocketService.onPinnedMessage((data: any) => {
                 const incomingConvId = data.conversationId || data.pinnedMessage?.conversationId;
@@ -919,6 +1007,8 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
     const addReaction = useCallback(async (messageId: string, emoji: string) => {
         try {
             const reaction = await SocketService.addReaction(messageId, emoji);
+            const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
+            const reactionId = reaction?._id || reaction?.id;
 
             setState((prev) => ({
                 ...prev,
@@ -927,8 +1017,10 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                         ? {
                             ...msg,
                             reactions: [
-                                ...(msg.reactions || []).filter((item: any) => item.userId !== user?.id),
-                                reaction || { emoji, userId: user?.id },
+                                ...(msg.reactions || []).filter((item: any) =>
+                                    reactionId ? (item._id || item.id) !== reactionId : true
+                                ),
+                                reaction || { emoji, userId: currentUserId },
                             ],
                         }
                         : msg
@@ -937,14 +1029,15 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         } catch (error: any) {
             // Silently fail
         }
-    }, []);
+    }, [user?.id, (user as any)?._id, (user as any)?.userId]);
 
     /**
      * Remove reaction from message
      */
-    const removeReaction = useCallback(async (messageId: string, emoji: string) => {
+    const removeReaction = useCallback(async (messageId: string, emoji?: string) => {
         try {
             await SocketService.removeReaction(messageId, emoji);
+            const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
 
             setState((prev) => ({
                 ...prev,
@@ -952,8 +1045,10 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     getMessageId(msg) === messageId
                         ? {
                             ...msg,
-                            reactions: (msg.reactions || []).filter(
-                                (r: any) => !(r.emoji === emoji && (!user?.id || r.userId === user.id))
+                            reactions: (msg.reactions || []).filter((r: any) =>
+                                currentUserId
+                                    ? r.userId !== currentUserId || (!!emoji && r.emoji !== emoji)
+                                    : !!emoji && r.emoji !== emoji
                             ),
                         }
                         : msg
@@ -962,7 +1057,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         } catch (error: any) {
             // Silently fail
         }
-    }, [user?.id]);
+    }, [user?.id, (user as any)?._id, (user as any)?.userId]);
 
     /**
      * Pin message
@@ -1140,6 +1235,8 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             SocketService.offMessageSeen();
             SocketService.offTyping();
             SocketService.offMessageUpdated();
+            SocketService.offMessageReaction();
+            SocketService.offMessageReactionRemove();
             SocketService.offPinnedMessage();
             SocketService.offMessageQuoted();
 
