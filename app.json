@@ -4,6 +4,12 @@
     "slug": "chatchit-mobile",
     "version": "1.0.0",
     "sdkVersion": "54.0.0",
+    "icon": "./src/shared/background/logo.jpg",
+    "splash": {
+      "image": "./src/shared/background/logo.jpg",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
     "orientation": "portrait",
     "platforms": [
       "ios",
@@ -23,6 +29,10 @@
     ],
     "android": {
       "package": "com.anonymous.chatchitmobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./src/shared/background/logo.jpg",
+        "backgroundColor": "#000000"
+      },
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.RECORD_AUDIO",

@@ -19,6 +19,7 @@ import {
 import { useAuth, useFriendship } from "../../../shared/hooks";
 import { ConversationService, type Conversation, type ConversationLastMessageSummary } from "../../../shared/services/conversationService";
 import { SocketService } from "../../../shared/services/socketService";
+import { playIncomingMessageSound } from "../../../shared/services/messageSoundService";
 import { PresenceService, type PresenceStatus } from "../../../shared/services/presenceService";
 import searchService, {
     type GlobalSearchLink,
@@ -687,6 +688,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             const message = data?.message || data?.systemMessage || data?.activityMessage || data;
             const conversationId = String(message?.conversationId || data?.conversationId || "");
             if (!conversationId) return;
+
+            if (message?.senderId && currentUserId && String(message.senderId) !== String(currentUserId)) {
+                playIncomingMessageSound();
+            }
 
             setConversations((prev) => {
                 const next = prev.map((conversation) => {

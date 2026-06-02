@@ -52,6 +52,7 @@ export {
     mediaService,
 } from "./mediaService";
 export { forwardService } from "./forwardService";
+export { playIncomingMessageSound } from "./messageSoundService";
 export {
     requestPresignedUrl,
     uploadToS3,

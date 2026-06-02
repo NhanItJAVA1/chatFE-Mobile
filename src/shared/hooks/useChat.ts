@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ConversationService, Conversation } from "../services/conversationService";
 import { SocketService, MessagePayload, TypingData } from "../services/socketService";
+import { playIncomingMessageSound } from "../services/messageSoundService";
 import { useAuth } from "./useAuth";
 import { saveMessagesToCache, loadMessagesFromCache, mergeMessages } from "../utils/cacheUtils";
 import { useScrollToMessage } from "./useScrollToMessage";
@@ -365,7 +366,14 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             SocketService.onMessage((message: MessagePayload) => {
                 const incomingConversationId = message.conversationId || (message as any)?.conversationId;
                 if (incomingConversationId && incomingConversationId !== conversationId) {                return;
-                }                setState((prev) => {
+                }
+
+                const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
+                if (message.senderId && currentUserId && String(message.senderId) !== String(currentUserId)) {
+                    playIncomingMessageSound();
+                }
+
+                setState((prev) => {
                     const merged = mergeUniqueMessages([message], prev.messages);
                     // Use the helper to add and enrich
                     const enriched = enrichMessagesWithQuotedData(merged);
@@ -395,6 +403,10 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 const { conversationId: incomingConvId, message } = data;
                 if (incomingConvId && incomingConvId !== conversationId) {
                     return;
+                }
+                const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
+                if (message?.senderId && currentUserId && String(message.senderId) !== String(currentUserId)) {
+                    playIncomingMessageSound();
                 }
                 setState((prev) => {
                     const merged = mergeUniqueMessages([message], prev.messages);

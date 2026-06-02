@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ConversationService, Conversation } from "../services/conversationService";
 import { SocketService, MessagePayload, TypingData } from "../services/socketService";
+import { playIncomingMessageSound } from "../services/messageSoundService";
 import { PollService } from "../services/pollService";
 import { useAuth } from "./useAuth";
 import { saveMessagesToCache, loadMessagesFromCache } from "../utils/cacheUtils";
@@ -1452,6 +1453,11 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 // Setup socket listeners for group messages
                 SocketService.onMessage((message: MessagePayload) => {
                     if ((message.conversationId === conversationId || message.conversationId === groupId) && messagesStateRef.current) {
+                        const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
+                        if (message.senderId && currentUserId && String(message.senderId) !== String(currentUserId)) {
+                            playIncomingMessageSound();
+                        }
+
                         const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
                     const enriched = collapsePollMessages(attachPollsToMessages(
                         enrichMessagesWithQuotedData(merged),
@@ -1566,6 +1572,11 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     const { conversationId: incomingConvId, message } = data;
                     if (incomingConvId && incomingConvId !== conversationId && incomingConvId !== groupId) {
                         return;
+                    }
+
+                    const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
+                    if (message?.senderId && currentUserId && String(message.senderId) !== String(currentUserId)) {
+                        playIncomingMessageSound();
                     }
 
                     if (messagesStateRef.current) {                        const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
