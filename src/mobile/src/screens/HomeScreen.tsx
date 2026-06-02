@@ -704,7 +704,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             ? message.content
                             : message?.message?.trim()
                                 ? message.message
-                        : getPreviewFromMessageType(message?.type || "");
+                                : getPreviewFromMessageType(message?.type || "");
 
                     const nextUnread =
                         message?.senderId && currentUserId && message.senderId !== currentUserId
@@ -1783,7 +1783,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     <>
                         <View style={styles.homeTopRow}>
                             <View style={styles.brandPill}>
-                                <Ionicons name="paper-plane" size={14} color={colors.text} />
+                                <Image
+                                    source={require("../../../shared/background/logo.jpg")}
+                                    style={styles.brandLogo}
+                                />
                                 <Text style={styles.brandText}>ChatChit</Text>
                             </View>
                             <Pressable
@@ -1932,6 +1935,11 @@ const styles = StyleSheet.create({
         color: colors.text,
         fontWeight: "800",
         letterSpacing: 0.8,
+    },
+    brandLogo: {
+        width: 18,
+        height: 18,
+        borderRadius: 5,
     },
     actionCircle: {
         width: 44,

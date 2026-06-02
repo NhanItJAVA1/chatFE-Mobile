@@ -61,6 +61,7 @@ export const ShareProfileCardSheet: React.FC<ShareProfileCardSheetProps> = ({
 }) => {
     const [targets, setTargets] = useState<Target[]>([]);
     const [query, setQuery] = useState("");
+    const [tab, setTab] = useState<"all" | "private" | "group">("all");
     const [loading, setLoading] = useState(false);
     const [sendingTargetId, setSendingTargetId] = useState<string | null>(null);
     const [sentTargetIds, setSentTargetIds] = useState<Set<string>>(new Set());
@@ -73,7 +74,25 @@ export const ShareProfileCardSheet: React.FC<ShareProfileCardSheetProps> = ({
 
         let active = true;
         setLoading(true);
-        ConversationService.getConversations(1, 50)
+        setQuery("");
+        setTab("all");
+
+        const loadTargets = async () => {
+            const pageSize = 50;
+            let page = 1;
+            const allItems: Conversation[] = [];
+
+            while (page <= 5) {
+                const items = await ConversationService.getConversations(page, pageSize);
+                allItems.push(...items);
+                if (items.length < pageSize) break;
+                page += 1;
+            }
+
+            return allItems;
+        };
+
+        loadTargets()
             .then((items) => {
                 if (!active) return;
                 setTargets(
@@ -97,9 +116,18 @@ export const ShareProfileCardSheet: React.FC<ShareProfileCardSheetProps> = ({
 
     const filteredTargets = useMemo(() => {
         const needle = query.trim().toLowerCase();
-        if (!needle) return targets;
-        return targets.filter((target) => `${target.title} ${target.subtitle}`.toLowerCase().includes(needle));
-    }, [targets, query]);
+        return targets.filter((target) => {
+            const matchesTab =
+                tab === "all" ||
+                (tab === "private" && target.type === "PRIVATE") ||
+                (tab === "group" && target.type === "GROUP");
+            const matchesQuery =
+                !needle ||
+                `${target.title} ${target.subtitle}`.toLowerCase().includes(needle);
+
+            return matchesTab && matchesQuery;
+        });
+    }, [targets, query, tab]);
 
     const handleSend = async (target: Target) => {
         if (!profileUserId) return;
@@ -145,6 +173,18 @@ export const ShareProfileCardSheet: React.FC<ShareProfileCardSheetProps> = ({
                         />
                     </View>
 
+                    <View style={styles.tabRow}>
+                        <Pressable style={[styles.tab, tab === "all" && styles.tabActive]} onPress={() => setTab("all")}>
+                            <Text style={[styles.tabText, tab === "all" && styles.tabTextActive]}>Tất cả</Text>
+                        </Pressable>
+                        <Pressable style={[styles.tab, tab === "private" && styles.tabActive]} onPress={() => setTab("private")}>
+                            <Text style={[styles.tabText, tab === "private" && styles.tabTextActive]}>Bạn bè</Text>
+                        </Pressable>
+                        <Pressable style={[styles.tab, tab === "group" && styles.tabActive]} onPress={() => setTab("group")}>
+                            <Text style={[styles.tabText, tab === "group" && styles.tabTextActive]}>Nhóm</Text>
+                        </Pressable>
+                    </View>
+
                     {loading ? (
                         <View style={styles.center}>
                             <ActivityIndicator color={colors.accent} />
@@ -163,6 +203,10 @@ export const ShareProfileCardSheet: React.FC<ShareProfileCardSheetProps> = ({
                                         <View key={target.id} style={styles.row}>
                                             {target.avatar ? (
                                                 <Image source={{ uri: target.avatar }} style={styles.avatar} />
+                                            ) : target.type === "GROUP" ? (
+                                                <View style={[styles.avatar, styles.groupAvatar]}>
+                                                    <Ionicons name="people" size={22} color={colors.text} />
+                                                </View>
                                             ) : (
                                                 <Avatar label={target.title.slice(0, 1).toUpperCase()} size={44} backgroundColor={colors.accentStrong} />
                                             )}
@@ -255,6 +299,33 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         marginVertical: 10,
     },
+    tabRow: {
+        flexDirection: "row",
+        gap: 8,
+        marginBottom: 10,
+    },
+    tab: {
+        flex: 1,
+        minHeight: 40,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: colors.overlayWhite10,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.surfaceTransparent,
+    },
+    tabActive: {
+        backgroundColor: "rgba(79,140,255,0.18)",
+        borderColor: "rgba(79,140,255,0.4)",
+    },
+    tabText: {
+        color: colors.textSoft,
+        fontSize: 13,
+        fontWeight: "700",
+    },
+    tabTextActive: {
+        color: colors.text,
+    },
     searchInput: {
         flex: 1,
         color: colors.text,
@@ -280,6 +351,13 @@ const styles = StyleSheet.create({
         height: 44,
         borderRadius: 22,
         backgroundColor: colors.border,
+    },
+    groupAvatar: {
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(79,140,255,0.18)",
+        borderWidth: 1,
+        borderColor: "rgba(79,140,255,0.34)",
     },
     rowMeta: {
         flex: 1,

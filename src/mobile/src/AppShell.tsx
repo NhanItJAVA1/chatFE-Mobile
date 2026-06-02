@@ -8,6 +8,8 @@ import {
     LoginScreen,
     ProfileScreen,
     RegisterScreen,
+    VerifyEmailScreen,
+    ForgotPasswordScreen,
     AddFriendScreen,
     FriendRequestsScreen,
     CreateGroupScreen,
@@ -23,19 +25,61 @@ const LoadingState = () => (
     </View>
 );
 
-type AuthMode = "login" | "register";
+type AuthMode = "login" | "register" | "verifyEmail" | "forgotPassword";
+
+type VerifyEmailParams = {
+    email?: string;
+    phone?: string;
+    displayName?: string;
+    shouldSendInitialOtp?: boolean;
+};
 
 const AuthGate = () => {
     const [mode, setMode] = useState<AuthMode>("login");
+    const [verifyEmailParams, setVerifyEmailParams] = useState<VerifyEmailParams>({});
+
+    const goToLogin = () => {
+        setMode("login");
+        setVerifyEmailParams({});
+    };
 
     if (mode === "register") {
         return (
-            <RegisterScreen onSwitchToLogin={() => setMode("login")} />
+            <RegisterScreen
+                onSwitchToLogin={goToLogin}
+                onNeedEmailVerification={(params) => {
+                    setVerifyEmailParams(params);
+                    setMode("verifyEmail");
+                }}
+            />
         );
     }
 
+    if (mode === "verifyEmail") {
+        return (
+            <VerifyEmailScreen
+                email={verifyEmailParams.email}
+                phone={verifyEmailParams.phone}
+                shouldSendInitialOtp={verifyEmailParams.shouldSendInitialOtp}
+                onVerified={goToLogin}
+                onBackToLogin={goToLogin}
+            />
+        );
+    }
+
+    if (mode === "forgotPassword") {
+        return <ForgotPasswordScreen onBackToLogin={goToLogin} />;
+    }
+
     return (
-        <LoginScreen onSwitchToRegister={() => setMode("register")} />
+        <LoginScreen
+            onSwitchToRegister={() => setMode("register")}
+            onForgotPassword={() => setMode("forgotPassword")}
+            onNeedEmailVerification={(params) => {
+                setVerifyEmailParams(params);
+                setMode("verifyEmail");
+            }}
+        />
     );
 };
 

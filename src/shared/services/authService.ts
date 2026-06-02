@@ -2,6 +2,7 @@ import { api } from "./api";
 import { authStorage } from "../runtime/storage";
 import { getApiBaseUrl } from "../runtime/config";
 import { getDeviceHeaders } from "./sessionService";
+import { DeviceEventEmitter } from "react-native";
 import type { AuthResponse, User } from "@/types";
 
 const readAccessToken = (payload: any): string => {
@@ -10,6 +11,11 @@ const readAccessToken = (payload: any): string => {
 
 const readUserProfile = (payload: any): User | null => {
     return payload?.user || payload?.profile || null;
+};
+
+const publicAuthOptions = {
+    skipAuth: true,
+    skipRefresh: true,
 };
 
 export type TokenIntrospection = {
@@ -31,12 +37,11 @@ export const authService = {
         try {
             const response = await api.post("/auth/register", userData, {
                 headers: await getDeviceHeaders(),
-                skipAuth: true,
-                skipRefresh: true,
+                ...publicAuthOptions,
             });
             return response;
         } catch (error: any) {
-            throw new Error(error.message || "Registration failed");
+            throw error;
         }
     },
 
@@ -57,8 +62,7 @@ export const authService = {
             };
             let authData = await api.post("/auth/login", loginPayload, {
                 headers: await getDeviceHeaders(),
-                skipAuth: true,
-                skipRefresh: true,
+                ...publicAuthOptions,
             });
 
             if (authData?.data && !authData?.token && !authData?.accessToken) {
@@ -82,8 +86,32 @@ export const authService = {
 
             return authData;
         } catch (error: any) {
-            throw new Error(error.message || "Login failed");
+            throw error;
         }
+    },
+
+    getUnverifiedEmail: async (phone: string): Promise<string> => {
+        const response = await api.get("/auth/unverified-email", {
+            params: { phone },
+            ...publicAuthOptions,
+        });
+        const email = response?.data?.email || response?.email;
+        if (!email) {
+            throw new Error("No unverified email found for this phone number");
+        }
+        return email;
+    },
+
+    sendVerification: async (email: string): Promise<any> => {
+        return api.post("/auth/send-verification", { email }, publicAuthOptions);
+    },
+
+    resendVerification: async (email: string): Promise<any> => {
+        return api.post("/auth/resend-verification", { email }, publicAuthOptions);
+    },
+
+    verifyEmail: async (email: string, code: string): Promise<any> => {
+        return api.post("/auth/verify-email", { email, code }, publicAuthOptions);
     },
 
     introspect: async (token: string): Promise<TokenIntrospection> => {
@@ -184,10 +212,28 @@ export const authService = {
 
     forgotPassword: async (payload: any): Promise<any> => {
         const responseData = await api.post("/auth/forgot-password", payload, {
-            skipAuth: true,
-            skipRefresh: true,
+            ...publicAuthOptions,
         });
         return responseData;
+    },
+
+    verifyResetOtp: async (email: string, otp: string): Promise<any> => {
+        return api.post("/auth/verify-reset-otp", { email, otp }, publicAuthOptions);
+    },
+
+    resendResetOtp: async (email: string): Promise<any> => {
+        return api.post("/auth/resend-reset-otp", { email }, publicAuthOptions);
+    },
+
+    resetPassword: async (tempToken: string, newPassword: string): Promise<any> => {
+        return api.post("/auth/reset-password", { tempToken, newPassword }, publicAuthOptions);
+    },
+
+    clearLocalSession: async (): Promise<void> => {
+        await authStorage.removeItem("token");
+        await authStorage.removeItem("refreshToken");
+        await authStorage.removeItem("user");
+        DeviceEventEmitter.emit("forceLogout");
     },
 
     updatePassword: async (payload: any): Promise<any> => {
@@ -214,8 +260,7 @@ export const authService = {
             }
 
             const response = await api.post("/auth/refresh", { refreshToken }, {
-                skipAuth: true,
-                skipRefresh: true,
+                ...publicAuthOptions,
             });
             const payload = response?.data || response;
             const newToken = payload?.accessToken || payload?.token;

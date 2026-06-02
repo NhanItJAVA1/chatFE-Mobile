@@ -20,7 +20,7 @@ interface StorageConfig {
 }
 
 configureRuntime({
-  apiUrl: process.env.EXPO_PUBLIC_API_URL || "http://192.168.1.6:3000/v1",
+  apiUrl: process.env.EXPO_PUBLIC_API_URL,
 } as RuntimeConfig);
 
 configureStorage({

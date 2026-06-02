@@ -132,7 +132,10 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 };
 
 const isActiveCallConflict = (error: unknown) => {
-    return error instanceof Error && error.message.includes("409");
+    return (
+        error instanceof Error &&
+        ((error as any).status === 409 || error.message.includes("409"))
+    );
 };
 
 const collectVideoTiles = (room: Room | null): CallVideoTile[] => {
@@ -374,16 +377,21 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
 
     const endCall = useCallback(async () => {
         const callId = currentCallIdRef.current || state.callId;
+        const shouldEndRemoteCall = state.status === "calling";
         dispatch({ type: "ENDING" });
         try {
             if (callId) {
-                await callService.leaveCall(callId);
+                if (shouldEndRemoteCall) {
+                    await callService.endCall(callId);
+                } else {
+                    await callService.leaveCall(callId);
+                }
                 callSocket.leaveCallRoom(callId);
             }
         } finally {
             await resetCall();
         }
-    }, [resetCall, state.callId]);
+    }, [resetCall, state.callId, state.status]);
 
     const toggleCamera = useCallback(async () => {
         const room = roomRef.current;
@@ -458,6 +466,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             mounted = false;
             cleanups.forEach((cleanup) => cleanup());
             clearIncomingTimer();
+            callSocket.disconnect();
         };
     }, [clearIncomingTimer, currentUserId, resetCall, showIncomingCall, token]);
 

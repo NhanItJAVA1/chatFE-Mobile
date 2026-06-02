@@ -45,10 +45,22 @@ export type AppProviderProps = {
 
 export type LoginScreenProps = {
     onSwitchToRegister: () => void;
+    onForgotPassword?: () => void;
+    onNeedEmailVerification?: (params: {
+        email?: string;
+        phone?: string;
+        shouldSendInitialOtp?: boolean;
+    }) => void;
 };
 
 export type RegisterScreenProps = {
     onSwitchToLogin: () => void;
+    onNeedEmailVerification?: (params: {
+        email: string;
+        phone: string;
+        displayName: string;
+        shouldSendInitialOtp?: boolean;
+    }) => void;
 };
 
 export type RegisterFormData = {
