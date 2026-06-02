@@ -90,6 +90,14 @@ const MessageBubble: React.FC<{
   // Check if message has media
   const hasMedia = message.media && message.media.length > 0;
   const isProfileCard = String(message.type || message.messageType || "").toLowerCase() === "profile_card";
+  const isForwarded = Boolean(
+    (message as any).isForwarded ||
+    (message as any).forwarded ||
+    (message as any).forwardedFrom ||
+    (message as any).forwardedFromMessageId ||
+    (message as any).originalMessageId ||
+    (message as any).sourceMessageId
+  );
   const reactionGroups = Object.values(
     (message.reactions || []).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
       const emoji = reaction?.emoji;
@@ -175,6 +183,12 @@ const MessageBubble: React.FC<{
       {/* Media display */}
       {!isProfileCard && hasMedia && (
         <View style={[styles.mediaContainer, !message.text && styles.mediaReactionWrap]}>
+          {!message.text && isForwarded && (
+            <View style={styles.forwardedLabelRow}>
+              <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
+              <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
+            </View>
+          )}
           {!message.text && showReactionPicker && renderReactionPicker()}
           {message.media.map((m: any, idx: number) => (
             <MediaMessage
@@ -219,6 +233,12 @@ const MessageBubble: React.FC<{
       {/* Text bubble */}
       {!isProfileCard && message.text && (
         <View style={[styles.bubble, isOwn ? styles.outgoingBubble : styles.incomingBubble]}>
+          {isForwarded && (
+            <View style={styles.forwardedLabelRow}>
+              <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
+              <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
+            </View>
+          )}
           {showReactionPicker && renderReactionPicker()}
           {/* Quoted message block if this is a reply */}
           {(() => {
@@ -2524,6 +2544,20 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 12,
     fontWeight: "700",
+  },
+  forwardedLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 6,
+  },
+  forwardedLabelText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  forwardedLabelTextOwn: {
+    color: colors.overlayWhite75,
   },
   mediaReactionWrap: {
     marginBottom: 10,

@@ -51,6 +51,12 @@ export interface MessagePayload {
     deletedForUserIds?: string[];
     deletedBy?: string;
     deletedAt?: string;
+    isForwarded?: boolean;
+    forwarded?: boolean;
+    forwardedFrom?: any;
+    forwardedFromMessageId?: string;
+    originalMessageId?: string;
+    sourceMessageId?: string;
 
     // Reply/Quote fields
     quotedMessageId?: string;

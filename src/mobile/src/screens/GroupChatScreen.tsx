@@ -1299,6 +1299,14 @@ export const GroupChatScreen: React.FC<{
             const roleIcon = getRoleIcon();
             const hasMedia = item.media && item.media.length > 0;
             const hasText = item.text && item.text.trim().length > 0;
+            const isForwarded = Boolean(
+                item?.isForwarded ||
+                item?.forwarded ||
+                item?.forwardedFrom ||
+                item?.forwardedFromMessageId ||
+                item?.originalMessageId ||
+                item?.sourceMessageId
+            );
             const hasGalleryMedia =
                 hasMedia &&
                 item.media.length >= 3 &&
@@ -1368,6 +1376,12 @@ export const GroupChatScreen: React.FC<{
                         {/* Render Media - Outside bubble for better sizing */}
                         {hasMedia && (
                             <View style={[styles.mediaContainer, !hasText && styles.mediaReactionWrap]}>
+                                {!hasText && isForwarded && (
+                                    <View style={styles.forwardedLabelRow}>
+                                        <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
+                                        <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
+                                    </View>
+                                )}
                                 {!hasText && reactionPickerMessageId === messageId && (
                                     <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
                                         {QUICK_REACTIONS.map((emoji) => {
@@ -1476,6 +1490,12 @@ export const GroupChatScreen: React.FC<{
                                     isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
                                 ]}
                             >
+                                {isForwarded && (
+                                    <View style={styles.forwardedLabelRow}>
+                                        <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
+                                        <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
+                                    </View>
+                                )}
                                 {reactionPickerMessageId === messageId && (
                                     <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
                                         {QUICK_REACTIONS.map((emoji) => {
@@ -2447,6 +2467,20 @@ const styles = StyleSheet.create({
         color: colors.text,
         fontSize: 12,
         fontWeight: "700",
+    },
+    forwardedLabelRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+        marginBottom: 6,
+    },
+    forwardedLabelText: {
+        color: colors.textMuted,
+        fontSize: 11,
+        fontWeight: "700",
+    },
+    forwardedLabelTextOwn: {
+        color: colors.overlayWhite75,
     },
     mediaReactionWrap: {
         marginBottom: 10,
