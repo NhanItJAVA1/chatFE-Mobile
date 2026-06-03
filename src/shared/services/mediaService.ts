@@ -210,6 +210,50 @@ export const uploadMedia = async (file: any, onProgress?: (progress: number) => 
     }
 };
 
+export const uploadMediaDirect = async (file: any): Promise<any> => {
+    try {
+        if (!file?.uri) {
+            throw new Error("File is required");
+        }
+
+        const name = file.name || file.fileName || file.uri.split("/").pop() || `upload_${Date.now()}.jpg`;
+        const type = file.mimeType || file.type || getMimeTypeFromName(name);
+        const formData = new FormData();
+
+        formData.append("file", {
+            uri: file.uri,
+            name,
+            type,
+        } as any);
+
+        const token = await authStorage.getItem("token");
+        const response = await fetch(`${getApiBaseUrl()}/media/upload`, {
+            method: "POST",
+            headers: {
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: formData,
+        });
+
+        const raw = await response.text();
+        const parsed = raw ? JSON.parse(raw) : null;
+
+        if (!response.ok) {
+            throw new Error(parsed?.message || parsed?.msg || `Upload failed with status ${response.status}`);
+        }
+
+        const data = parsed?.data || parsed;
+        if (!data?.url) {
+            throw new Error("Missing uploaded avatar url");
+        }
+
+        return data;
+    } catch (error: any) {
+        console.error("[mediaService] Direct media upload failed:", error.message);
+        throw new Error(error.message || "Failed to upload file");
+    }
+};
+
 export const uploadMultipleMedia = async (files: any[]): Promise<any> => {
     try {
         if (!files || files.length === 0) {
@@ -273,6 +317,7 @@ export const deleteMedia = async (mediaId: string): Promise<any> => {
 
 export const mediaService = {
     uploadMedia,
+    uploadMediaDirect,
     uploadMultipleMedia,
     deleteMedia,
 };

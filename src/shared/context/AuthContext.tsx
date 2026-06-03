@@ -314,6 +314,34 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         }
     };
 
+    const updateAvatar = async (avatarUrl: string): Promise<User> => {
+        try {
+            setLoading(true);
+            const currentToken = await authService.getToken();
+            if (!currentToken) {
+                throw new Error("Not authenticated - please login again");
+            }
+
+            await authService.updateAvatar(avatarUrl);
+            const freshProfile = await authService.getProfile(currentToken);
+            if (!freshProfile.avatarUrl && freshProfile.avatar) {
+                freshProfile.avatarUrl = freshProfile.avatar;
+            }
+            freshProfile.avatarUrl = freshProfile.avatarUrl || avatarUrl;
+
+            setUser(freshProfile);
+            await authService.saveUser(freshProfile);
+            return freshProfile;
+        } catch (err: any) {
+            const errorMessage = err.message || "Avatar update failed";
+            setError(errorMessage);
+            console.error("[AuthContext] updateAvatar error:", err);
+            throw err;
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const value: AuthContextType = {
         user,
         token,
@@ -323,6 +351,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         register,
         logout,
         updateProfile,
+        updateAvatar,
         isAuthenticated: !!token,
     };
 

@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, ImageBackground, StyleSheet, View, Text, Pressable } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, DeviceEventEmitter, ImageBackground, StyleSheet, View, Text, Pressable } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { NavigationContainer, createNavigationContainerRef, DefaultTheme } from "@react-navigation/native";
 import { createNativeStackNavigator, type NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useAuth, useFriendRequests, useFriendship } from "../../shared/hooks";
@@ -106,6 +107,9 @@ type MessageNotification = {
     id: string;
     senderName: string;
     preview: string;
+    conversationId: string;
+    conversationType?: "PRIVATE" | "GROUP";
+    payload: any;
 };
 
 type RootStackParamList = {
@@ -119,6 +123,7 @@ type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
+const AI_SMART_REPLY_ENABLED_KEY = "ai_smart_reply_enabled_v1";
 const transparentNavigationTheme = {
     ...DefaultTheme,
     colors: {
@@ -130,6 +135,19 @@ const transparentNavigationTheme = {
 
 const getMessageConversationId = (message: any, fallback?: string): string => {
     return String(message?.conversationId || fallback || "");
+};
+
+const getMessageConversationType = (message: any): "PRIVATE" | "GROUP" | undefined => {
+    const rawType = String(
+        message?.conversationType ||
+        message?.conversation?.type ||
+        message?.chatType ||
+        ""
+    ).toUpperCase();
+
+    if (rawType === "GROUP" || message?.isGroup) return "GROUP";
+    if (rawType === "PRIVATE") return "PRIVATE";
+    return undefined;
 };
 
 const getMessagePreview = (message: Partial<MessagePayload> & { content?: string; message?: string }): string => {
@@ -161,6 +179,7 @@ const MainShell = () => {
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
     const [currentRouteName, setCurrentRouteName] = useState<keyof RootStackParamList>("Main");
     const [messageNotification, setMessageNotification] = useState<MessageNotification | null>(null);
+    const [aiSmartReplyEnabled, setAiSmartReplyEnabled] = useState(false);
     const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const { isAuthenticated, token, user } = useAuth();
     const {
@@ -175,12 +194,69 @@ const MainShell = () => {
     // Shared friendship state (for sent requests, friends list, etc.)
     const friendshipResult = useFriendship();
 
+    const resolveUserFromMessage = useCallback((message: any, fallbackName = "Người dùng") => {
+        const senderId = String(
+            message?.senderId ||
+            message?.sender?._id ||
+            message?.sender?.id ||
+            message?.sender?.userId ||
+            ""
+        );
+        const friend = senderId
+            ? friendshipResult.state.friends.find((candidate: any) => String(candidate.friendId) === senderId)
+            : undefined;
+        const friendInfo: any = friend?.friendInfo || {};
+        const sender: any = message?.sender || {};
+
+        return {
+            id: senderId,
+            displayName:
+                message?.senderName ||
+                sender?.displayName ||
+                sender?.name ||
+                friendInfo?.displayName ||
+                fallbackName,
+            avatar:
+                message?.senderAvatar ||
+                sender?.avatarUrl ||
+                sender?.avatar ||
+                friendInfo?.avatar ||
+                undefined,
+            avatarUrl:
+                message?.senderAvatar ||
+                sender?.avatarUrl ||
+                sender?.avatar ||
+                friendInfo?.avatar ||
+                undefined,
+            phone: sender?.phone || sender?.phoneNumber || friendInfo?.phoneNumber,
+            relationship: friend ? "friend" : "stranger",
+        };
+    }, [friendshipResult.state.friends]);
+
     useEffect(() => {
         if (!isAuthenticated) {
             setActiveTab("home");
             setActiveConversationId(null);
         }
     }, [isAuthenticated]);
+
+    useEffect(() => {
+        let mounted = true;
+        AsyncStorage.getItem(AI_SMART_REPLY_ENABLED_KEY)
+            .then((value) => {
+                if (mounted) setAiSmartReplyEnabled(value === "true");
+            })
+            .catch(() => { });
+
+        return () => {
+            mounted = false;
+        };
+    }, []);
+
+    const handleToggleAiSmartReply = (enabled: boolean) => {
+        setAiSmartReplyEnabled(enabled);
+        AsyncStorage.setItem(AI_SMART_REPLY_ENABLED_KEY, enabled ? "true" : "false").catch(() => { });
+    };
 
     const currentUserId = useMemo(
         () => String(user?.id || (user as any)?._id || (user as any)?.userId || ""),
@@ -201,6 +277,29 @@ const MainShell = () => {
         const socket = SocketService.getSocket();
         if (!socket) return;
 
+        const getCurrentRouteConversationId = (): string => {
+            const route = navigationRef.getCurrentRoute();
+            const params: any = route?.params || {};
+            if (route?.name === "GroupChat") {
+                const selectedChat = params?.selectedChat || {};
+                return String(selectedChat.conversationId || selectedChat._id || selectedChat.id || "");
+            }
+            if (route?.name === "Chat") {
+                const chatUser = params?.chatUser || {};
+                return String(chatUser.conversationId || "");
+            }
+            return "";
+        };
+
+        const getCurrentRoutePeerId = (): string => {
+            const route = navigationRef.getCurrentRoute();
+            const params: any = route?.params || {};
+            if (route?.name !== "Chat") return "";
+
+            const chatUser = params?.chatUser || {};
+            return String(chatUser.id || chatUser._id || chatUser.userId || "");
+        };
+
         const showNotification = (message: any, fallbackConversationId?: string) => {
             const conversationId = getMessageConversationId(message, fallbackConversationId);
             const senderId = String(message?.senderId || "");
@@ -210,9 +309,18 @@ const MainShell = () => {
             }
 
             const isChatRoute = currentRouteName === "Chat" || currentRouteName === "GroupChat";
-            const isCurrentOpenChat = isChatRoute && activeConversationId === conversationId;
-            const shouldPlaySound = !isChatRoute || !isCurrentOpenChat;
-            const shouldShowBanner = isChatRoute && !isCurrentOpenChat;
+            const routeConversationId = getCurrentRouteConversationId();
+            const routePeerId = getCurrentRoutePeerId();
+            const isCurrentOpenChat =
+                isChatRoute &&
+                (
+                    activeConversationId === conversationId ||
+                    routeConversationId === conversationId ||
+                    (currentRouteName === "Chat" && !!routePeerId && routePeerId === senderId)
+                );
+            const isHomeVisible = currentRouteName === "Main" && activeTab === "home";
+            const shouldPlaySound = !isCurrentOpenChat;
+            const shouldShowBanner = !isHomeVisible && !isCurrentOpenChat;
             if (!shouldPlaySound) {
                 return;
             }
@@ -224,8 +332,11 @@ const MainShell = () => {
 
             setMessageNotification({
                 id: String(message?._id || message?.id || `${conversationId}-${Date.now()}`),
-                senderName: message?.senderName || message?.sender?.displayName || "Tin nhắn mới",
+                senderName: resolveUserFromMessage(message, "Tin nhắn mới").displayName,
                 preview: getMessagePreview(message),
+                conversationId,
+                conversationType: getMessageConversationType(message),
+                payload: message,
             });
 
             if (notificationTimerRef.current) {
@@ -256,7 +367,38 @@ const MainShell = () => {
                 notificationTimerRef.current = null;
             }
         };
-    }, [activeConversationId, currentRouteName, currentUserId, token]);
+    }, [activeConversationId, activeTab, currentRouteName, currentUserId, resolveUserFromMessage, token]);
+
+    const openMessageNotification = (notification: MessageNotification) => {
+        setMessageNotification(null);
+        const message = notification.payload || {};
+        const conversationType = notification.conversationType || getMessageConversationType(message);
+
+        if (conversationType === "GROUP") {
+            const selectedChat = {
+                conversationId: notification.conversationId,
+                conversationType: "GROUP" as const,
+                conversationName: message?.conversationName || message?.conversation?.name || message?.groupName || "Nhóm",
+                searchTargetMessageId: notification.id,
+                searchTargetMessage: message,
+            };
+            setActiveConversationId(notification.conversationId);
+            navigationRef.navigate("GroupChat", {
+                selectedChat,
+                version: groupChatVersion,
+            });
+            return;
+        }
+
+        const sender = resolveUserFromMessage(message);
+        openPrivateChat(navigationRef, {
+            ...sender,
+            conversationId: notification.conversationId,
+            conversationType: "PRIVATE",
+            searchTargetMessageId: notification.id,
+            searchTargetMessage: message,
+        });
+    };
 
     const openPrivateChat = (navigation: any, targetUser: any) => {
         const chatUser = {
@@ -340,6 +482,8 @@ const MainShell = () => {
                     setCreatedGroupId(null);
                     setCreatedGroupData(null);
                 }}
+                aiSmartReplyEnabled={aiSmartReplyEnabled}
+                onToggleAiSmartReply={handleToggleAiSmartReply}
             />
         );
     };
@@ -353,6 +497,7 @@ const MainShell = () => {
                 navigation.goBack();
             }}
             onOpenPrivateChat={(targetUser) => openPrivateChat(navigation, targetUser)}
+            aiSmartReplyEnabled={aiSmartReplyEnabled}
         />
     );
 
@@ -387,6 +532,7 @@ const MainShell = () => {
                 onSettingsPress={() => navigation.navigate("GroupSettings", { groupId })}
                 onAddMembersPress={() => navigation.navigate("AddMembers", { groupId })}
                 onOpenPrivateChat={(targetUser) => openPrivateChat(navigation, targetUser)}
+                aiSmartReplyEnabled={aiSmartReplyEnabled}
             />
         );
     };
@@ -394,7 +540,7 @@ const MainShell = () => {
     return (
         <View style={styles.appShell}>
             {messageNotification ? (
-                <Pressable style={styles.messageBanner} onPress={() => setMessageNotification(null)}>
+                <Pressable style={styles.messageBanner} onPress={() => openMessageNotification(messageNotification)}>
                     <Text style={styles.messageBannerTitle} numberOfLines={1}>
                         {messageNotification.senderName}
                     </Text>
@@ -487,6 +633,28 @@ const MainShell = () => {
 
 const AppShell = () => {
     const { loading, isAuthenticated } = useAuth();
+    const sessionAlertShownRef = useRef(false);
+
+    useEffect(() => {
+        const subscription = DeviceEventEmitter.addListener("forceLogout", () => {
+            if (sessionAlertShownRef.current) return;
+            sessionAlertShownRef.current = true;
+            Alert.alert(
+                "Phiên đăng nhập đã hết hạn",
+                "Vui lòng đăng nhập lại để tiếp tục.",
+                [
+                    {
+                        text: "OK",
+                        onPress: () => {
+                            sessionAlertShownRef.current = false;
+                        },
+                    },
+                ],
+            );
+        });
+
+        return () => subscription.remove();
+    }, []);
 
     return (
         <ImageBackground source={assets.chatBackground} style={styles.appShell} resizeMode="cover">

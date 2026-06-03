@@ -10,6 +10,7 @@ import {
     Alert,
     KeyboardAvoidingView,
     Platform,
+    StatusBar,
     Image,
     ScrollView,
     Modal,
@@ -27,6 +28,7 @@ import { useAuth } from "../../../shared/hooks";
 import { useCall } from "../../../shared/context";
 import { GroupChatService } from "../../../shared/services/groupChatService";
 import { ConversationService, type MuteConversationOptions } from "../../../shared/services/conversationService";
+import { callService, type CallSession } from "../../../shared/services/callService";
 import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
 import {
@@ -128,6 +130,262 @@ const isMuteUntilActive = (muteUntil?: string | null): boolean => {
 
     const mutedUntilMs = new Date(muteUntil).getTime();
     return !Number.isNaN(mutedUntilMs) && mutedUntilMs > Date.now();
+};
+
+const GroupMessageBubble: React.FC<{
+    message: any;
+    isOwn: boolean;
+    currentUserId?: string;
+    senderName: string;
+    senderInitials: string;
+    senderAvatar?: string;
+    roleIcon?: string | null;
+    onLongPress?: () => void;
+    onPressQuoted?: (quotedMessageId: string) => void;
+    onToggleReaction?: (emoji: string, selected: boolean) => void;
+    onClearMyReactions?: () => void;
+    onProfileCardPress?: (user: any) => void;
+    isHighlighted?: boolean;
+    messageMap?: Record<string, any>;
+}> = ({
+    message,
+    isOwn,
+    currentUserId,
+    senderName,
+    senderInitials,
+    senderAvatar,
+    roleIcon,
+    onLongPress,
+    onPressQuoted,
+    onToggleReaction,
+    onClearMyReactions,
+    onProfileCardPress,
+    isHighlighted,
+    messageMap = {},
+}) => {
+    const [showReactionPicker, setShowReactionPicker] = useState(false);
+    const hasMedia = message.media && message.media.length > 0;
+    const trimmedText = String(message.text || "").trim();
+    const compactText = String(message.text || "").replace(/\s+/g, "");
+    const hasText = trimmedText.length > 0;
+    const isJumboEmojiOnly = !!JUMBO_EMOJI_ASSETS[trimmedText] && compactText === trimmedText;
+    const isProfileCard = String(message.type || message.messageType || "").toLowerCase() === "profile_card";
+    const isForwarded = Boolean(
+        message?.isForwarded ||
+        message?.forwarded ||
+        message?.forwardedFrom ||
+        message?.forwardedFromMessageId ||
+        message?.originalMessageId ||
+        message?.sourceMessageId
+    );
+    const resolvedQuotedMessage =
+        message.quotedMessage || (message.quotedMessageId && messageMap[message.quotedMessageId]) || null;
+    const reactionGroups = Object.values(
+        ((message.reactions || []) as any[]).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
+            const emoji = reaction?.emoji;
+            if (!emoji) return acc;
+            if (!acc[emoji]) {
+                acc[emoji] = { emoji, count: 0, selected: false };
+            }
+            acc[emoji].count += 1;
+            if (currentUserId && reaction.userId === currentUserId) {
+                acc[emoji].selected = true;
+            }
+            return acc;
+        }, {})
+    );
+    const reactionSummary = {
+        emojis: reactionGroups.map((reaction) => reaction.emoji),
+        total: reactionGroups.reduce((sum, reaction) => sum + reaction.count, 0),
+        selected: reactionGroups.some((reaction) => reaction.selected),
+    };
+    const myLastReaction = [...((message.reactions || []) as any[])]
+        .reverse()
+        .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
+    const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
+    const hasDefaultReaction = !!myLastReaction;
+    const timeText = new Date(message.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+
+    const renderSenderName = () => !isOwn ? (
+        <View style={styles.senderNameRow}>
+            <Text style={styles.senderName}>{senderName}</Text>
+            {roleIcon ? <Text style={styles.roleIcon}>{roleIcon}</Text> : null}
+        </View>
+    ) : null;
+
+    const renderReactionPicker = () => (
+        <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+            {QUICK_REACTIONS.map((emoji) => {
+                const selected = ((message.reactions || []) as any[]).some(
+                    (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
+                );
+                return (
+                    <Pressable
+                        key={emoji}
+                        style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                        onPress={() => {
+                            setShowReactionPicker(false);
+                            onToggleReaction?.(emoji, false);
+                        }}
+                    >
+                        <Text style={styles.quickReactionText}>{emoji}</Text>
+                    </Pressable>
+                );
+            })}
+            {hasDefaultReaction && (
+                <Pressable
+                    style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
+                    onPress={() => {
+                        setShowReactionPicker(false);
+                        onClearMyReactions?.();
+                    }}
+                >
+                    <Ionicons name="close" size={17} color={colors.danger} />
+                </Pressable>
+            )}
+        </View>
+    );
+
+    const renderReactionSummary = () => reactionGroups.length > 0 ? (
+        <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+            <Pressable
+                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+            >
+                <Text style={styles.reactionText}>
+                    {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                </Text>
+            </Pressable>
+        </View>
+    ) : null;
+
+    const renderQuickReactionButton = () => (
+        <Pressable
+            style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+            hitSlop={8}
+            onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+            onLongPress={() => setShowReactionPicker((value) => !value)}
+            delayLongPress={220}
+        >
+            {hasDefaultReaction ? (
+                <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                    {defaultReactionEmoji}
+                </Text>
+            ) : (
+                <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+            )}
+        </Pressable>
+    );
+
+    return (
+        <HighlightableMessage
+            onLongPress={onLongPress}
+            delayLongPress={300}
+            isHighlighted={!!isHighlighted}
+            style={[
+                styles.messageBubbleRow,
+                isOwn ? styles.outgoingRow : styles.incomingRow,
+                isHighlighted && styles.messageHighlighted,
+            ]}
+        >
+            {!isOwn && (
+                <Avatar
+                    label={senderInitials}
+                    size={32}
+                    backgroundColor={colors.accentStrong}
+                    imageUrl={senderAvatar}
+                />
+            )}
+
+            <View style={[
+                styles.messageContentWrapper,
+                hasMedia && !hasText && (
+                    isOwn
+                        ? styles.messageContentWrapperMediaOnlyOutgoing
+                        : styles.messageContentWrapperMediaOnlyIncoming
+                ),
+                !isOwn && styles.messageContentWrapperIncoming,
+                isOwn && styles.messageContentWrapperOutgoing,
+            ]}>
+                {isProfileCard && (
+                    <ProfileCardMessage
+                        user={message.profileCard}
+                        userId={message.profileCardUserId}
+                        isOwn={isOwn}
+                        onMessagePress={onProfileCardPress}
+                        onViewProfilePress={onProfileCardPress}
+                    />
+                )}
+
+                {!isProfileCard && hasMedia && (
+                    <View style={[styles.mediaContainer, !hasText && styles.mediaReactionWrap]}>
+                        {!hasText && isForwarded && (
+                            <View style={styles.forwardedLabelRow}>
+                                <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
+                                <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
+                            </View>
+                        )}
+                        {!hasText && showReactionPicker && renderReactionPicker()}
+                        {message.media.map((m: any, idx: number) => (
+                            <MediaMessage
+                                key={idx}
+                                media={m}
+                                isSender={isOwn}
+                                layoutMode={hasText ? "compact" : "standalone"}
+                            />
+                        ))}
+                        {!hasText && renderReactionSummary()}
+                        {!hasText && renderQuickReactionButton()}
+                    </View>
+                )}
+
+                {!isProfileCard && !hasMedia && isJumboEmojiOnly && (
+                    <View style={styles.jumboEmojiWrap}>
+                        {showReactionPicker && renderReactionPicker()}
+                        {renderSenderName()}
+                        <AnimatedEmojiMessage
+                            emoji={trimmedText}
+                            isNew={message.createdAt ? new Date().getTime() - new Date(message.createdAt).getTime() < 5000 : false}
+                            isMine={isOwn}
+                        />
+                        <View style={[styles.jumboEmojiTimePill, isOwn ? styles.jumboEmojiTimePillOwn : styles.jumboEmojiTimePillOther]}>
+                            <Text style={styles.messageTime}>{timeText}</Text>
+                        </View>
+                        {renderReactionSummary()}
+                        {renderQuickReactionButton()}
+                    </View>
+                )}
+
+                {!isProfileCard && hasText && !isJumboEmojiOnly && (
+                    <View style={[styles.messageBubble, isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther]}>
+                        {isForwarded && (
+                            <View style={styles.forwardedLabelRow}>
+                                <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
+                                <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
+                            </View>
+                        )}
+                        {showReactionPicker && renderReactionPicker()}
+                        {renderSenderName()}
+                        {resolvedQuotedMessage ? (
+                            <QuotedMessageBlock
+                                quotedMessage={resolvedQuotedMessage}
+                                isOwn={isOwn}
+                                onPress={() => message.quotedMessageId && onPressQuoted?.(message.quotedMessageId)}
+                            />
+                        ) : null}
+                        <Text style={[styles.messageText, isOwn ? styles.messageTextOwn : styles.messageTextOther]}>
+                            {trimmedText}
+                        </Text>
+                        <Text style={styles.messageTime}>{timeText}</Text>
+                        {renderReactionSummary()}
+                        {renderQuickReactionButton()}
+                    </View>
+                )}
+
+                {hasMedia && !hasText && renderSenderName()}
+            </View>
+        </HighlightableMessage>
+    );
 };
 
 const getMessageCreatedAtMs = (message: any): number => {
@@ -246,7 +504,16 @@ export const GroupChatScreen: React.FC<{
     onSettingsPress?: () => void;
     onAddMembersPress?: () => void;
     onOpenPrivateChat?: (user: any) => void;
-}> = ({ route, navigation, onBackPress, onSettingsPress, onAddMembersPress, onOpenPrivateChat }) => {
+    aiSmartReplyEnabled?: boolean;
+}> = ({
+    route,
+    navigation,
+    onBackPress,
+    onSettingsPress,
+    onAddMembersPress,
+    onOpenPrivateChat,
+    aiSmartReplyEnabled = false,
+}) => {
     const { groupId, searchTargetMessageId, searchTargetMessage, searchContextMessages } = route.params || {};
     const authContext = useAuth();
     const token = authContext.token;
@@ -260,7 +527,7 @@ export const GroupChatScreen: React.FC<{
 
     // Highlight state is managed inside useScrollToMessage (via useGroupChatMessage)
     const { state: groupState, actions: groupActions } = useGroupChat();
-    const { startCall, state: callState } = useCall();
+    const { startCall, joinActiveCall, state: callState } = useCall();
     const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
     const { draftText: messageText, setDraftText: setMessageText, clearDraft } = useDraft(groupId || "");
 
@@ -311,6 +578,8 @@ export const GroupChatScreen: React.FC<{
     const [aiSearchQuery, setAiSearchQuery] = useState("");
     const [aiSearchResult, setAiSearchResult] = useState<AiSmartSearchResponse | null>(null);
     const [aiTasks, setAiTasks] = useState<AiExtractTasksResponse | null>(null);
+    const [smartReplies, setSmartReplies] = useState<string[]>([]);
+    const [smartReplyHiddenFor, setSmartReplyHiddenFor] = useState<string | null>(null);
     const [toneLoading, setToneLoading] = useState<AiTone | null>(null);
     const [previousDraft, setPreviousDraft] = useState<string | null>(null);
     const [showMuteDialog, setShowMuteDialog] = useState(false);
@@ -319,6 +588,7 @@ export const GroupChatScreen: React.FC<{
     const [localMuteUntil, setLocalMuteUntil] = useState<string | null>(null);
     const [showCreatePollModal, setShowCreatePollModal] = useState(false);
     const [isCreatingPoll, setIsCreatingPoll] = useState(false);
+    const [activeGroupCall, setActiveGroupCall] = useState<CallSession | null>(null);
 
     // Refs
     // flatListRef comes from useGroupChatMessage → useScrollToMessage (enables scrollToMessage)
@@ -336,6 +606,15 @@ export const GroupChatScreen: React.FC<{
     const groupMuteUntil = localMuteUntil || currentMemberMuteUntil;
     const isGroupMuted = isMuteUntilActive(groupMuteUntil);
     const onBackPressRef = useRef(onBackPress);
+    const latestMessage = chatState.messages[0];
+    const latestMessageKey = String(latestMessage?._id || latestMessage?.id || latestMessage?.createdAt || "");
+    const shouldShowSmartReplies =
+        aiSmartReplyEnabled &&
+        !!groupId &&
+        !messageText.trim() &&
+        !!latestMessage?.text &&
+        String(latestMessage.senderId || "") !== String(currentUserId) &&
+        smartReplyHiddenFor !== latestMessageKey;
 
     const scrollToLatestMessage = useCallback((animated = true) => {
         // For inverted FlatList, latest message is at offset 0.
@@ -350,6 +629,34 @@ export const GroupChatScreen: React.FC<{
     useEffect(() => {
         onBackPressRef.current = onBackPress;
     }, [onBackPress]);
+
+    useEffect(() => {
+        let isActive = true;
+
+        const loadSmartReplies = async () => {
+            if (!aiSmartReplyEnabled || !shouldShowSmartReplies) {
+                setSmartReplies([]);
+                return;
+            }
+
+            try {
+                const result = await aiService.smartReply(String(groupId));
+                if (isActive) {
+                    setSmartReplies(result.replies || []);
+                }
+            } catch {
+                if (isActive) {
+                    setSmartReplies([]);
+                }
+            }
+        };
+
+        loadSmartReplies();
+
+        return () => {
+            isActive = false;
+        };
+    }, [aiSmartReplyEnabled, groupId, latestMessageKey, shouldShowSmartReplies]);
 
     useEffect(() => {
         if (!groupId || !token) {
@@ -602,6 +909,48 @@ export const GroupChatScreen: React.FC<{
             Alert.alert("Lỗi", err.message || "Failed to load group data");
         }
     }, [groupId]);
+
+    const refreshActiveGroupCall = useCallback(async () => {
+        if (!groupId) {
+            setActiveGroupCall(null);
+            return;
+        }
+
+        try {
+            const activeCall = await callService.getActiveByConversation(String(groupId));
+            setActiveGroupCall(activeCall?.callId ? activeCall : null);
+        } catch {
+            setActiveGroupCall(null);
+        }
+    }, [groupId]);
+
+    useEffect(() => {
+        if (!groupId) return;
+
+        let mounted = true;
+        const refresh = async () => {
+            if (!mounted) return;
+            await refreshActiveGroupCall();
+        };
+
+        refresh();
+        const interval = setInterval(refresh, 15000);
+
+        return () => {
+            mounted = false;
+            clearInterval(interval);
+        };
+    }, [groupId, refreshActiveGroupCall]);
+
+    useEffect(() => {
+        if (
+            activeGroupCall?.callId &&
+            callState.callId === activeGroupCall.callId &&
+            callState.status !== "idle"
+        ) {
+            setActiveGroupCall(null);
+        }
+    }, [activeGroupCall?.callId, callState.callId, callState.status]);
 
     const searchTargetHandledRef = useRef<string | null>(null);
 
@@ -1300,13 +1649,19 @@ export const GroupChatScreen: React.FC<{
             return;
         }
 
+        if (activeGroupCall?.callId) {
+            await joinActiveCall(activeGroupCall, "GROUP");
+            setActiveGroupCall(null);
+            return;
+        }
+
         await startCall({
             conversationId: String(groupId),
             conversationType: "GROUP",
             type: "audio",
             inviteAll: true,
         });
-    }, [groupId, startCall]);
+    }, [activeGroupCall, groupId, joinActiveCall, startCall]);
 
     const getAllUserImages = useCallback((senderId: string, firstImageUri?: string) => {
         const userMessagesWithImages = chatState.messages.filter(
@@ -1435,6 +1790,58 @@ export const GroupChatScreen: React.FC<{
                 return <SystemMessageBubble text={item.text || item.content || item.message || ""} />;
             }
 
+            {
+                const messageId = item._id || item.id;
+                const isHighlighted = !!messageId && messageId === highlightedMessageId;
+                const isOwn = String(item.senderId || "") === String(currentUserId);
+                const senderMember = groupState.members?.find(
+                    (member) => String(member.userId) === String(item.senderId)
+                );
+                const senderName = item.senderName || senderMember?.name || "Unknown";
+                const senderInitials = (senderName || "?")
+                    .split(" ")
+                    .map((n: string) => n[0]?.toUpperCase())
+                    .join("")
+                    .slice(0, 2);
+                const isOwner = String(groupState.group?.ownerId || "") === String(item.senderId);
+                const isAdmin = (groupState.group?.admins || []).some((adminId: any) => String(adminId) === String(item.senderId));
+                const roleIcon = isOwner ? "👑" : isAdmin ? "🔑" : null;
+
+                return (
+                    <GroupMessageBubble
+                        message={item}
+                        isOwn={isOwn}
+                        currentUserId={currentUserId}
+                        senderName={senderName}
+                        senderInitials={senderInitials}
+                        senderAvatar={senderMember?.avatar}
+                        roleIcon={roleIcon}
+                        onLongPress={() => handleMessageLongPress(item)}
+                        onToggleReaction={(emoji, selected) => {
+                            if (messageId) {
+                                handleToggleReaction(messageId, emoji, selected);
+                            }
+                        }}
+                        onClearMyReactions={() => {
+                            if (messageId) {
+                                handleToggleReaction(messageId, "", true);
+                            }
+                        }}
+                        onProfileCardPress={handleOpenProfileCardUser}
+                        onPressQuoted={async (quotedId) => {
+                            if (chatActions.scrollToMessage) {
+                                const success = await chatActions.scrollToMessage(quotedId);
+                                if (!success) {
+                                    Alert.alert("Thông báo", "Không tìm thấy tin nhắn gốc hoặc tin nhắn đã quá cũ");
+                                }
+                            }
+                        }}
+                        isHighlighted={isHighlighted}
+                        messageMap={messageMap}
+                    />
+                );
+            }
+
             // Resolve quoted message: use existing quotedMessage OR lookup by quotedMessageId
             const resolvedQuotedMessage = item.quotedMessage ||
                 (item.quotedMessageId && messageMap[item.quotedMessageId]) ||
@@ -1480,7 +1887,10 @@ export const GroupChatScreen: React.FC<{
 
             const roleIcon = getRoleIcon();
             const hasMedia = item.media && item.media.length > 0;
-            const hasText = item.text && item.text.trim().length > 0;
+            const trimmedText = String(item.text || "").trim();
+            const compactText = String(item.text || "").replace(/\s+/g, "");
+            const hasText = trimmedText.length > 0;
+            const isJumboEmojiOnly = !!JUMBO_EMOJI_ASSETS[trimmedText] && compactText === trimmedText;
             const isForwarded = Boolean(
                 item?.isForwarded ||
                 item?.forwarded ||
@@ -1664,8 +2074,92 @@ export const GroupChatScreen: React.FC<{
                             </View>
                         )}
 
+                        {!hasMedia && isJumboEmojiOnly && (
+                            <View style={styles.jumboEmojiWrap}>
+                                {reactionPickerMessageId === messageId && (
+                                    <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+                                        {QUICK_REACTIONS.map((emoji) => {
+                                            const selected = ((item.reactions || []) as any[]).some(
+                                                (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
+                                            );
+                                            return (
+                                                <Pressable
+                                                    key={emoji}
+                                                    style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                                                    onPress={() => {
+                                                        setReactionPickerMessageId(null);
+                                                        if (messageId) {
+                                                            handleToggleReaction(messageId, emoji, false);
+                                                        }
+                                                    }}
+                                                >
+                                                    <Text style={styles.quickReactionText}>{emoji}</Text>
+                                                </Pressable>
+                                            );
+                                        })}
+                                        {hasDefaultReaction && (
+                                            <Pressable
+                                                style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
+                                                onPress={() => {
+                                                    setReactionPickerMessageId(null);
+                                                    if (messageId) {
+                                                        handleToggleReaction(messageId, "", true);
+                                                    }
+                                                }}
+                                            >
+                                                <Ionicons name="close" size={17} color={colors.danger} />
+                                            </Pressable>
+                                        )}
+                                    </View>
+                                )}
+                                {!isOwn && (
+                                    <View style={styles.senderNameRow}>
+                                        <Text style={styles.senderName}>{senderName}</Text>
+                                        {roleIcon && <Text style={styles.roleIcon}>{roleIcon}</Text>}
+                                    </View>
+                                )}
+                                <AnimatedEmojiMessage
+                                    emoji={trimmedText}
+                                    isNew={item.createdAt ? new Date().getTime() - new Date(item.createdAt).getTime() < 5000 : false}
+                                    isMine={isOwn}
+                                />
+                                <View style={[styles.jumboEmojiTimePill, isOwn ? styles.jumboEmojiTimePillOwn : styles.jumboEmojiTimePillOther]}>
+                                    <Text style={styles.messageTime}>
+                                        {new Date(item.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
+                                    </Text>
+                                </View>
+                                {reactionGroups.length > 0 && (
+                                    <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+                                        <Pressable
+                                            style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                                            onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                        >
+                                            <Text style={styles.reactionText}>
+                                                {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                                            </Text>
+                                        </Pressable>
+                                    </View>
+                                )}
+                                <Pressable
+                                    style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+                                    hitSlop={8}
+                                    onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                    onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
+                                    delayLongPress={220}
+                                >
+                                    {hasDefaultReaction ? (
+                                        <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                                            {defaultReactionEmoji}
+                                        </Text>
+                                    ) : (
+                                        <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+                                    )}
+                                </Pressable>
+                            </View>
+                        )}
+
                         {/* Text Message Bubble */}
-                        {hasText && (
+                        {hasText && !isJumboEmojiOnly && (
                             <View
                                 style={[
                                     styles.messageBubble,
@@ -1744,20 +2238,12 @@ export const GroupChatScreen: React.FC<{
                                     ) : null;
                                 })()}
                                 {(() => {
-                                    const trimmedText = item.text ? item.text.trim() : "";
-                                    const isJumboEmoji = !!JUMBO_EMOJI_ASSETS[trimmedText] && item.text.replace(/\s+/g, "") === trimmedText;
-                                    const isNewMsg = item.createdAt
-                                        ? new Date().getTime() - new Date(item.createdAt).getTime() < 5000
-                                        : false;
-
-                                    return isJumboEmoji ? (
-                                        <AnimatedEmojiMessage emoji={trimmedText} isNew={isNewMsg} isMine={isOwn} />
-                                    ) : (
+                                    return (
                                         <Text style={[
                                             styles.messageText,
                                             isOwn ? styles.messageTextOwn : styles.messageTextOther,
                                         ]}>
-                                            {item.text}
+                                            {trimmedText}
                                         </Text>
                                     );
                                 })()}
@@ -1869,8 +2355,8 @@ export const GroupChatScreen: React.FC<{
     return (
         <KeyboardAvoidingView
             style={styles.screen}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            keyboardVerticalOffset={60}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
         >
             {/* Header */}
             <View style={styles.chatHeaderWrap}>
@@ -1880,14 +2366,6 @@ export const GroupChatScreen: React.FC<{
                 >
                     <Ionicons name="chevron-back" size={24} color={colors.text} />
                 </Pressable>
-
-                {/* Group Avatar */}
-                {groupState.group?.avatarUrl && (
-                    <Image
-                        source={{ uri: groupState.group.avatarUrl }}
-                        style={styles.groupAvatarImage}
-                    />
-                )}
 
                 <View style={styles.chatHeaderCard}>
                     <Text
@@ -1908,18 +2386,18 @@ export const GroupChatScreen: React.FC<{
                         onPress={showAiMenu}
                         hitSlop={8}
                     >
-                        <Ionicons name="sparkles" size={22} color={colors.accentStrong} />
+                        <Ionicons name="sparkles" size={16} color={colors.accentStrong} />
                     </Pressable>
                     <Pressable
                         style={styles.headerIconButton}
                         onPress={handleStartGroupCall}
-                        disabled={callState.status !== "idle"}
+                        disabled={callState.status !== "idle" || !!activeGroupCall?.callId}
                         hitSlop={8}
                     >
                         <Ionicons
                             name="call-outline"
-                            size={24}
-                            color={callState.status === "idle" ? colors.text : colors.textMuted}
+                            size={17}
+                            color={callState.status === "idle" && !activeGroupCall?.callId ? colors.text : colors.textMuted}
                         />
                     </Pressable>
                     {canCreatePoll && (
@@ -1930,24 +2408,41 @@ export const GroupChatScreen: React.FC<{
                         >
                             <Ionicons
                                 name="stats-chart-outline"
-                                size={24}
+                                size={17}
                                 color={colors.text}
                             />
                         </Pressable>
                     )}
-                    <Pressable
-                        style={styles.headerIconButton}
-                        onPress={onSettingsPress}
-                        hitSlop={8}
-                    >
-                        <Ionicons
-                            name="settings-outline"
-                            size={24}
-                            color={colors.text}
-                        />
-                    </Pressable>
                 </View>
+                <Pressable style={styles.groupHeaderAvatarWrap} onPress={onSettingsPress}>
+                    {groupState.group?.avatarUrl ? (
+                        <Image
+                            source={{ uri: groupState.group.avatarUrl }}
+                            blurRadius={0.5}
+                            style={styles.groupAvatarImage}
+                        />
+                    ) : (
+                        <Avatar
+                            label={(groupState.group?.name || "G").charAt(0).toUpperCase()}
+                            size={40}
+                            backgroundColor={colors.accentAlt}
+                            textSize={14}
+                        />
+                    )}
+                </Pressable>
             </View>
+            {activeGroupCall?.callId && callState.status === "idle" ? (
+                <Pressable style={styles.joinCallBanner} onPress={handleStartGroupCall}>
+                    <View style={styles.joinCallBannerIcon}>
+                        <Ionicons name="call" size={18} color={colors.textOnAccent} />
+                    </View>
+                    <View style={styles.joinCallBannerTextWrap}>
+                        <Text style={styles.joinCallBannerTitle}>Cuộc gọi nhóm đang diễn ra</Text>
+                        <Text style={styles.joinCallBannerSubtitle}>Nhấn để tham gia</Text>
+                    </View>
+                    <Ionicons name="enter-outline" size={22} color={colors.text} />
+                </Pressable>
+            ) : null}
 
             <Modal visible={showMuteDialog} transparent animationType="fade" onRequestClose={() => setShowMuteDialog(false)}>
                 <Pressable style={styles.muteDialogOverlay} onPress={() => setShowMuteDialog(false)}>
@@ -2234,6 +2729,24 @@ export const GroupChatScreen: React.FC<{
                         }
                     }}
                 />
+            )}
+            {shouldShowSmartReplies && smartReplies.length > 0 && (
+                <View style={styles.aiSmartReplyBar}>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.aiSmartReplyContent}
+                    >
+                        {smartReplies.map((reply) => (
+                            <Pressable key={reply} style={styles.aiSmartReplyChip} onPress={() => setMessageText(reply)}>
+                                <Text style={styles.aiSmartReplyText}>{reply}</Text>
+                            </Pressable>
+                        ))}
+                    </ScrollView>
+                    <Pressable style={styles.aiSmartReplyClose} onPress={() => setSmartReplyHiddenFor(latestMessageKey)}>
+                        <Ionicons name="close" size={16} color={colors.textMuted} />
+                    </Pressable>
+                </View>
             )}
             {previousDraft !== null && (
                 <View style={styles.aiUndoBar}>
@@ -2675,43 +3188,112 @@ const styles = StyleSheet.create({
     chatHeaderWrap: {
         flexDirection: "row",
         alignItems: "center",
-        paddingHorizontal: 8,
-        paddingVertical: 12,
-        backgroundColor: colors.headerBgTransparent,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.overlayWhite10,
+        paddingHorizontal: 14,
+        paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight || 0) + 6 : 8,
+        paddingBottom: 6,
+        backgroundColor: "rgba(0,0,0,0.1)",
+        borderBottomWidth: 0,
         gap: 8,
     },
     backButton: {
-        padding: 8,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: "rgba(30,30,30,0.9)",
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
         justifyContent: "center",
         alignItems: "center",
     },
     chatHeaderCard: {
         flex: 1,
+        maxWidth: 280,
         justifyContent: "center",
-        marginLeft: 8,
+        alignItems: "center",
+        backgroundColor: "rgba(30,30,30,0.9)",
+        borderRadius: 24,
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.22,
+        shadowRadius: 12,
+        elevation: 6,
     },
     groupAvatarImage: {
         width: 40,
         height: 40,
         borderRadius: 20,
+        backgroundColor: colors.border,
+    },
+    groupHeaderAvatarWrap: {
+        width: 46,
+        height: 46,
+        borderRadius: 23,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(255,255,255,0.1)",
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
     },
     chatHeaderTitle: {
         fontSize: 16,
-        fontWeight: "600",
+        fontWeight: "800",
         color: colors.text,
-        lineHeight: 20,
+        lineHeight: 19,
+        textAlign: "center",
     },
     chatHeaderSubtitle: {
-        fontSize: 12,
-        color: colors.textMuted,
-        marginTop: 2,
+        fontSize: 11,
+        color: colors.textSoft,
+        marginTop: 0,
     },
     headerIconButton: {
-        padding: 8,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: "rgba(30,30,30,0.84)",
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
         justifyContent: "center",
         alignItems: "center",
+    },
+    joinCallBanner: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        marginHorizontal: 12,
+        marginBottom: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 14,
+        backgroundColor: "rgba(34, 197, 94, 0.14)",
+        borderWidth: 1,
+        borderColor: "rgba(34, 197, 94, 0.36)",
+    },
+    joinCallBannerIcon: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#16A34A",
+    },
+    joinCallBannerTextWrap: {
+        flex: 1,
+        minWidth: 0,
+    },
+    joinCallBannerTitle: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "800",
+    },
+    joinCallBannerSubtitle: {
+        color: colors.textMuted,
+        fontSize: 12,
+        marginTop: 2,
     },
     headerIconGroup: {
         flexDirection: "row",
@@ -2804,6 +3386,28 @@ const styles = StyleSheet.create({
     },
     messageTextOther: {
         color: colors.text,
+    },
+    jumboEmojiWrap: {
+        marginBottom: 10,
+        position: "relative",
+        alignItems: "center",
+    },
+    jumboEmojiTimePill: {
+        alignSelf: "flex-end",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+        marginTop: -4,
+        borderRadius: 12,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        backgroundColor: "rgba(0,0,0,0.34)",
+    },
+    jumboEmojiTimePillOwn: {
+        alignSelf: "flex-end",
+    },
+    jumboEmojiTimePillOther: {
+        alignSelf: "flex-start",
     },
     messageTime: {
         fontSize: 11,
@@ -3043,6 +3647,41 @@ const styles = StyleSheet.create({
     },
     composerEmojiButton: {
         paddingHorizontal: 8,
+    },
+    aiSmartReplyBar: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+        backgroundColor: colors.surfaceTransparent,
+    },
+    aiSmartReplyContent: {
+        gap: 8,
+        paddingRight: 8,
+    },
+    aiSmartReplyChip: {
+        borderRadius: 18,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        backgroundColor: "rgba(63,140,255,0.18)",
+        borderWidth: 1,
+        borderColor: "rgba(63,140,255,0.32)",
+    },
+    aiSmartReplyText: {
+        color: colors.text,
+        fontSize: 13,
+        fontWeight: "600",
+    },
+    aiSmartReplyClose: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.surface,
     },
     aiUndoBar: {
         flexDirection: "row",

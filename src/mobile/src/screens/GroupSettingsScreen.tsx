@@ -16,6 +16,7 @@ import {
     TextInput,
     KeyboardAvoidingView,
     Platform,
+    StatusBar,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -33,8 +34,10 @@ export const MEDIA_TABS = [
 ];
 import { Avatar } from "../components";
 import { colors } from "../theme";
-import { requestPresignedUrl, confirmUpload } from "../../../shared/services/presignedUrlService";
 import { ConversationService, type MuteConversationOptions } from "../../../shared/services/conversationService";
+import mediaService from "../../../shared/services/mediaService";
+
+const MAX_AVATAR_SIZE = 10 * 1024 * 1024;
 
 type MuteOptionKey = "1h" | "4h" | "8am" | "forever";
 
@@ -242,6 +245,7 @@ export const GroupSettingsScreen: React.FC<{
     });
     const [processingGroupUpdate, setProcessingGroupUpdate] = useState(false);
     const [uploadingAvatar, setUploadingAvatar] = useState(false);
+    const [groupAvatarPreview, setGroupAvatarPreview] = useState<string | null>(null);
     const [showMuteDialog, setShowMuteDialog] = useState(false);
     const [selectedMuteOption, setSelectedMuteOption] = useState<MuteOptionKey>("1h");
     const [muteLoading, setMuteLoading] = useState(false);
@@ -627,16 +631,59 @@ export const GroupSettingsScreen: React.FC<{
         );
     }, [processingDangerAction, groupActions, groupId, navigateToHomeAfterAction]);
 
-    const handleUploadGroupAvatar = useCallback(async () => {
+    const uploadSelectedGroupAvatar = useCallback(async (pickedAsset: ImagePicker.ImagePickerAsset) => {
+        if (uploadingAvatar) {
+            return;
+        }
+
         try {
-            // Request permission
+            const fileSize = pickedAsset.fileSize || 0;
+            const mimeType = pickedAsset.mimeType || "image/jpeg";
+
+            if (!mimeType.startsWith("image/")) {
+                Alert.alert("Lỗi", "Vui lòng chọn một file ảnh.");
+                return;
+            }
+
+            if (fileSize > MAX_AVATAR_SIZE) {
+                Alert.alert("Lỗi", "Ảnh nhóm phải nhỏ hơn 10MB.");
+                return;
+            }
+
+            setUploadingAvatar(true);
+            setGroupAvatarPreview(pickedAsset.uri);
+
+            const uploaded = await mediaService.uploadMediaDirect({
+                uri: pickedAsset.uri,
+                name: pickedAsset.fileName || `group_${groupId}_${Date.now()}.jpg`,
+                mimeType,
+                type: mimeType,
+            });
+
+            await groupActions.updateGroup(groupId, { avatarUrl: uploaded.url });
+            setGroupAvatarPreview(null);
+            Alert.alert("Thành công", "Đã cập nhật ảnh nhóm");
+        } catch (err: any) {
+            setGroupAvatarPreview(null);
+            console.error("[GroupSettings] Avatar upload error:", err);
+            Alert.alert("Lỗi", err.message || "Không thể upload ảnh nhóm");
+        } finally {
+            setUploadingAvatar(false);
+        }
+    }, [groupId, groupActions, uploadingAvatar]);
+
+    const handleUploadGroupAvatar = useCallback(async () => {
+        if (uploadingAvatar) {
+            return;
+        }
+
+        const pickFromLibrary = async () => {
             const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (status !== "granted") {
                 Alert.alert("Lỗi", "Cần cấp quyền truy cập thư viện ảnh");
                 return;
             }
 
-            // Pick image
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'] as any,
                 allowsEditing: true,
@@ -644,60 +691,36 @@ export const GroupSettingsScreen: React.FC<{
                 quality: 0.8,
             });
 
-            if (result.canceled) {
+            if (!result.canceled) {
+                await uploadSelectedGroupAvatar(result.assets[0]);
+            }
+        };
+
+        const pickFromCamera = async () => {
+            const { status } = await ImagePicker.requestCameraPermissionsAsync();
+            if (status !== "granted") {
+                Alert.alert("Lỗi", "Cần cấp quyền camera để chụp ảnh nhóm");
                 return;
             }
 
-            const pickedAsset = result.assets[0];
-            const imageUri = pickedAsset.uri;
-
-            setUploadingAvatar(true);
-
-            // Get file info
-            const fileSize = pickedAsset.fileSize || 5242880; // 5MB default
-            const mimeType = pickedAsset.mimeType || "image/jpeg";
-            const fileName = `group_${groupId}_${Date.now()}.jpg`;
-            // Step 1: Request presigned URL
-            const urlResponse = await requestPresignedUrl({
-                fileType: "IMAGE",
-                mimeType,
-                fileSize,
-                originalName: fileName,
-                expiresIn: 3600,
-            });
-            // Step 2: Upload to S3
-            const response = await fetch(imageUri);
-            const blob = await response.blob();
-
-            const uploadResponse = await fetch(urlResponse.presignedUrl, {
-                method: "PUT",
-                body: blob,
-                headers: {
-                    "Content-Type": mimeType,
-                    ...urlResponse.headers,
-                },
+            const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ['images'] as any,
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.8,
             });
 
-            if (!uploadResponse.ok) {
-                throw new Error(`Upload failed: ${uploadResponse.statusText}`);
+            if (!result.canceled) {
+                await uploadSelectedGroupAvatar(result.assets[0]);
             }
-            // Step 3: Confirm upload
-            await confirmUpload({
-                fileId: urlResponse.fileId,
-                uploadedUrl: urlResponse.presignedUrl,
-            });
-            // Step 4: Update group with new avatar URL
-            const avatarUrl = `${urlResponse.presignedUrl.split("?")[0]}`;
-            await groupActions.updateGroup(groupId, { avatarUrl });
+        };
 
-            setUploadingAvatar(false);
-            Alert.alert("Thành công", "Đã cập nhật ảnh nhóm");
-        } catch (err: any) {
-            setUploadingAvatar(false);
-            console.error("[GroupSettings] Avatar upload error:", err);
-            Alert.alert("Lỗi", err.message || "Không thể upload ảnh nhóm");
-        }
-    }, [groupId, groupActions]);
+        Alert.alert("Đổi ảnh nhóm", "Chọn nguồn ảnh", [
+            { text: "Thư viện", onPress: pickFromLibrary },
+            { text: "Camera", onPress: pickFromCamera },
+            { text: "Hủy", style: "cancel" },
+        ]);
+    }, [uploadSelectedGroupAvatar, uploadingAvatar]);
 
     const handleUpdateGroupName = useCallback(async () => {
         if (!newGroupName.trim() || newGroupName === groupState.group?.name) {
@@ -984,10 +1007,17 @@ export const GroupSettingsScreen: React.FC<{
             <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
                 {/* Group Info */}
                 <View style={styles.groupInfoCard}>
-                    {groupState.group.avatarUrl && (
+                    {groupAvatarPreview || groupState.group.avatarUrl ? (
                         <Image
-                            source={{ uri: groupState.group.avatarUrl }}
+                            source={{ uri: groupAvatarPreview || groupState.group.avatarUrl }}
                             style={styles.groupAvatar}
+                        />
+                    ) : (
+                        <Avatar
+                            label={(groupState.group.name || "G").charAt(0).toUpperCase()}
+                            size={60}
+                            backgroundColor={colors.accentAlt}
+                            textSize={22}
                         />
                     )}
                     <View style={styles.groupInfoContent}>
@@ -1525,7 +1555,8 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-between",
         paddingHorizontal: 16,
-        paddingVertical: 12,
+        paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight || 0) + 8 : 12,
+        paddingBottom: 12,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
     },

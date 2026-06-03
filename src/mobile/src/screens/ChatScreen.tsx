@@ -13,6 +13,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  StatusBar,
   Alert,
   Modal,
   Dimensions,
@@ -156,6 +157,10 @@ const MessageBubble: React.FC<{
 
   // Check if message has media
   const hasMedia = message.media && message.media.length > 0;
+  const trimmedText = String(message.text || "").trim();
+  const compactText = String(message.text || "").replace(/\s+/g, "");
+  const hasText = trimmedText.length > 0;
+  const isJumboEmojiOnly = !!JUMBO_EMOJI_ASSETS[trimmedText] && compactText === trimmedText;
   const isProfileCard = String(message.type || message.messageType || "").toLowerCase() === "profile_card";
   const isForwarded = Boolean(
     (message as any).isForwarded ||
@@ -249,23 +254,23 @@ const MessageBubble: React.FC<{
 
       {/* Media display */}
       {!isProfileCard && hasMedia && (
-        <View style={[styles.mediaContainer, !message.text && styles.mediaReactionWrap]}>
-          {!message.text && isForwarded && (
+        <View style={[styles.mediaContainer, !hasText && styles.mediaReactionWrap]}>
+          {!hasText && isForwarded && (
             <View style={styles.forwardedLabelRow}>
               <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
               <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
             </View>
           )}
-          {!message.text && showReactionPicker && renderReactionPicker()}
+          {!hasText && showReactionPicker && renderReactionPicker()}
           {message.media.map((m: any, idx: number) => (
             <MediaMessage
               key={idx}
               media={m as MessageMedia}
               isSender={isOwn}
-              layoutMode={message.text ? "compact" : "standalone"}
+              layoutMode={hasText ? "compact" : "standalone"}
             />
           ))}
-          {!message.text && reactionGroups.length > 0 && (
+          {!hasText && reactionGroups.length > 0 && (
             <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
               <Pressable
                 style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
@@ -277,7 +282,7 @@ const MessageBubble: React.FC<{
               </Pressable>
             </View>
           )}
-          {!message.text && (
+          {!hasText && (
             <Pressable
               style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
               hitSlop={8}
@@ -297,8 +302,59 @@ const MessageBubble: React.FC<{
         </View>
       )}
 
+      {!isProfileCard && !hasMedia && isJumboEmojiOnly && (
+        <View style={styles.jumboEmojiWrap}>
+          {showReactionPicker && renderReactionPicker()}
+          <AnimatedEmojiMessage
+            emoji={trimmedText}
+            isNew={message.createdAt ? new Date().getTime() - new Date(message.createdAt).getTime() < 5000 : false}
+            isMine={isOwn}
+          />
+          <View style={[styles.jumboEmojiTimePill, isOwn ? styles.jumboEmojiTimePillOwn : styles.jumboEmojiTimePillOther]}>
+            <Text style={styles.bubbleTime}>{formatTime(message.createdAt)}</Text>
+            {isOwn && (
+              <Text style={[
+                styles.bubbleTime,
+                message.status === "seen" && styles.seenStatus,
+                message.status === "sending" && styles.sendingStatus,
+                message.status === "failed" && styles.failedStatus,
+              ]}>
+                {getStatusIcon(message.status)}
+              </Text>
+            )}
+          </View>
+          {reactionGroups.length > 0 && (
+            <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+              <Pressable
+                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+              >
+                <Text style={styles.reactionText}>
+                  {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+          <Pressable
+            style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+            hitSlop={8}
+            onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+            onLongPress={() => setShowReactionPicker((value) => !value)}
+            delayLongPress={220}
+          >
+            {hasDefaultReaction ? (
+              <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                {defaultReactionEmoji}
+              </Text>
+            ) : (
+              <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+            )}
+          </Pressable>
+        </View>
+      )}
+
       {/* Text bubble */}
-      {!isProfileCard && message.text && (
+      {!isProfileCard && hasText && !isJumboEmojiOnly && (
         <View style={[styles.bubble, isOwn ? styles.outgoingBubble : styles.incomingBubble]}>
           {isForwarded && (
             <View style={styles.forwardedLabelRow}>
@@ -319,17 +375,9 @@ const MessageBubble: React.FC<{
             ) : null;
           })()}
           {(() => {
-            const trimmedText = message.text ? message.text.trim() : "";
-            const isJumboEmoji = !!JUMBO_EMOJI_ASSETS[trimmedText] && message.text.replace(/\s+/g, "") === trimmedText;
-            const isNewMsg = message.createdAt
-              ? new Date().getTime() - new Date(message.createdAt).getTime() < 5000
-              : false;
-
-            return isJumboEmoji ? (
-              <AnimatedEmojiMessage emoji={trimmedText} isNew={isNewMsg} isMine={isOwn} />
-            ) : (
+            return (
               <Text style={[styles.bubbleText, !isOwn && styles.incomingText]} selectable>
-                {message.text}
+                {trimmedText}
               </Text>
             );
           })()}
@@ -606,7 +654,13 @@ const TypingIndicator: React.FC<{ typingUsers: Set<string> }> = ({ typingUsers }
 /**
  * Chat Screen Component
  */
-export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, onConversationReady }: ChatScreenProps) => {
+export const ChatScreen = ({
+  onBackPress,
+  chatUser = null,
+  onOpenPrivateChat,
+  onConversationReady,
+  aiSmartReplyEnabled = false,
+}: ChatScreenProps & { aiSmartReplyEnabled?: boolean }) => {
   const authContext = useAuth();
   const callContext = useCall();
   const currentUser = authContext.user;
@@ -821,6 +875,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
   const latestMessage = messages[0];
   const latestMessageKey = latestMessage ? getMessageKey(latestMessage) : "";
   const shouldShowSmartReplies =
+    aiSmartReplyEnabled &&
     !!conversationId &&
     !messageText.trim() &&
     !!latestMessage?.text &&
@@ -900,7 +955,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
     let isActive = true;
 
     const loadSmartReplies = async () => {
-      if (!shouldShowSmartReplies) {
+      if (!aiSmartReplyEnabled || !shouldShowSmartReplies) {
         setSmartReplies([]);
         return;
       }
@@ -922,7 +977,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
     return () => {
       isActive = false;
     };
-  }, [conversationId, latestMessageKey, shouldShowSmartReplies]);
+  }, [aiSmartReplyEnabled, conversationId, latestMessageKey, shouldShowSmartReplies]);
 
   // Auto-mark messages as seen when new messages arrive
   // Auto mark as seen handled by handleViewableItemsChanged callback
@@ -2054,8 +2109,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={60}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
     >
       {/* Header */}
       <View style={styles.chatHeaderWrap}>
@@ -2066,26 +2121,29 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
           <Text style={styles.chatHeaderTitle} numberOfLines={1}>
             {truncateName(userName)}
           </Text>
-          <Text style={styles.chatHeaderSubtitle}>{typingUsers.size > 0 ? "đang gõ..." : "trực tuyến"}</Text>
+          <Text style={styles.chatHeaderSubtitle}>{typingUsers.size > 0 ? "đang gõ..." : "trực tuyến 1 giờ trước"}</Text>
         </View>
-        <Pressable style={styles.aiHeaderButton} onPress={showAiMenu}>
-          <Ionicons name="sparkles" size={22} color={colors.textOnAccent} />
-        </Pressable>
-        <Pressable
-          style={[styles.headerIconButton, isSelfChat && styles.headerIconButtonDisabled]}
-          onPress={handleStartAudioCall}
-          disabled={isSelfChat}
-        >
-          <Ionicons name="call" size={21} color={isSelfChat ? colors.textMuted : colors.text} />
-        </Pressable>
+        <View style={styles.headerActionCluster}>
+          <Pressable style={styles.aiHeaderButton} onPress={showAiMenu}>
+            <Ionicons name="sparkles" size={18} color={colors.textOnAccent} />
+          </Pressable>
+          <Pressable
+            style={[styles.headerIconButton, isSelfChat && styles.headerIconButtonDisabled]}
+            onPress={handleStartAudioCall}
+            disabled={isSelfChat}
+          >
+            <Ionicons name="call" size={18} color={isSelfChat ? colors.textMuted : colors.text} />
+          </Pressable>
+        </View>
         <Pressable style={styles.headerAvatarWrap} onPress={() => setShowAvatarMenu(true)}>
           {userAvatar ? (
             <Image
               source={{ uri: userAvatar }}
-              style={[styles.avatarImage, { width: 52, height: 52, borderRadius: 26 }]}
+              blurRadius={0.5}
+              style={[styles.avatarImage, { width: 40, height: 40, borderRadius: 20 }]}
             />
           ) : (
-            <Avatar label={userInitials} size={52} backgroundColor={userColor} textSize={14} />
+            <Avatar label={userInitials} size={40} backgroundColor={userColor} textSize={13} />
           )}
         </Pressable>
       </View>
@@ -2970,42 +3028,52 @@ const styles = StyleSheet.create({
   },
   chatHeaderWrap: {
     paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight || 0) + 6 : 8,
+    paddingBottom: 6,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    backgroundColor: colors.headerBgTransparent,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.overlayWhite10,
+    gap: 8,
+    backgroundColor: "rgba(0,0,0,0.1)",
+    borderBottomWidth: 0,
   },
   backButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.surfaceTransparent,
+    backgroundColor: "rgba(30,30,30,0.9)",
     borderWidth: 1,
-    borderColor: colors.overlayWhite10,
+    borderColor: colors.overlayWhite18,
     alignItems: "center",
     justifyContent: "center",
   },
   chatHeaderCard: {
     flex: 1,
-    backgroundColor: colors.surfaceTransparent,
-    borderRadius: 22,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    maxWidth: 280,
+    backgroundColor: "rgba(30,30,30,0.9)",
+    borderRadius: 24,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: colors.overlayWhite10,
+    borderColor: colors.overlayWhite18,
     alignItems: "center",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  headerActionCluster: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   headerIconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surfaceTransparent,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(30,30,30,0.86)",
     borderWidth: 1,
-    borderColor: colors.overlayWhite10,
+    borderColor: colors.overlayWhite18,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -3014,21 +3082,28 @@ const styles = StyleSheet.create({
   },
   chatHeaderTitle: {
     color: colors.text,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "800",
   },
   chatHeaderSubtitle: {
     color: colors.textSoft,
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: 11,
+    marginTop: 0,
   },
   headerAvatarWrap: {
-    width: 52,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderWidth: 1,
+    borderColor: colors.overlayWhite18,
   },
   aiHeaderButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: colors.accentStrong,
     alignItems: "center",
     justifyContent: "center",
@@ -3086,6 +3161,28 @@ const styles = StyleSheet.create({
   },
   incomingText: {
     color: colors.text,
+  },
+  jumboEmojiWrap: {
+    marginBottom: 10,
+    position: "relative",
+    alignItems: "center",
+  },
+  jumboEmojiTimePill: {
+    alignSelf: "flex-end",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: -4,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: "rgba(0,0,0,0.34)",
+  },
+  jumboEmojiTimePillOwn: {
+    alignSelf: "flex-end",
+  },
+  jumboEmojiTimePillOther: {
+    alignSelf: "flex-start",
   },
   aiTranslationBox: {
     marginTop: 8,

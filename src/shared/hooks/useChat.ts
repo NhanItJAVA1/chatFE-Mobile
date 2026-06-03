@@ -509,7 +509,17 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
             // Message seen events
             SocketService.onMessageSeen((data) => {
-                if (data.conversationId !== conversationId && data.userId !== friendId) {
+                const eventConversationId = String(data.conversationId || "");
+                const viewerId = String(data.userId || "");
+                const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+
+                if (eventConversationId && eventConversationId !== conversationId) {
+                    return;
+                }
+                if (viewerId && viewerId === currentUserId) {
+                    return;
+                }
+                if (viewerId && friendId && viewerId !== String(friendId)) {
                     return;
                 }
 
@@ -518,20 +528,14 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     messages: prev.messages.map((msg) => {
                         const msgId = getMessageId(msg);
                         const seenMsgId = data.lastSeenMessageId;
+                        const seenMsgIndex = prev.messages.findIndex((message) => getMessageId(message) === seenMsgId);
+                        const currentMsgIndex = prev.messages.findIndex((message) => getMessageId(message) === msgId);
 
-                        // Mark the specific message and all messages from the same sender before it as seen
-                        if (msgId === seenMsgId) {
-                            return { ...msg, status: "seen" };
-                        }
-
-                        // Also mark earlier messages from same sender as seen
-                        const msgIndex = prev.messages.findIndex((m) => getMessageId(m) === seenMsgId);
-                        const currentIndex = prev.messages.findIndex((m) => getMessageId(m) === msgId);
-
+                        // messages are newest-first; the seen message and older outgoing messages are read.
                         if (
-                            msg.senderId === data.userId &&
-                            msgIndex !== -1 &&
-                            currentIndex < msgIndex
+                            msg.senderId === currentUserId &&
+                            seenMsgIndex !== -1 &&
+                            currentMsgIndex >= seenMsgIndex
                         ) {
                             return { ...msg, status: "seen" };
                         }
@@ -736,7 +740,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     return prev;
                 });
             });            messageListenerActiveRef.current = true;        },
-        [user]
+        [friendId, user]
     );
 
     const addMessages = useCallback((messages: MessagePayload[]) => {
@@ -919,6 +923,10 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
     // Track last marked message ID to avoid duplicate calls
     const lastMarkedMessageId = useRef<string>("");
     const markAsSeenTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isStaleSeenError = (error: any): boolean => {
+        const text = String(error?.message || error?.code || "").toLowerCase();
+        return text.includes("message not found") || error?.status === 404;
+    };
 
     const markAsSeen = useCallback(
         async (messageIds: string[]) => {
@@ -927,7 +935,15 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             }
 
             const conversationId = state.conversation._id || state.conversation.id;
-            const lastId = messageIds[messageIds.length - 1];
+            const visibleIdSet = new Set(messageIds);
+            const newestVisibleMessage = state.messages
+                .filter((message) => visibleIdSet.has(getMessageId(message)))
+                .sort((a, b) => {
+                    const aTime = new Date(a.createdAt || "").getTime() || 0;
+                    const bTime = new Date(b.createdAt || "").getTime() || 0;
+                    return bTime - aTime;
+                })[0];
+            const lastId = newestVisibleMessage ? getMessageId(newestVisibleMessage) : messageIds[messageIds.length - 1];
 
             // Skip if same message already marked
             if (lastMarkedMessageId.current === lastId) {
@@ -946,12 +962,16 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     await SocketService.markMessagesSeen(conversationId, lastId);
                     lastMarkedMessageId.current = lastId;
                 } catch (error: any) {
+                    if (isStaleSeenError(error)) {
+                        lastMarkedMessageId.current = lastId;
+                        return;
+                    }
                     console.error('[useChat] Error marking messages as seen:', error);
                     // Silently fail
                 }
             }, 500);
         },
-        [state.conversation]
+        [state.conversation, state.messages]
     );
 
     // Cleanup timeouts on unmount

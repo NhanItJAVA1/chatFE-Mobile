@@ -558,7 +558,7 @@ export class SocketService {
                 };
 
                 this.socket.emit("messageSeen", payload, (response: any) => {
-                    if (response?.success) {
+                    if (!response || response?.success || response?.ok) {
                         resolve(response);
                     } else {
                         reject(new Error(response?.error || "Failed to mark as seen"));

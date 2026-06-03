@@ -1,5 +1,5 @@
 import React, { FC } from "react";
-import { SafeAreaView, StyleSheet } from "react-native";
+import { LogBox, SafeAreaView, StyleSheet } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StatusBar } from "expo-status-bar";
 import { registerGlobals } from "@livekit/react-native";
@@ -8,6 +8,7 @@ import AppShell from "./src/AppShell";
 import { ExplosionProvider } from "./src/components/ExplosionProvider";
 
 registerGlobals();
+LogBox.ignoreAllLogs(true);
 
 interface RuntimeConfig {
   apiUrl: string;

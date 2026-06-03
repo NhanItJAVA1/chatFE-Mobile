@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useMemo, useState, useRef, useEffect } from "react";
 import {
     Ionicons,
 } from "@expo/vector-icons";
@@ -46,6 +46,73 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
         actions.loadSentRequests();
     }, []); // Only run on mount, not on actions change
 
+    const getRequestReceiverId = (request: any): string => {
+        return String(
+            request?.receiverId ||
+            request?.toUserId ||
+            request?.recipientId ||
+            request?.receiver?.id ||
+            request?.receiver?._id ||
+            request?.receiverInfo?.id ||
+            request?.receiverInfo?._id ||
+            ""
+        );
+    };
+
+    const getSentRequestUser = (request: any): User => {
+        const receiver = request?.receiverInfo || request?.receiver || request?.recipient || request?.toUser || {};
+        const id = getRequestReceiverId(request);
+        return {
+            id,
+            _id: id,
+            email: receiver.email || "",
+            displayName: receiver.displayName || receiver.name || receiver.username || request?.receiverName || "Người dùng",
+            phoneNumber: receiver.phoneNumber || receiver.phone || request?.receiverPhone || "",
+            avatar: receiver.avatar || receiver.avatarUrl || request?.receiverAvatar || "",
+            avatarUrl: receiver.avatarUrl || receiver.avatar || request?.receiverAvatar || "",
+            status: receiver.status || receiver.presenceStatus || "offline",
+        } as User;
+    };
+
+    const sentRequestItems = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        const searchResultIds = new Set(
+            state.searchResults
+                .map((user) => String(user.id || (user as any)._id || ""))
+                .filter(Boolean)
+        );
+
+        return state.sentRequests
+            .filter((request: any) => String(request?.status || "pending").toLowerCase() === "pending")
+            .map((request: any) => ({
+                request,
+                user: getSentRequestUser(request),
+            }))
+            .filter(({ user }) => {
+                const userId = String(user.id || (user as any)._id || "");
+                if (searchResultIds.has(userId)) {
+                    return false;
+                }
+
+                if (!query) {
+                    return true;
+                }
+
+                const haystack = [
+                    user.displayName,
+                    user.name,
+                    (user as any).username,
+                    user.phone,
+                    (user as any).phoneNumber,
+                ]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase();
+
+                return haystack.includes(query);
+            });
+    }, [searchQuery, state.searchResults, state.sentRequests]);
+
     // Handle search
     const handleSearch = async () => {
         if (!searchQuery.trim()) {
@@ -83,8 +150,8 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
         if (storedRequest) { requestId = (storedRequest as any).id || storedRequest._id; } else {
             const sentRequest = state.sentRequests.find(r => {
-                const receiverId = r.receiverId || (r as any).toUserId;
-                const matches = receiverId === userId;
+                const receiverId = getRequestReceiverId(r);
+                const matches = receiverId === String(userId);
                 if (matches) return matches;
             });
 
@@ -139,7 +206,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
         // Check if already sent request
         const sentRequest = state.sentRequests.find(
             (r) => {
-                return r.receiverId === userId;
+                return getRequestReceiverId(r) === String(userId);
             }
         );
         const isFriend = state.friends.some((f) => f.friendId === userId);
@@ -238,6 +305,62 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
         );
     };
 
+    const renderSentRequestCard = ({ request, user }: { request: any; user: User }) => {
+        const userId = String(user.id || (user as any)._id || getRequestReceiverId(request));
+
+        return (
+            <Card key={(request as any)._id || (request as any).id || userId} style={styles.userCard}>
+                <View style={styles.userHeader}>
+                    {user.avatar || user.avatarUrl ? (
+                        <Image
+                            source={{ uri: user.avatar || user.avatarUrl }}
+                            style={styles.avatar}
+                        />
+                    ) : (
+                        <Avatar
+                            label={(user.displayName || "U").slice(0, 1).toUpperCase()}
+                            size={50}
+                            backgroundColor="#3d6df2"
+                            textSize={20}
+                        />
+                    )}
+
+                    <View style={styles.userInfo}>
+                        <Text style={styles.userName}>{user.displayName}</Text>
+                        {!!(user as any).phoneNumber && <Text style={styles.userPhone}>{(user as any).phoneNumber}</Text>}
+                        <View style={styles.sentRequestBadge}>
+                            <Ionicons name="time-outline" size={13} color={colors.accent} />
+                            <Text style={styles.sentRequestBadgeText}>Đã gửi lời mời</Text>
+                        </View>
+                    </View>
+                </View>
+
+                <View style={styles.divider} />
+
+                <View style={styles.actionRow}>
+                    <View style={styles.friendAction}>
+                        <PrimaryButton
+                            label="Hủy lời mời"
+                            onPress={() => handleCancelRequest(userId)}
+                            variant="secondary"
+                        />
+                    </View>
+                    <Pressable
+                        onPress={() => onChatPress?.({ ...user, id: userId })}
+                        style={({ pressed }) => [
+                            styles.chatButton,
+                            pressed && styles.chatButtonPressed,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Bắt đầu chat"
+                    >
+                        <Ionicons name="chatbubble-ellipses" size={22} color={colors.textOnAccent} />
+                    </Pressable>
+                </View>
+            </Card>
+        );
+    };
+
     return (
         <ScrollView
             style={styles.screen}
@@ -308,6 +431,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             {!state.searchLoading &&
                 !state.searchError &&
                 state.searchResults.length === 0 &&
+                sentRequestItems.length === 0 &&
                 searchQuery && (
                     <View style={styles.centerContent}>
                         <Ionicons
@@ -322,10 +446,18 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             {/* Search results */}
             {state.searchResults.map(renderUserCard)}
 
+            {sentRequestItems.length > 0 && (
+                <View style={styles.sentSection}>
+                    <Text style={styles.sectionTitle}>Lời mời đã gửi</Text>
+                    {sentRequestItems.map(renderSentRequestCard)}
+                </View>
+            )}
+
             {/* Initial state - no search */}
             {!state.searchLoading &&
                 !state.searchError &&
                 state.searchResults.length === 0 &&
+                sentRequestItems.length === 0 &&
                 !searchQuery && (
                     <View style={styles.centerContent}>
                         <Ionicons
@@ -433,6 +565,32 @@ const styles = StyleSheet.create({
         color: colors.textMuted,
         lineHeight: 18,
         marginVertical: 8,
+    },
+    sentSection: {
+        marginTop: 4,
+    },
+    sectionTitle: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "800",
+        marginBottom: 10,
+    },
+    sentRequestBadge: {
+        alignSelf: "flex-start",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        paddingVertical: 4,
+        backgroundColor: "rgba(63, 140, 255, 0.14)",
+        borderWidth: 1,
+        borderColor: "rgba(63, 140, 255, 0.28)",
+    },
+    sentRequestBadgeText: {
+        color: colors.accent,
+        fontSize: 12,
+        fontWeight: "800",
     },
     divider: {
         height: 1,

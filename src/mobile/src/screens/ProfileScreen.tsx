@@ -11,19 +11,20 @@ import {
     Text,
     View,
 } from "react-native";
-import { useAuth, useMediaUpload } from "../../../shared/hooks";
-import { authService } from "../../../shared/services/authService";
+import { useAuth } from "../../../shared/hooks";
 import { getOrCreateDeviceId, SessionService, type AuthSession } from "../../../shared/services/sessionService";
 import { Avatar, Card, PrimaryButton, TextField } from "../components";
 import { colors } from "../theme";
-import { compressImage } from "../../../shared/utils";
+import mediaService from "../../../shared/services/mediaService";
 import type { EditData } from "@/types";
 
+const MAX_AVATAR_SIZE = 10 * 1024 * 1024;
+
 export const ProfileScreen = () => {
-    const { user, logout, updateProfile } = useAuth();
+    const { user, logout, updateProfile, updateAvatar } = useAuth();
     const [isEditing, setIsEditing] = useState(false);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
-    const [isCompressing, setIsCompressing] = useState(false);
+    const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
     const [editData, setEditData] = useState<EditData>({
         displayName: user?.displayName || "",
         phone: user?.phone || "",
@@ -55,23 +56,6 @@ export const ProfileScreen = () => {
         loadSessions();
     }, []);
 
-    // Initialize upload hook with callbacks
-    const { uploadFile, isUploading, progress, error: uploadError, clearError } = useMediaUpload({
-        onProgress: (event) => { },
-        onSuccess: (session) => {            // Update profile with the uploaded URL
-            if (session.presignedUrl) {
-                setEditData((current) => ({
-                    ...current,
-                    avatarUrl: session.presignedUrl,
-                }));
-            }
-        },
-        onError: (error) => {
-            console.error("[Profile] Upload failed:", error.message);
-            Alert.alert("Upload Failed", error.message);
-        },
-    });
-
     const truncateName = (name: string | undefined, maxLength = 20) => {
         if (!name || name.length <= maxLength) {
             return name;
@@ -79,64 +63,102 @@ export const ProfileScreen = () => {
         return name.slice(0, Math.floor(maxLength / 2)) + "...";
     };
 
-    /**
-     * Convert image URI to Blob for upload
-     */
-    const uriToBlob = async (uri: string): Promise<Blob> => {
-        return new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            xhr.onload = () => {
-                resolve(xhr.response);
-            };
-            xhr.onerror = () => {
-                reject(new Error("Failed to load image"));
-            };
-            xhr.responseType = "blob";
-            xhr.open("GET", uri, true);
-            xhr.send(null);
-        });
-    };
+    const validateAvatarAsset = (asset: ImagePicker.ImagePickerAsset) => {
+        const mimeType = asset.mimeType || "image/jpeg";
+        const fileSize = asset.fileSize || 0;
 
-    const handlePickImage = async () => {
-        try {
-            clearError();
+        if (!mimeType.startsWith("image/")) {
+            throw new Error("Vui lòng chọn một file ảnh.");
+        }
 
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ["images"],
-                allowsEditing: true,
-                aspect: [1, 1],
-                quality: 0.8,
-            });
-
-            if (!result.canceled) {
-                const imageUri = result.assets[0].uri;
-                setSelectedImage(imageUri);
-                setEditData((current) => ({ ...current, avatarUrl: imageUri }));
-            }
-        } catch (error: any) {
-            console.error("Failed to pick image:", error);
-            Alert.alert("Error", "Failed to pick image");
+        if (fileSize > MAX_AVATAR_SIZE) {
+            throw new Error("Ảnh đại diện phải nhỏ hơn 10MB.");
         }
     };
 
-    /**
-     * Handle image compression and upload
-     */
-    const handleUploadImage = async (imageUri: string) => {
+    const changeAvatar = async (asset: ImagePicker.ImagePickerAsset) => {
+        const previousAvatar = user?.avatarUrl || user?.avatar || null;
+        const localPreview = asset.uri;
+
         try {
-            setIsCompressing(true); const imageBlob = await uriToBlob(imageUri);
+            validateAvatarAsset(asset);
+            setSelectedImage(localPreview);
+            setEditData((current) => ({ ...current, avatarUrl: localPreview }));
+            setIsUploadingAvatar(true);
 
-            // Create File object for upload
-            const filename = imageUri.split("/").pop() || "avatar.jpg";
-            const file = new File([imageBlob], filename, { type: "image/jpeg" });
-            // Compress image: 80% quality, max 1920px
-            const { compressedFile } = await compressImage(file, 0.8, 1920);
-            setIsCompressing(false); await uploadFile(compressedFile, "IMAGE");
+            const uploaded = await mediaService.uploadMediaDirect({
+                uri: asset.uri,
+                name: asset.fileName || `avatar_${Date.now()}.jpg`,
+                mimeType: asset.mimeType || "image/jpeg",
+                type: asset.mimeType || "image/jpeg",
+            });
 
+            await updateAvatar(uploaded.url);
+            setEditData((current) => ({ ...current, avatarUrl: uploaded.url }));
+            setSelectedImage(null);
+            Alert.alert("Thành công", "Cập nhật ảnh đại diện thành công");
         } catch (error: any) {
-            setIsCompressing(false);
-            console.error("[Profile] Compression/upload failed:", error);
-            Alert.alert("Error", error.message || "Failed to upload image");
+            setSelectedImage(null);
+            setEditData((current) => ({ ...current, avatarUrl: previousAvatar }));
+            console.error("[Profile] Avatar update failed:", error);
+            Alert.alert("Lỗi", error.message || "Không thể cập nhật ảnh đại diện");
+        } finally {
+            setIsUploadingAvatar(false);
+        }
+    };
+
+    const pickAvatarFromLibrary = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== "granted") {
+            Alert.alert("Lỗi", "Cần cấp quyền truy cập thư viện ảnh.");
+            return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ["images"],
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.8,
+        });
+
+        if (!result.canceled) {
+            await changeAvatar(result.assets[0]);
+        }
+    };
+
+    const pickAvatarFromCamera = async () => {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== "granted") {
+            Alert.alert("Lỗi", "Cần cấp quyền camera để chụp ảnh đại diện.");
+            return;
+        }
+
+        const result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ["images"],
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.8,
+        });
+
+        if (!result.canceled) {
+            await changeAvatar(result.assets[0]);
+        }
+    };
+
+    const handlePickImage = async () => {
+        if (isUploadingAvatar) {
+            return;
+        }
+
+        try {
+            Alert.alert("Đổi ảnh đại diện", "Chọn nguồn ảnh", [
+                { text: "Thư viện", onPress: pickAvatarFromLibrary },
+                { text: "Camera", onPress: pickAvatarFromCamera },
+                { text: "Hủy", style: "cancel" },
+            ]);
+        } catch (error: any) {
+            console.error("Failed to pick image:", error);
+            Alert.alert("Lỗi", error.message || "Không thể chọn ảnh");
         }
     };
 
@@ -206,7 +228,7 @@ export const ProfileScreen = () => {
                 bio: profileData.bio,
             };
 
-            if (profileData.avatarUrl) {
+            if (profileData.avatarUrl && !String(profileData.avatarUrl).startsWith("file://")) {
                 updateData.avatarUrl = profileData.avatarUrl;
             } await updateProfile(updateData); setIsEditing(false);
             setSelectedImage(null);
@@ -257,22 +279,17 @@ export const ProfileScreen = () => {
                 )}
 
                 <Pressable
-                    onPress={() => {
-                        if (selectedImage) {
-                            handleUploadImage(selectedImage);
-                        } else {
-                            handlePickImage();
-                        }
-                    }}
-                    style={styles.pickImageButton}
+                    onPress={handlePickImage}
+                    style={[styles.pickImageButton, isUploadingAvatar && styles.actionDisabled]}
+                    disabled={isUploadingAvatar}
                 >
                     <Ionicons
-                        name={isCompressing || isUploading ? "cloud-upload-outline" : "camera-outline"}
+                        name={isUploadingAvatar ? "cloud-upload-outline" : "camera-outline"}
                         size={18}
-                        color={isCompressing || isUploading ? "#999" : colors.accent}
+                        color={isUploadingAvatar ? "#999" : colors.accent}
                     />
                     <Text style={styles.pickImageText}>
-                        {isCompressing ? "Compressing..." : isUploading ? `Uploading ${Math.round(progress)}%` : "Chọn ảnh đại diện"}
+                        {isUploadingAvatar ? "Đang cập nhật..." : "Chọn ảnh đại diện"}
                     </Text>
                 </Pressable>
 
@@ -339,7 +356,12 @@ export const ProfileScreen = () => {
                 </Pressable>
             </View>
 
-            {user?.avatarUrl || user?.avatar ? (
+            {selectedImage ? (
+                <Image
+                    source={{ uri: selectedImage }}
+                    style={styles.profileAvatarImage}
+                />
+            ) : user?.avatarUrl || user?.avatar ? (
                 <Image
                     source={{ uri: user.avatarUrl || user.avatar }}
                     style={styles.profileAvatarImage}
@@ -365,18 +387,19 @@ export const ProfileScreen = () => {
 
             <Card style={styles.profileCard}>
                 <Pressable
-                    style={styles.profileActionRow}
+                    style={[styles.profileActionRow, isUploadingAvatar && styles.actionDisabled]}
                     onPress={handlePickImage}
+                    disabled={isUploadingAvatar}
                 >
                     <View style={styles.profileActionIcon}>
                         <Ionicons
-                            name={isCompressing || isUploading ? "cloud-upload-outline" : "camera-outline"}
+                            name={isUploadingAvatar ? "cloud-upload-outline" : "camera-outline"}
                             size={22}
-                            color={isCompressing || isUploading ? "#999" : "#4f8cff"}
+                            color={isUploadingAvatar ? "#999" : "#4f8cff"}
                         />
                     </View>
                     <Text style={styles.profileActionText}>
-                        {isCompressing ? "Compressing..." : isUploading ? `Uploading ${Math.round(progress)}%` : "Đổi ảnh đại diện"}
+                        {isUploadingAvatar ? "Đang cập nhật ảnh..." : "Đổi ảnh đại diện"}
                     </Text>
                 </Pressable>
                 <View style={styles.divider} />
@@ -780,6 +803,9 @@ const styles = StyleSheet.create({
         color: colors.accent,
         fontSize: 14,
         fontWeight: "700",
+    },
+    actionDisabled: {
+        opacity: 0.55,
     },
     profileAvatarImage: {
         width: 104,

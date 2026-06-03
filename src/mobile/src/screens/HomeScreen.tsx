@@ -13,6 +13,7 @@ import {
     RefreshControl,
     ScrollView,
     StyleSheet,
+    Switch,
     Text,
     TextInput,
     TouchableOpacity,
@@ -32,7 +33,7 @@ import searchService, {
     type GlobalSearchUser,
     type SearchTabKey,
 } from "../../../shared/services/searchService";
-import { Avatar, Card, SectionTitle } from "../components";
+import { Avatar, Card } from "../components";
 import { colors } from "../theme";
 import type { Friend } from "@/types";
 import type { UseFriendshipActions, UseFriendshipState } from "../../../shared/hooks/useFriendship";
@@ -46,6 +47,8 @@ interface HomeScreenProps {
     createdGroupId?: string | null;
     createdGroupData?: any;
     onGroupCreatedAck?: () => void;
+    aiSmartReplyEnabled?: boolean;
+    onToggleAiSmartReply?: (enabled: boolean) => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -151,6 +154,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     createdGroupId,
     createdGroupData,
     onGroupCreatedAck,
+    aiSmartReplyEnabled = false,
+    onToggleAiSmartReply,
 }) => {
     const { user, token } = useAuth();
     const [query, setQuery] = useState("");
@@ -875,6 +880,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         const handleMessageSeen = (data: any) => {
             const conversationId = data?.conversationId;
             if (!conversationId) return;
+            const viewerId = String(data?.userId || "");
 
             setConversations((prev) =>
                 prev.map((conversation) => {
@@ -883,10 +889,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
                     const lastMessageId = getLastMessageId(conversation);
                     const isLastSeen = !!lastMessageId && lastMessageId === data?.lastSeenMessageId;
+                    const lastSenderId = String((conversation.lastMessage as any)?.senderId || "");
+                    const didCurrentUserRead = !!viewerId && viewerId === currentUserId;
+                    const didOtherUserReadOwnLastMessage =
+                        isLastSeen &&
+                        !!viewerId &&
+                        viewerId !== currentUserId &&
+                        !!lastSenderId &&
+                        lastSenderId === currentUserId;
 
                     return {
                         ...conversation,
-                        lastMessageStatus: isLastSeen ? "read" : conversation.lastMessageStatus,
+                        unreadCount: didCurrentUserRead ? 0 : conversation.unreadCount,
+                        lastMessageStatus: didOtherUserReadOwnLastMessage ? "read" : conversation.lastMessageStatus,
                     };
                 })
             );
@@ -1954,33 +1969,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 {!showArchivedView && !isSearchMode && (
                     <>
                         <View style={styles.homeTopRow}>
-                            <View style={styles.brandPill}>
+                            <Pressable style={styles.homeEditPill}>
+                                <Text style={styles.homeEditText}>Sửa</Text>
+                            </Pressable>
+                            <View style={styles.homeTitlePill}>
                                 <Image
                                     source={require("../../../shared/background/logo.jpg")}
                                     style={styles.brandLogo}
+                                    blurRadius={0.5}
                                 />
-                                <Text style={styles.brandText}>ChatChit</Text>
+                                <Text style={styles.brandText}>Chat</Text>
                             </View>
                             <Pressable
                                 style={({ pressed }) => [
-                                    styles.actionCircle,
+                                    styles.homeActionPill,
                                     pressed && { opacity: 0.7 }
                                 ]}
                                 onPress={onCreateGroupPress}
                             >
+                                <Ionicons name="add-circle-outline" size={24} color={colors.text} />
                                 <Ionicons name="create-outline" size={22} color={colors.text} />
                             </Pressable>
                         </View>
-
-                        <SectionTitle
-                            title="Chat"
-                            subtitle={
-                                user?.displayName
-                                    ? `Hello, ${truncateName(user.displayName, 20)}`
-                                    : "Your recent conversations"
-                            }
-                            rightLabel="Sửa"
-                        />
 
                         <View style={styles.searchBar}>
                             <Ionicons name="search" size={18} color={colors.textMuted} />
@@ -1988,25 +1998,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                                 value={query}
                                 onChangeText={setQuery}
                                 onFocus={() => setIsSearchMode(true)}
-                                placeholder="Search chats"
+                                placeholder="Tìm kiếm"
                                 placeholderTextColor={colors.textMuted}
                                 style={styles.searchInput}
                             />
                         </View>
 
-                        <View style={styles.filterRow}>
-                            <View style={[styles.filterChip, styles.filterChipActive]}>
-                                <Text style={styles.filterTextActive}>All</Text>
+                        <View style={styles.aiSmartReplySettingRow}>
+                            <View style={styles.aiSmartReplySettingIcon}>
+                                <Ionicons name="sparkles" size={18} color={colors.accentStrong} />
                             </View>
-                            <View style={styles.filterChip}>
-                                <Text style={styles.filterText}>Unread</Text>
+                            <View style={styles.aiSmartReplySettingTextWrap}>
+                                <Text style={styles.aiSmartReplySettingTitle}>AI gợi ý tin nhắn</Text>
+                                <Text style={styles.aiSmartReplySettingSubtitle}>
+                                    {aiSmartReplyEnabled ? "Đang bật cho mọi đoạn chat" : "Đang tắt để tiết kiệm token"}
+                                </Text>
                             </View>
-                            <View style={styles.filterChip}>
-                                <Text style={styles.filterText}>Groups</Text>
-                            </View>
-                            <View style={styles.filterChip}>
-                                <Text style={styles.filterText}>Calls</Text>
-                            </View>
+                            <Switch
+                                value={aiSmartReplyEnabled}
+                                onValueChange={(enabled) => onToggleAiSmartReply?.(enabled)}
+                                trackColor={{ false: "rgba(255,255,255,0.16)", true: colors.accent }}
+                                thumbColor={colors.text}
+                            />
                         </View>
                     </>
                 )}
@@ -2090,28 +2103,57 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         justifyContent: "space-between",
         alignItems: "center",
+        minHeight: 56,
+        gap: 10,
     },
-    brandPill: {
+    homeEditPill: {
+        minWidth: 66,
+        height: 50,
+        borderRadius: 25,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(30,30,30,0.92)",
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
+    },
+    homeEditText: {
+        color: colors.text,
+        fontSize: 18,
+        fontWeight: "800",
+    },
+    homeTitlePill: {
+        flex: 1,
+        maxWidth: 170,
         flexDirection: "row",
         alignItems: "center",
+        justifyContent: "center",
         gap: 8,
-        alignSelf: "center",
-        backgroundColor: colors.surfaceSoftTransparent,
+        backgroundColor: "transparent",
+        paddingHorizontal: 8,
+    },
+    homeActionPill: {
+        minWidth: 96,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: "rgba(30,30,30,0.92)",
         borderWidth: 1,
-        borderColor: colors.overlayWhite10,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        borderRadius: 999,
+        borderColor: colors.overlayWhite18,
+        alignItems: "center",
+        justifyContent: "center",
+        flexDirection: "row",
+        gap: 18,
     },
     brandText: {
         color: colors.text,
         fontWeight: "800",
-        letterSpacing: 0.8,
+        fontSize: 22,
     },
     brandLogo: {
-        width: 18,
-        height: 18,
-        borderRadius: 5,
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        borderWidth: 2,
+        borderColor: colors.accent,
     },
     actionCircle: {
         width: 44,
@@ -2132,17 +2174,50 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
-        backgroundColor: colors.surfaceSoftTransparent,
-        borderWidth: 1,
-        borderColor: colors.overlayWhite10,
-        borderRadius: 22,
-        paddingHorizontal: 14,
-        height: 52,
+        backgroundColor: "rgba(30,30,30,0.94)",
+        borderWidth: 0,
+        borderRadius: 28,
+        paddingHorizontal: 18,
+        height: 56,
     },
     searchInput: {
         flex: 1,
         color: colors.text,
         fontSize: 15,
+    },
+    aiSmartReplySettingRow: {
+        minHeight: 62,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: colors.overlayWhite10,
+        backgroundColor: colors.surfaceSoftTransparent,
+    },
+    aiSmartReplySettingIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(79, 140, 255, 0.14)",
+    },
+    aiSmartReplySettingTextWrap: {
+        flex: 1,
+        minWidth: 0,
+    },
+    aiSmartReplySettingTitle: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "800",
+    },
+    aiSmartReplySettingSubtitle: {
+        color: colors.textMuted,
+        fontSize: 12,
+        marginTop: 2,
     },
     searchHeaderRow: {
         flexDirection: "row",
@@ -2267,6 +2342,8 @@ const styles = StyleSheet.create({
     chatListCard: {
         padding: 0,
         overflow: "hidden",
+        backgroundColor: "transparent",
+        borderWidth: 0,
     },
     loadingContainer: {
         alignItems: "center",

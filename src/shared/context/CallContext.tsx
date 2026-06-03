@@ -32,6 +32,11 @@ const ringtoneAsset = require("../sound/a-ringtone.mp3");
 
 type CallStatus = "idle" | "calling" | "incoming" | "active" | "ending";
 type CallConversationType = "PRIVATE" | "GROUP";
+type CallParticipantStatus = "invited" | "ringing" | "joined" | "declined" | "missed" | "left" | "busy";
+
+interface CallParticipantState {
+    status: CallParticipantStatus;
+}
 
 interface StartCallOptions {
     conversationId: string;
@@ -120,6 +125,7 @@ interface CallContextValue {
     isCameraEnabled: boolean;
     isMicrophoneEnabled: boolean;
     startCall: (conversationIdOrOptions: string | StartCallOptions, type?: CallType) => Promise<void>;
+    joinActiveCall: (call: CallSession, conversationType?: CallConversationType) => Promise<void>;
     acceptCall: () => Promise<void>;
     rejectCall: () => Promise<void>;
     endCall: () => Promise<void>;
@@ -181,11 +187,80 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
     const [videoTiles, setVideoTiles] = useState<CallVideoTile[]>([]);
     const [isCameraEnabled, setIsCameraEnabled] = useState(false);
     const [isMicrophoneEnabled, setIsMicrophoneEnabled] = useState(false);
+    const stateRef = useRef<CallState>(initialState);
+    const currentUserIdRef = useRef(currentUserId);
     const roomRef = useRef<Room | null>(null);
     const currentCallIdRef = useRef<string | null>(null);
     const incomingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const outgoingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const ringtoneRef = useRef<Audio.Sound | null>(null);
+    const participantsRef = useRef<Record<string, CallParticipantState>>({});
+    const hadRemoteParticipantRef = useRef(false);
+    const autoEndingRef = useRef(false);
+
+    useEffect(() => {
+        stateRef.current = state;
+    }, [state]);
+
+    useEffect(() => {
+        currentUserIdRef.current = currentUserId;
+    }, [currentUserId]);
+
+    const getPayloadUserId = useCallback((payload: CallSocketPayload) => {
+        const rawUserId =
+            payload.userId ||
+            (payload as any).leftUserId ||
+            (payload as any).participantId ||
+            (payload as any).participantIdentity ||
+            (payload as any).identity ||
+            (payload as any).participant?.userId ||
+            (payload as any).participant?.id ||
+            (payload as any).participant?.identity ||
+            (payload as any).user?.id ||
+            "";
+
+        return rawUserId ? String(rawUserId) : "";
+    }, []);
+
+    const updateParticipantStatus = useCallback((payload: CallSocketPayload, status: CallParticipantStatus) => {
+        const userId = getPayloadUserId(payload);
+        if (!userId) return;
+
+        participantsRef.current = {
+            ...participantsRef.current,
+            [userId]: { status },
+        };
+    }, [getPayloadUserId]);
+
+    const isCurrentUserLastJoinedParticipant = useCallback(() => {
+        const currentState = stateRef.current;
+        if (currentState.conversationType !== "GROUP" || currentState.status !== "active") {
+            return false;
+        }
+
+        if (roomRef.current?.remoteParticipants.size) {
+            return false;
+        }
+
+        const joinedIds = Object.entries(participantsRef.current)
+            .filter(([, participant]) => participant.status === "joined")
+            .map(([id]) => id);
+
+        if (joinedIds.length === 0) {
+            return true;
+        }
+
+        return joinedIds.every((id) => String(id) === currentUserIdRef.current);
+    }, []);
+
+    const shouldEndGroupCallForTwoParticipants = useCallback(() => {
+        const currentState = stateRef.current;
+        if (currentState.conversationType !== "GROUP" || currentState.status !== "active") {
+            return false;
+        }
+
+        return (roomRef.current?.remoteParticipants.size || 0) <= 1;
+    }, []);
 
     const clearIncomingTimer = useCallback(() => {
         if (incomingTimerRef.current) {
@@ -256,8 +331,50 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
         await stopRingtone();
         await cleanupRoom();
         currentCallIdRef.current = null;
+        participantsRef.current = {};
+        hadRemoteParticipantRef.current = false;
+        autoEndingRef.current = false;
         dispatch({ type: "RESET" });
     }, [cleanupRoom, clearIncomingTimer, clearOutgoingTimer, stopRingtone]);
+
+    const endGroupCallIfCurrentUserIsAlone = useCallback(async () => {
+        const callId = currentCallIdRef.current;
+        if (
+            !callId ||
+            autoEndingRef.current ||
+            !hadRemoteParticipantRef.current ||
+            !isCurrentUserLastJoinedParticipant()
+        ) {
+            return;
+        }
+
+        autoEndingRef.current = true;
+        dispatch({ type: "ENDING" });
+        try {
+            await callService.endCall(callId);
+            callSocket.leaveCallRoom(callId);
+        } finally {
+            await resetCall();
+            autoEndingRef.current = false;
+        }
+    }, [isCurrentUserLastJoinedParticipant, resetCall]);
+
+    const endGroupCallIfPeerLeftTwoParticipantCall = useCallback(async () => {
+        const callId = currentCallIdRef.current;
+        if (!callId || autoEndingRef.current || !shouldEndGroupCallForTwoParticipants()) {
+            return;
+        }
+
+        autoEndingRef.current = true;
+        dispatch({ type: "ENDING" });
+        try {
+            await callService.endCall(callId);
+            callSocket.leaveCallRoom(callId);
+        } finally {
+            await resetCall();
+            autoEndingRef.current = false;
+        }
+    }, [resetCall, shouldEndGroupCallForTwoParticipants]);
 
     const showIncomingCall = useCallback(
         (payload: CallSocketPayload) => {
@@ -265,6 +382,10 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             if (currentCallIdRef.current && currentCallIdRef.current !== payload.callId) return;
 
             currentCallIdRef.current = payload.callId;
+            participantsRef.current = {};
+            if (payload.callerId) {
+                participantsRef.current[String(payload.callerId)] = { status: "joined" };
+            }
             dispatch({ type: "INCOMING", payload });
             void startRingtone();
             clearIncomingTimer();
@@ -302,12 +423,28 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             room.on(RoomEvent.MediaDevicesError, () => {
                 Alert.alert("Lỗi cuộc gọi", "Không thể truy cập microphone/camera.");
             });
-            room.on(RoomEvent.ParticipantConnected, () => {
+            room.on(RoomEvent.ParticipantConnected, (participant) => {
+                hadRemoteParticipantRef.current = true;
+                if (participant.identity) {
+                    participantsRef.current = {
+                        ...participantsRef.current,
+                        [String(participant.identity)]: { status: "joined" },
+                    };
+                }
                 clearOutgoingTimer();
                 syncRoomMediaState(room);
             });
+            room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+                if (participant.identity) {
+                    participantsRef.current = {
+                        ...participantsRef.current,
+                        [String(participant.identity)]: { status: "left" },
+                    };
+                }
+                syncRoomMediaState(room);
+                void endGroupCallIfCurrentUserIsAlone();
+            });
             [
-                RoomEvent.ParticipantDisconnected,
                 RoomEvent.TrackSubscribed,
                 RoomEvent.TrackUnsubscribed,
                 RoomEvent.TrackMuted,
@@ -333,9 +470,43 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
         async (callId: string, callType: CallType) => {
             const joined = await callService.joinCall(callId);
             callSocket.joinCallRoom(callId);
+            if (currentUserId) {
+                participantsRef.current = {
+                    ...participantsRef.current,
+                    [currentUserId]: { status: "joined" },
+                };
+            }
             await connectToLiveKit(joined.token, joined.wsUrl, joined.roomName, callType);
         },
-        [connectToLiveKit],
+        [connectToLiveKit, currentUserId],
+    );
+
+    const joinActiveCall = useCallback(
+        async (call: CallSession, conversationType: CallConversationType = "PRIVATE") => {
+            if (!call?.callId) {
+                Alert.alert("Không thể tham gia", "Cuộc gọi chưa sẵn sàng.");
+                return;
+            }
+            if (state.status !== "idle") {
+                Alert.alert("Đang có cuộc gọi", "Vui lòng kết thúc cuộc gọi hiện tại trước.");
+                return;
+            }
+
+            try {
+                currentCallIdRef.current = call.callId;
+                participantsRef.current = currentUserId
+                    ? { [currentUserId]: { status: "joined" } }
+                    : {};
+                dispatch({ type: "CALLING", call, conversationType });
+                await joinAndConnect(call.callId, call.type || "audio");
+            } catch (error) {
+                const message = getErrorMessage(error, "Không thể tham gia cuộc gọi");
+                dispatch({ type: "ERROR", error: message });
+                Alert.alert("Không thể tham gia cuộc gọi", message);
+                await resetCall();
+            }
+        },
+        [currentUserId, joinAndConnect, resetCall, state.status],
     );
 
     const startCall = useCallback(
@@ -365,6 +536,10 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                     ...(options.inviteeIds?.length ? { inviteeIds: options.inviteeIds } : {}),
                 });
                 currentCallIdRef.current = created.call.callId;
+                participantsRef.current = currentUserId
+                    ? { [currentUserId]: { status: "joined" } }
+                    : {};
+                hadRemoteParticipantRef.current = false;
                 dispatch({ type: "CALLING", call: created.call, conversationType });
                 if (conversationType === "PRIVATE") {
                     clearOutgoingTimer();
@@ -386,6 +561,9 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
 
                         const activeType = activeCall.type || type;
                         currentCallIdRef.current = activeCall.callId;
+                        participantsRef.current = currentUserId
+                            ? { [currentUserId]: { status: "joined" } }
+                            : {};
                         dispatch({ type: "CALLING", call: activeCall, conversationType });
                         await joinAndConnect(activeCall.callId, activeType);
                         return;
@@ -404,7 +582,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                 await resetCall();
             }
         },
-        [clearOutgoingTimer, joinAndConnect, resetCall, state.status],
+        [clearOutgoingTimer, currentUserId, joinAndConnect, resetCall, state.status],
     );
 
     const acceptCall = useCallback(async () => {
@@ -433,21 +611,39 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
 
     const endCall = useCallback(async () => {
         const callId = currentCallIdRef.current || state.callId;
-        const shouldEndRemoteCall = state.status === "calling";
+        const shouldEndRemoteCall =
+            state.status === "calling" ||
+            shouldEndGroupCallForTwoParticipants() ||
+            (state.conversationType === "GROUP" && isCurrentUserLastJoinedParticipant());
         dispatch({ type: "ENDING" });
         try {
             if (callId) {
                 if (shouldEndRemoteCall) {
                     await callService.endCall(callId);
                 } else {
-                    await callService.leaveCall(callId);
+                    const response = await callService.leaveCall(callId);
+                    const payload = (response as any)?.data?.data ?? (response as any)?.data ?? response;
+                    if (
+                        state.conversationType === "GROUP" &&
+                        !payload?.terminal &&
+                        (shouldEndGroupCallForTwoParticipants() || isCurrentUserLastJoinedParticipant())
+                    ) {
+                        await callService.endCall(callId);
+                    }
                 }
                 callSocket.leaveCallRoom(callId);
             }
         } finally {
             await resetCall();
         }
-    }, [resetCall, state.callId, state.status]);
+    }, [
+        isCurrentUserLastJoinedParticipant,
+        resetCall,
+        shouldEndGroupCallForTwoParticipants,
+        state.callId,
+        state.conversationType,
+        state.status,
+    ]);
 
     const toggleCamera = useCallback(async () => {
         const room = roomRef.current;
@@ -497,20 +693,43 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                         void resetCall();
                     }
                 }),
+                callSocket.on<CallSocketPayload>("call:joined", (payload) => {
+                    if (payload.callId === currentCallIdRef.current) {
+                        updateParticipantStatus(payload, "joined");
+                        if (getPayloadUserId(payload) && getPayloadUserId(payload) !== currentUserId) {
+                            hadRemoteParticipantRef.current = true;
+                        }
+                        clearOutgoingTimer();
+                    }
+                }),
+                callSocket.on<CallSocketPayload>("call:left", (payload) => {
+                    if (payload.callId === currentCallIdRef.current) {
+                        const leftUserId = getPayloadUserId(payload);
+                        updateParticipantStatus(payload, "left");
+                        if (leftUserId && leftUserId !== currentUserId) {
+                            void endGroupCallIfPeerLeftTwoParticipantCall();
+                        } else {
+                            void endGroupCallIfCurrentUserIsAlone();
+                        }
+                    }
+                }),
                 callSocket.on<CallSocketPayload>("call:declined", (payload) => {
                     if (payload.callId === currentCallIdRef.current) {
+                        updateParticipantStatus(payload, "declined");
                         Alert.alert("Cuộc gọi", "Đối phương đã từ chối cuộc gọi.");
                         void resetCall();
                     }
                 }),
                 callSocket.on<CallSocketPayload>("call:missed", (payload) => {
                     if (payload.callId === currentCallIdRef.current) {
+                        updateParticipantStatus(payload, "missed");
                         Alert.alert("Cuộc gọi", "Cuộc gọi không được trả lời.");
                         void resetCall();
                     }
                 }),
                 callSocket.on<CallSocketPayload>("call:busy", (payload) => {
                     if (payload.callId === currentCallIdRef.current) {
+                        updateParticipantStatus(payload, "busy");
                         Alert.alert("Cuộc gọi", "Người nhận đang bận.");
                         void resetCall();
                     }
@@ -524,7 +743,18 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             clearIncomingTimer();
             callSocket.disconnect();
         };
-    }, [clearIncomingTimer, currentUserId, resetCall, showIncomingCall, token]);
+    }, [
+        clearIncomingTimer,
+        clearOutgoingTimer,
+        currentUserId,
+        endGroupCallIfCurrentUserIsAlone,
+        endGroupCallIfPeerLeftTwoParticipantCall,
+        getPayloadUserId,
+        resetCall,
+        showIncomingCall,
+        token,
+        updateParticipantStatus,
+    ]);
 
     const value = useMemo(
         () => ({
@@ -533,6 +763,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             isCameraEnabled,
             isMicrophoneEnabled,
             startCall,
+            joinActiveCall,
             acceptCall,
             rejectCall,
             endCall,
@@ -544,6 +775,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             endCall,
             isCameraEnabled,
             isMicrophoneEnabled,
+            joinActiveCall,
             rejectCall,
             startCall,
             state,

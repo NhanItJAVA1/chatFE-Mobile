@@ -10,10 +10,10 @@ export const BottomTabBar = ({
     friendRequestCount = 0,
 }: BottomTabBarProps) => {
     const items: TabItem[] = [
-        { key: "home", label: "Danh Bạ", icon: "chatbubbles-outline" },
-        { key: "addFriend", label: "Thêm Bạn", icon: "person-add-outline" },
-        { key: "requests", label: "Lời Mời", icon: "notifications-outline" },
-        { key: "profile", label: "Cài Đặt", icon: "settings-outline" },
+        { key: "addFriend", label: "Tìm kiếm", icon: "search-outline" },
+        { key: "requests", label: "Lời mời", icon: "person-add-outline" },
+        { key: "home", label: "Chat", icon: "chatbubbles" },
+        { key: "profile", label: "Cài đặt", icon: "settings-outline" },
     ];
 
     const animatedByKey = useRef(
@@ -74,7 +74,7 @@ export const BottomTabBar = ({
                                 <View style={styles.iconContainer}>
                                     <Ionicons
                                         name={item.icon as any}
-                                        size={24}
+                                        size={21}
                                         color={active ? colors.accent : colors.tabInactive}
                                     />
                                     {showBadge && (
@@ -104,54 +104,67 @@ export const BottomTabBar = ({
 
 const styles = StyleSheet.create({
     tabShell: {
-        paddingHorizontal: 14,
-        paddingBottom: 10,
-        paddingTop: 6,
-        backgroundColor: colors.surfaceTransparent,
-        borderTopWidth: 1,
-        borderTopColor: colors.overlayWhite10,
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: 10,
+        paddingHorizontal: 28,
+        paddingBottom: 0,
+        paddingTop: 0,
+        backgroundColor: "transparent",
+        borderTopWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
     },
     tabBar: {
+        flex: 1,
         flexDirection: "row",
-        backgroundColor: "transparent",
-        paddingVertical: 8,
-        paddingHorizontal: 2,
+        backgroundColor: "rgba(30, 30, 30, 0.86)",
+        paddingVertical: 4,
+        paddingHorizontal: 6,
         justifyContent: "space-between",
-        gap: 10,
+        gap: 4,
+        borderRadius: 32,
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.34,
+        shadowRadius: 14,
+        elevation: 8,
     },
     tabItem: {
         flex: 1,
         alignItems: "center",
         justifyContent: "center",
-        paddingVertical: 2,
+        paddingVertical: 0,
     },
     tabTile: {
         width: "100%",
         alignItems: "center",
         justifyContent: "center",
-        gap: 4,
-        paddingVertical: 11,
-        borderRadius: 16,
-        backgroundColor: colors.surfaceSoftTransparent,
-        borderWidth: 1,
-        borderColor: colors.overlayWhite18,
+        gap: 2,
+        minHeight: 46,
+        paddingVertical: 5,
+        borderRadius: 25,
+        backgroundColor: "transparent",
+        borderWidth: 0,
     },
     tabTileActive: {
-        backgroundColor: "rgba(79, 140, 255, 0.18)",
-        borderColor: "rgba(79, 140, 255, 0.45)",
+        backgroundColor: "rgba(255,255,255,0.09)",
     },
     tabLabel: {
         color: colors.tabInactive,
-        fontSize: 10.5,
-        fontWeight: "600",
+        fontSize: 10,
+        fontWeight: "800",
     },
     tabLabelActive: {
         color: colors.accent,
     },
     iconContainer: {
         position: "relative",
-        width: 24,
-        height: 24,
+        width: 22,
+        height: 22,
         justifyContent: "center",
         alignItems: "center",
     },

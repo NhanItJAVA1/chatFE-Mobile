@@ -41,6 +41,32 @@ export const LoginScreen = ({
         );
     };
 
+    const getLoginErrorMessage = (error: any) => {
+        const rawMessage = String(error?.message || "").trim();
+        const text = [
+            rawMessage,
+            error?.code,
+            error?.responseBody?.message,
+            error?.responseBody?.msg,
+            error?.responseBody?.code,
+        ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+        if (
+            error?.status === 401 ||
+            text.includes("invalid") ||
+            text.includes("incorrect") ||
+            text.includes("wrong") ||
+            text.includes("password")
+        ) {
+            return "Số điện thoại/email hoặc mật khẩu không đúng.";
+        }
+
+        return rawMessage || "Đăng nhập thất bại. Vui lòng thử lại.";
+    };
+
     const handleSubmit = async () => {
         try {
             setLocalError("");
@@ -75,7 +101,9 @@ export const LoginScreen = ({
                 }
             }
 
-            setLocalError(submitError.message || "Login failed");
+            const message = getLoginErrorMessage(submitError);
+            setLocalError(message);
+            Alert.alert("Đăng nhập thất bại", message);
         }
     };
 

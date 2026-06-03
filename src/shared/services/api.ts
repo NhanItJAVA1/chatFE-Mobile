@@ -87,6 +87,11 @@ const softClearTokens = async (): Promise<void> => {
     await authStorage.removeItem("user");
 };
 
+const clearTokensAndNotifySessionExpired = async (): Promise<void> => {
+    await softClearTokens();
+    DeviceEventEmitter.emit("forceLogout", { reason: "session_expired" });
+};
+
 /**
  * Hard clear: remove tokens AND emit forceLogout.
  * Only used when the server explicitly confirms the refresh token is revoked (401/403).
@@ -106,8 +111,7 @@ const executeRefreshAccessToken = async (): Promise<boolean> => {
         if (!refreshToken) {
             console.error(`${AUTH_DEBUG_PREFIX} Refresh failed: no refresh token available`);
             // No refresh token at all — likely already logged out or never stored.
-            // Soft clear only; do NOT forceLogout because we have no server confirmation.
-            await softClearTokens();
+            await clearTokensAndNotifySessionExpired();
             return false;
         }
         // Call refresh endpoint WITHOUT auth header to avoid infinite loop

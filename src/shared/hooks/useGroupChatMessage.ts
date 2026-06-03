@@ -936,13 +936,25 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
      */
     const lastMarkedMessageId = useRef<string>("");
     const markAsSeenTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isStaleSeenError = (error: any): boolean => {
+        const text = String(error?.message || error?.code || "").toLowerCase();
+        return text.includes("message not found") || error?.status === 404;
+    };
 
     const markAsSeen = useCallback(
         async (messageIds: string[]) => {
             if (!state.conversation || !messageIds.length) return;
 
             const conversationId = state.conversation._id || state.conversation.id;
-            const lastId = messageIds[messageIds.length - 1];
+            const visibleIdSet = new Set(messageIds);
+            const newestVisibleMessage = state.messages
+                .filter((message) => visibleIdSet.has(getMessageId(message)))
+                .sort((a, b) => {
+                    const aTime = new Date(a.createdAt || "").getTime() || 0;
+                    const bTime = new Date(b.createdAt || "").getTime() || 0;
+                    return bTime - aTime;
+                })[0];
+            const lastId = newestVisibleMessage ? getMessageId(newestVisibleMessage) : messageIds[messageIds.length - 1];
 
             if (lastMarkedMessageId.current === lastId) return;
 
@@ -955,12 +967,15 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             markAsSeenTimeout.current = setTimeout(async () => {
                 try {
                     await SocketService.markMessagesSeen(conversationId, lastId);
-                } catch (error) {
+                } catch (error: any) {
+                    if (isStaleSeenError(error)) {
+                        return;
+                    }
                     console.error("[useGroupChatMessage] Failed to mark as seen:", error);
                 }
             }, 500);
         },
-        [state.conversation]
+        [getMessageId, state.conversation, state.messages]
     );
 
     const stopTyping = useCallback(() => {
@@ -1493,6 +1508,41 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     updateStateAndCache({ messages: enriched });
                 });
 
+                SocketService.onMessageSeen((data) => {
+                    const incomingConvId = data.conversationId;
+                    if (
+                        (incomingConvId && incomingConvId !== conversationId && incomingConvId !== groupId) ||
+                        !messagesStateRef.current
+                    ) {
+                        return;
+                    }
+
+                    const viewerId = String(data.userId || "");
+                    const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+                    if (!viewerId || viewerId === currentUserId) {
+                        return;
+                    }
+
+                    const seenMessageId = data.lastSeenMessageId;
+                    const seenMessageIndex = messagesStateRef.current.messages.findIndex((message) => getMessageId(message) === seenMessageId);
+                    if (seenMessageIndex === -1) {
+                        return;
+                    }
+
+                    const messages = messagesStateRef.current.messages.map((message, index) => {
+                        if (String(message.senderId || "") === currentUserId && index >= seenMessageIndex) {
+                            return { ...message, status: "seen" as const };
+                        }
+                        return message;
+                    });
+                    const enriched = collapsePollMessages(attachPollsToMessages(
+                        enrichMessagesWithQuotedData(messages),
+                        messagesStateRef.current.polls
+                    ));
+
+                    updateStateAndCache({ messages: enriched });
+                });
+
                 SocketService.onMessageReaction((data: any) => {
                     const incomingConvId = data.conversationId || data.reaction?.conversationId;
                     if (incomingConvId && incomingConvId !== conversationId && incomingConvId !== groupId) {
@@ -1731,12 +1781,13 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             SocketService.offMessageUpdated();
             SocketService.offMessageReaction();
             SocketService.offMessageReactionRemove();
+            SocketService.offMessageSeen();
             SocketService.offTyping();
             SocketService.offPinnedMessage();
             SocketService.offMessageQuoted();
             SocketService.offPollEvent();
         };
-    }, [groupId, token, user?._id, updateStateAndCache, upsertPollInState, removePollFromState]);
+    }, [groupId, token, user?.id, user?._id, updateStateAndCache, upsertPollInState, removePollFromState]);
 
     // Keep the scroll-index map in sync whenever messages change
     useEffect(() => {

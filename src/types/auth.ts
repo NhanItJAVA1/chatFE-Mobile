@@ -27,6 +27,7 @@ export type AuthContextType = {
     register: (userData: any) => Promise<AuthResponse>;
     logout: () => Promise<void>;
     updateProfile: (profileData: any) => Promise<User>;
+    updateAvatar: (avatarUrl: string) => Promise<User>;
 };
 
 export type AuthProviderProps = {
