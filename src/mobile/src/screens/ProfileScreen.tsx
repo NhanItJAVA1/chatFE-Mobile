@@ -402,36 +402,14 @@ export const ProfileScreen = ({ onSavedMessagePress }: { onSavedMessagePress?: (
                         {isUploadingAvatar ? "Đang cập nhật ảnh..." : "Đổi ảnh đại diện"}
                     </Text>
                 </Pressable>
-                <View style={styles.divider} />
-                <Pressable style={styles.profileActionRow}>
-                    <View style={styles.profileActionIcon}>
-                        <Ionicons name="at-outline" size={22} color="#4f8cff" />
-                    </View>
-                    <Text style={styles.profileActionText}>Đặt tên người dùng</Text>
-                </Pressable>
             </Card>
 
             <Card style={styles.warningCard}>
-                <View style={styles.warningHeader}>
-                    <View style={styles.warningIcon}>
-                        <Ionicons name="alert-circle" size={20} color="#ff6b6b" />
-                    </View>
-                    <Text style={styles.warningTitle}>
-                        {user?.phone || user?.phoneNumber || ""} vẫn là số của bạn?
-                    </Text>
-                </View>
-                <Text style={styles.warningBody}>
-                    Chú ý kiểm tra số điện thoại để bạn luôn có thể đăng nhập ChatChit.
-                    Tìm hiểu thêm
-                </Text>
                 <View style={styles.warningDivider} />
                 <Pressable style={styles.warningLinkRow}>
-                    <Text style={styles.warningLink}>Giữ số {user?.phone || user?.phoneNumber || ""}</Text>
+                    <Text style={styles.warningLink}>Số Điện thoại: {user?.phone || user?.phoneNumber || ""}</Text>
                 </Pressable>
                 <View style={styles.warningDivider} />
-                <Pressable style={styles.warningLinkRow}>
-                    <Text style={styles.warningLink}>Đổi số</Text>
-                </Pressable>
             </Card>
 
             <Card style={styles.profileMenuCard}>
