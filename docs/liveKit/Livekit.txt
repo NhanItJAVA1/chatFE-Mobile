@@ -1,0 +1,292 @@
+1. Kiến trúc
+Call đang tách thành 3 lớp:
+
+REST API: tạo call, join, leave, reject, missed, end, lấy active call.
+Socket namespace: /v1/calls để nhận realtime event.
+LiveKit room: dùng token/wsUrl nhận từ API join để vào phòng audio/video.
+FE Mobile nên giữ một CallProvider/CallStore tương tự Web, quản lý state call toàn app.
+
+2. REST API
+Base API đang dùng /v1.
+
+POST /calls
+body: {
+  conversationId: string;
+  type: "audio" | "video";
+  inviteeIds?: string[];
+  inviteAll?: boolean;
+}
+Dùng để bắt đầu call.
+
+GET /calls/conversations/{conversationId}/active
+GET /calls/active-by-conversation/{conversationId}
+Dùng để check conversation đang có call active không.
+
+POST /calls/{callId}/join
+response: {
+  call;
+  token: string;
+  wsUrl: string;
+  roomName: string;
+  livekitProvider: "self-hosted" | "cloud";
+}
+Dùng để accept/join call và lấy token LiveKit.
+
+POST /calls/{callId}/leave
+POST /calls/{callId}/reject
+POST /calls/{callId}/missed
+POST /calls/{callId}/end
+DELETE /calls/{callId} // fallback nếu /end fail
+GET /calls/{callId}/token
+3. Socket
+Connect tới:
+
+io(`${SOCKET_BASE_URL}/v1/calls`, {
+  auth: { token, deviceId },
+  transports: ["websocket", "polling"]
+})
+Client emit:
+
+call:join  { callId }
+call:leave { callId }
+Socket events cần handle:
+
+call:incoming
+call:ongoing
+call:joined
+call:left
+call:declined
+call:missed
+call:busy
+call:ended
+4. Call State
+Mobile nên dùng state gần giống Web:
+
+status:
+  | "idle"
+  | "calling"
+  | "ringing"
+  | "incoming"
+  | "active"
+  | "ended";
+
+state = {
+  status,
+  callId,
+  conversationId,
+  type: "audio" | "video",
+  callerId,
+  roomName,
+  localVideoEnabled,
+  localAudioEnabled,
+  isGroup,
+  livekitProvider,
+  participants,
+  busyUserIds,
+  remotePeer,
+  activeStartedAt,
+  groupName,
+}
+Participant status:
+
+"invited" | "ringing" | "joined" | "declined" | "missed" | "left" | "busy"
+Session status:
+
+"ringing" | "in-call" | "ended" | "missed" | "rejected" | "cancelled"
+5. Start Call Flow
+Private call:
+
+User bấm voice/video.
+Resolve conversationId.
+POST /calls với:
+{
+  conversationId,
+  type: "audio" | "video",
+  inviteeIds: [targetUserId],
+  inviteAll: false
+}
+Set state calling.
+Emit/join socket room:
+call:join { callId }
+Hiển thị outgoing modal.
+Group call:
+
+{
+  conversationId,
+  type,
+  inviteAll: true
+}
+Hoặc truyền inviteeIds nếu mobile cần gọi một subset.
+
+6. Incoming Call Flow
+Khi nhận call:incoming:
+
+Nếu callerId === currentUserId thì bỏ qua.
+Nếu đang có call khác thì bỏ qua hoặc show busy tùy UX.
+Nếu conversation đang mute thì không phát ringtone.
+Set state incoming.
+Start ringtone loop.
+Fetch caller info nếu cần.
+Start timeout 60s:
+Nếu không accept/reject thì gọi:
+POST /calls/{callId}/missed
+Stop ringtone.
+Reset state.
+7. Accept/Join Flow
+Khi user bấm accept:
+
+Stop ringtone.
+POST /calls/{callId}/join.
+Emit:
+call:join { callId }
+Dùng token, wsUrl, roomName connect LiveKit.
+Enable mic.
+Nếu call video thì enable camera.
+Set state active.
+LiveKit connect:
+
+room.connect(wsUrl, token)
+room.localParticipant.setMicrophoneEnabled(true)
+room.localParticipant.setCameraEnabled(type === "video")
+8. Reject Flow
+Khi user bấm decline:
+
+Stop ringtone.
+POST /calls/{callId}/reject.
+Emit:
+call:leave { callId }
+Disconnect LiveKit nếu đã vào.
+Reset state.
+9. Leave/End Flow
+Private call:
+
+Khi user hang up, Web đang gọi endCallV2.
+API:
+POST /calls/{callId}/end
+Disconnect LiveKit.
+Reset state.
+Group call:
+
+Khi user rời group call, gọi:
+POST /calls/{callId}/leave
+Nhưng có rule quan trọng: nếu user là người cuối cùng còn joined trong phòng thì phải gọi /end, không chỉ /leave.
+Logic Web hiện tại:
+
+if (state.status === "calling") {
+  endCall(callId)
+} else if (isGroup && isCurrentUserLastJoinedParticipant()) {
+  endCall(callId)
+} else {
+  leaveCall(callId)
+
+  // fallback nếu server chưa terminal và mình là người cuối
+  if (!res.terminal && isCurrentUserLastJoinedParticipant()) {
+    endCall(callId)
+  }
+}
+Mobile cần implement y hệt để tránh call bị treo.
+
+10. Last Participant Rule
+Điều kiện “người cuối”:
+
+Group call.
+State đang active.
+LiveKit không còn remote participant.
+Trong participants, các participant status joined chỉ còn current user hoặc không còn ai.
+Pseudo:
+
+function isCurrentUserLastJoinedParticipant() {
+  if (!isGroup || status !== "active") return false;
+
+  if (livekitRoom.remoteParticipants.size > 0) return false;
+
+  const joinedIds = Object.entries(participants)
+    .filter(([_, p]) => p.status === "joined")
+    .map(([id]) => id);
+
+  if (joinedIds.length === 0) return true;
+
+  return joinedIds.every(id => id === currentUserId);
+}
+11. Socket Event Handling
+call:joined
+
+Update participant status joined.
+Nếu mình đang calling, người khác joined thì chuyển sang active hoặc join LiveKit nếu API/token đã có.
+call:left
+
+Update participant left.
+call:declined
+
+Update participant declined.
+Nếu private call bị declined thì reset/end UI.
+call:missed
+
+Update participant missed.
+call:busy
+
+Update busyUserIds.
+Show warning “recipient busy”.
+call:ended
+
+Stop ringtone.
+Disconnect LiveKit.
+Refresh call message in conversation.
+Set ended, sau đó reset.
+12. LiveKit UI Requirements
+Mobile cần có:
+
+Incoming call modal.
+Outgoing/ringing modal.
+Active call view.
+Audio/video toggle.
+Camera toggle.
+Speaker route nếu mobile native hỗ trợ.
+Hang up button.
+Render remote audio tracks.
+Render remote video tracks.
+Render local preview for video call.
+13. Notification/Ringtone
+Mobile nên đồng bộ behavior:
+
+Message sound và call ringtone tôn trọng mute conversation.
+Incoming call ringtone loop cho tới khi:
+accept
+reject
+missed
+ended
+state không còn incoming
+Nếu conversation bị mute thì vẫn hiện incoming modal trong app, nhưng không phát ringtone.
+14. Call Message
+Backend trả message type:
+
+type: "call"
+call: {
+  callId,
+  roomName,
+  callerId,
+  calleeIds,
+  status,
+  answeredAt,
+  endedAt,
+  durationSeconds,
+  endedBy,
+  callType: "audio" | "video",
+  participantOutcomes
+}
+text: "Cuộc gọi video 00:14"
+FE Mobile không nên parse theo text. Chỉ detect call message bằng:
+
+message.type === "call" || Boolean(message.call)
+15. Checklist Cho Mobile
+
+Tạo CallProvider.
+Connect /v1/calls socket sau login.
+Handle toàn bộ socket events.
+Implement REST service /calls.
+Implement LiveKit connect/join/cleanup.
+Implement incoming 60s missed timeout.
+Implement group “last participant must end call”.
+Respect muted conversation for ringtone.
+Render call message bằng type === "call".
+Refresh message/conversation list khi call ended/missed/rejected/completed.
