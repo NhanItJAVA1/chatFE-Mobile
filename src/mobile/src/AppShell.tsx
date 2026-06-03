@@ -416,9 +416,21 @@ const MainShell = () => {
         navigation.navigate("Chat", { chatUser });
     };
 
+    const handleSavedMessagePress = useCallback((navigation: any) => {
+        openPrivateChat(navigation, {
+            id: currentUserId,
+            displayName: "My Document",
+            avatar: (user as any)?.avatarUrl || (user as any)?.avatar,
+            avatarUrl: (user as any)?.avatarUrl || (user as any)?.avatar,
+            conversationType: "PRIVATE",
+            relationship: "self",
+            isSelfChat: true,
+        });
+    }, [currentUserId, user]);
+
     const renderMainScreen = (navigation: NativeStackScreenProps<RootStackParamList, "Main">["navigation"]) => {
         if (activeTab === "profile") {
-            return <ProfileScreen />;
+            return <ProfileScreen onSavedMessagePress={() => handleSavedMessagePress(navigation)} />;
         }
 
         if (activeTab === "addFriend") {
@@ -500,7 +512,6 @@ const MainShell = () => {
             aiSmartReplyEnabled={aiSmartReplyEnabled}
         />
     );
-
     const renderGroupChatScreen = ({ route, navigation }: NativeStackScreenProps<RootStackParamList, "GroupChat">) => {
         const selectedChat = route.params.selectedChat;
         const groupId = selectedChat.conversationId || selectedChat._id || selectedChat.id;

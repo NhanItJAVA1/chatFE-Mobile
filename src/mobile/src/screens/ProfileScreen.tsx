@@ -20,7 +20,7 @@ import type { EditData } from "@/types";
 
 const MAX_AVATAR_SIZE = 10 * 1024 * 1024;
 
-export const ProfileScreen = () => {
+export const ProfileScreen = ({ onSavedMessagePress }: { onSavedMessagePress?: () => void }) => {
     const { user, logout, updateProfile, updateAvatar } = useAuth();
     const [isEditing, setIsEditing] = useState(false);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -381,7 +381,7 @@ export const ProfileScreen = () => {
                 {truncateName(user?.displayName || "Huỳnh Trọng Nhân")}
             </Text>
             <Text style={styles.profilePhone}>
-                {user?.phone || "+84 91 446 22 97"}
+                {user?.phone || user?.phoneNumber || ""}
             </Text>
             {user?.bio && <Text style={styles.profileBio}>{user.bio}</Text>}
 
@@ -417,7 +417,7 @@ export const ProfileScreen = () => {
                         <Ionicons name="alert-circle" size={20} color="#ff6b6b" />
                     </View>
                     <Text style={styles.warningTitle}>
-                        +84 91 446 22 97 vẫn là số của bạn?
+                        {user?.phone || user?.phoneNumber || ""} vẫn là số của bạn?
                     </Text>
                 </View>
                 <Text style={styles.warningBody}>
@@ -426,7 +426,7 @@ export const ProfileScreen = () => {
                 </Text>
                 <View style={styles.warningDivider} />
                 <Pressable style={styles.warningLinkRow}>
-                    <Text style={styles.warningLink}>Giữ số +84 91 446 22 97</Text>
+                    <Text style={styles.warningLink}>Giữ số {user?.phone || user?.phoneNumber || ""}</Text>
                 </Pressable>
                 <View style={styles.warningDivider} />
                 <Pressable style={styles.warningLinkRow}>
@@ -435,35 +435,11 @@ export const ProfileScreen = () => {
             </Card>
 
             <Card style={styles.profileMenuCard}>
-                <Pressable style={styles.menuItemRow}>
-                    <View style={[styles.menuIcon, { backgroundColor: "#ff6b5c" }]}>
-                        <Ionicons name="person" size={18} color={colors.text} />
-                    </View>
-                    <Text style={styles.menuItemText}>Trang cá nhân</Text>
-                    <Ionicons
-                        name="chevron-forward"
-                        size={18}
-                        color={colors.textMuted}
-                    />
-                </Pressable>
-                <View style={styles.divider} />
-                <Pressable style={styles.menuItemRow}>
+                <Pressable style={styles.menuItemRow} onPress={onSavedMessagePress}>
                     <View style={[styles.menuIcon, { backgroundColor: "#3b82f6" }]}>
                         <Ionicons name="bookmark" size={18} color={colors.text} />
                     </View>
                     <Text style={styles.menuItemText}>Tin nhắn đã lưu</Text>
-                    <Ionicons
-                        name="chevron-forward"
-                        size={18}
-                        color={colors.textMuted}
-                    />
-                </Pressable>
-                <View style={styles.divider} />
-                <Pressable style={styles.menuItemRow}>
-                    <View style={[styles.menuIcon, { backgroundColor: "#22c55e" }]}>
-                        <Ionicons name="call" size={18} color={colors.text} />
-                    </View>
-                    <Text style={styles.menuItemText}>Cuộc gọi gần đây</Text>
                     <Ionicons
                         name="chevron-forward"
                         size={18}

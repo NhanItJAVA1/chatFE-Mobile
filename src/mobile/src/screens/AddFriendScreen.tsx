@@ -71,19 +71,22 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             return enrichedUser;
         }
 
+        const phone = receiver.phoneNumber || receiver.phone || request?.receiverPhone || "";
+        const resolvedName =
+            receiver.displayName ||
+            receiver.name ||
+            receiver.username ||
+            request?.receiverName ||
+            request?.displayName ||
+            request?.name ||
+            (phone ? phone : (id ? `User #${id.slice(-6)}` : ""));
+
         return {
             id,
             _id: id,
             email: receiver.email || "",
-            displayName:
-                receiver.displayName ||
-                receiver.name ||
-                receiver.username ||
-                request?.receiverName ||
-                request?.displayName ||
-                request?.name ||
-                (id ? `Người dùng ${id.slice(-4)}` : "Người dùng"),
-            phoneNumber: receiver.phoneNumber || receiver.phone || request?.receiverPhone || "",
+            displayName: resolvedName || "Đang tải...",
+            phoneNumber: phone,
             avatar: receiver.avatar || receiver.avatarUrl || request?.receiverAvatar || "",
             avatarUrl: receiver.avatarUrl || receiver.avatar || request?.receiverAvatar || "",
             status: receiver.status || receiver.presenceStatus || "offline",
@@ -105,7 +108,8 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
                 const request: any = state.sentRequests.find((item: any) => getRequestReceiverId(item) === userId);
                 const receiver = request?.receiverInfo || request?.receiver || request?.recipient || request?.toUser || request?.user;
-                return !receiver?.displayName && !receiver?.name && !receiver?.username;
+                if (receiver?.displayName && !receiver.displayName.startsWith("Đang tải") && !receiver.displayName.startsWith("User #")) return false;
+                return !receiver?.displayName && !receiver?.name && !receiver?.username || true;
             });
 
         if (missingUserIds.length === 0) {
@@ -132,7 +136,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
                             id: profile.id || profile._id || userId,
                             _id: profile._id || profile.id || userId,
                             email: profile.email || "",
-                            displayName: profile.displayName || profile.name || profile.username || "Người dùng",
+                            displayName: profile.displayName || profile.name || profile.username || profile.phoneNumber || profile.phone || "Người dùng",
                             phoneNumber: profile.phoneNumber || profile.phone || "",
                             phone: profile.phone || profile.phoneNumber || "",
                             avatar: profile.avatar || profile.avatarUrl || "",
