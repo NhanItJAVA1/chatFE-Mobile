@@ -49,8 +49,8 @@ type Colors = {
 };
 
 type Gradients = {
-    auth: string[];
-    profile: string[];
+    auth: readonly [string, string, ...string[]];
+    profile: readonly [string, string, ...string[]];
 };
 
 type Assets = {

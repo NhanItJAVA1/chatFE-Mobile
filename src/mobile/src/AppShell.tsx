@@ -223,6 +223,8 @@ const MainShell = () => {
 
         return (
             <HomeScreen
+                friendshipState={friendshipResult.state}
+                friendshipActions={friendshipResult.actions}
                 onFriendPress={(friend) => {
                     setSelectedChat(friend);
                     setActiveTab("chat");

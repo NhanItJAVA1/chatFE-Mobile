@@ -693,7 +693,7 @@ export const useFriendship = (
 
         const intervalId = setInterval(() => {
             loadSentRequests();
-        }, 5000);
+        }, 30000);
 
         return () => {
             clearInterval(intervalId);

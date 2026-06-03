@@ -65,9 +65,16 @@ export const RegisterScreen = ({
             }
 
             const { confirmPassword, ...payload } = formData;
-            await register(payload);
-            Alert.alert("Success", "Account created. Please login.");
-            onSwitchToLogin();
+            const response = await register(payload);
+            const hasToken =
+                !!response?.accessToken ||
+                !!response?.access_token ||
+                !!response?.token;
+
+            if (!hasToken || response?.pendingVerification) {
+                Alert.alert("Success", "Account created. Please login.");
+                onSwitchToLogin();
+            }
         } catch (submitError: any) {
             setLocalError(submitError.message || "Registration failed");
         }

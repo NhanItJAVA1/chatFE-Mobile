@@ -48,6 +48,19 @@ export {
     mediaService,
 } from "./mediaService";
 export { forwardService } from "./forwardService";
+export { aiService } from "./aiService";
+export type {
+    AiTone,
+    AiSummarizeResponse,
+    AiSmartReplyResponse,
+    AiToneAdjustResponse,
+    AiTranslateResponse,
+    AiSmartSearchResponse,
+    AiSmartSearchReference,
+    AiExtractTasksResponse,
+    AiExtractedTask,
+    AiReminderSuggestion,
+} from "./aiService";
 export {
     requestPresignedUrl,
     uploadToS3,

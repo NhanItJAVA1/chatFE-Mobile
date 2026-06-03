@@ -4,18 +4,51 @@ import { getApiBaseUrl } from "../runtime/config";
 import type { AuthResponse, User } from "@/types";
 
 const readAccessToken = (payload: any): string => {
-    return payload?.accessToken || payload?.token || "";
+    return payload?.accessToken || payload?.access_token || payload?.token || "";
 };
 
 const readUserProfile = (payload: any): User | null => {
     return payload?.user || payload?.profile || null;
 };
 
+const unwrapAuthPayload = (payload: any): any => {
+    if (payload?.data && !readAccessToken(payload) && !readUserProfile(payload)) {
+        return payload.data;
+    }
+
+    return payload;
+};
+
+const persistAuthPayload = async (payload: any): Promise<void> => {
+    const accessToken = readAccessToken(payload);
+
+    if (accessToken) {
+        console.log("[AUTH] Saving token:", accessToken.substring(0, 20) + "...");
+        await authStorage.setItem("token", accessToken);
+        if (payload.refreshToken) {
+            await authStorage.setItem("refreshToken", payload.refreshToken);
+        }
+    } else {
+        console.warn("[AUTH] No token in auth response:", payload);
+    }
+
+    const userProfile = readUserProfile(payload);
+    if (userProfile) {
+        await authStorage.setItem("user", JSON.stringify(userProfile));
+    }
+};
+
 export const authService = {
     register: async (userData: any): Promise<AuthResponse> => {
         try {
             const response = await api.post("/auth/register", userData);
-            return response;
+            const authData = unwrapAuthPayload(response);
+
+            if (!authData?.pendingVerification) {
+                await persistAuthPayload(authData);
+            }
+
+            return authData;
         } catch (error: any) {
             throw new Error(error.message || "Registration failed");
         }
@@ -23,28 +56,9 @@ export const authService = {
 
     login: async (payload: any): Promise<AuthResponse> => {
         try {
-            let authData = await api.post("/auth/login", payload);
-
-            if (authData?.data && !authData?.token && !authData?.accessToken) {
-                authData = authData.data;
-            }
-
-            const accessToken = readAccessToken(authData);
-
-            if (accessToken) {
-                console.log("[AUTH] Saving token:", accessToken.substring(0, 20) + "...");
-                await authStorage.setItem("token", accessToken);
-                if (authData.refreshToken) {
-                    await authStorage.setItem("refreshToken", authData.refreshToken);
-                }
-            } else {
-                console.warn("[AUTH] No token in login response:", authData);
-            }
-
-            const userProfile = readUserProfile(authData);
-            if (userProfile) {
-                await authStorage.setItem("user", JSON.stringify(userProfile));
-            }
+            const response = await api.post("/auth/login", payload);
+            const authData = unwrapAuthPayload(response);
+            await persistAuthPayload(authData);
 
             return authData;
         } catch (error: any) {

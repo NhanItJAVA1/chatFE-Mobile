@@ -11,7 +11,8 @@ import {
     TextInput,
     View,
 } from "react-native";
-import { useAuth, useFriendship } from "../../../shared/hooks";
+import { useAuth } from "../../../shared/hooks";
+import type { UseFriendshipActions, UseFriendshipState } from "../../../shared/hooks/useFriendship";
 import { ConversationService, type Conversation, type ConversationLastMessageSummary } from "../../../shared/services/conversationService";
 import { SocketService } from "../../../shared/services/socketService";
 import { Avatar, Card, SectionTitle } from "../components";
@@ -19,6 +20,8 @@ import { colors } from "../theme";
 import type { Friend } from "@/types";
 
 interface HomeScreenProps {
+    friendshipState: UseFriendshipState;
+    friendshipActions: UseFriendshipActions;
     onFriendPress?: (friend: any) => void;
     onGroupPress?: (conversation: Conversation) => void;
     onCreateGroupPress?: () => void;
@@ -28,6 +31,8 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
+    friendshipState: state,
+    friendshipActions: actions,
     onFriendPress,
     onGroupPress,
     onCreateGroupPress,
@@ -36,7 +41,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     onGroupCreatedAck,
 }) => {
     const { user, token } = useAuth();
-    const { state, actions } = useFriendship();
     const [query, setQuery] = useState("");
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [conversationsLoading, setConversationsLoading] = useState(false);
@@ -625,7 +629,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }
         };
 
-        const interval = setInterval(refreshConversations, 8000);
+        const interval = setInterval(refreshConversations, 30000);
         const appStateSub = AppState.addEventListener("change", (nextState) => {
             if (nextState === "active") {
                 refreshConversations();
