@@ -52,7 +52,6 @@ import {
   type AiTranslateResponse,
 } from "../../../shared/services/aiService";
 import { ConversationService, type MuteConversationOptions } from "../../../shared/services/conversationService";
-import { unfriend } from "../../../shared/services/friendService";
 import { checkFriendshipStatus, sendFriendRequest, unfriend } from "../../../shared/services/friendService";
 import { FriendSocketService, type FriendshipNotification } from "../../../shared/services/friendSocket";
 import { BlockService } from "../../../shared/services/blockService";
@@ -127,7 +126,7 @@ const MessageBubble: React.FC<{
   messageMap?: Record<string, MessagePayload | undefined>;
   translation?: AiTranslateResponse;
   isTranslating?: boolean;
-}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, isHighlighted, messageMap, onToggleReaction, onClearMyReactions, onProfileCardPress = {}, translation, isTranslating }) => {
+}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, isHighlighted, messageMap, onToggleReaction, onClearMyReactions, onProfileCardPress, translation, isTranslating }) => {
   const [showReactionPicker, setShowReactionPicker] = React.useState(false);
   const formatTime = (date: string) => {
     const d = new Date(date);
@@ -812,7 +811,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
   }, [friendId, chatUser?.name, onBackPress]);
 
   const { conversation, messages, isLoading, isLoadingMore, isSending, error, typingUsers, hasMoreMessages } = state;
-  const conversationId = conversation?._id || conversation?.id || chatUser?.conversationId || "";
   const conversationMuteUntil =
     localMuteUntil ||
     (conversation as any)?.muteUntil ||
@@ -2073,16 +2071,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
         <Pressable style={styles.aiHeaderButton} onPress={showAiMenu}>
           <Ionicons name="sparkles" size={22} color={colors.textOnAccent} />
         </Pressable>
-        <Pressable style={styles.muteHeaderButton} onPress={handleMuteButtonPress} disabled={muteLoading}>
-          {muteLoading ? (
-            <ActivityIndicator size="small" color={colors.text} />
-          ) : (
-            <Ionicons
-              name={isConversationMuted ? "notifications-off-outline" : "notifications-outline"}
-              size={22}
-              color={isConversationMuted ? colors.accentStrong : colors.text}
-            />
-          )}
         <Pressable
           style={[styles.headerIconButton, isSelfChat && styles.headerIconButtonDisabled]}
           onPress={handleStartAudioCall}
@@ -2308,6 +2296,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
           >
             <Text style={styles.aiUndoAction}>Hoàn tác</Text>
           </Pressable>
+        </View>
+      )}
       {isBlockedChatError && (
         <View style={styles.blockBanner}>
           <Ionicons name="ban-outline" size={18} color={colors.danger} />
@@ -2784,6 +2774,30 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
                   style={styles.menuItem}
                   onPress={() => {
                     setShowAvatarMenu(false);
+                    handleMuteButtonPress();
+                  }}
+                  disabled={muteLoading}
+                >
+                  {muteLoading ? (
+                    <ActivityIndicator color={isConversationMuted ? colors.accentStrong : colors.text} />
+                  ) : (
+                    <>
+                      <Ionicons
+                        name={isConversationMuted ? "notifications-off-outline" : "notifications-outline"}
+                        size={20}
+                        color={isConversationMuted ? colors.accentStrong : colors.text}
+                      />
+                      <Text style={styles.menuItemText}>
+                        {isConversationMuted ? "Bật thông báo" : "Tắt thông báo"}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+                <View style={styles.menuDivider} />
+                <Pressable
+                  style={styles.menuItem}
+                  onPress={() => {
+                    setShowAvatarMenu(false);
                     setShowShareProfileSheet(true);
                   }}
                   disabled={!friendId}
@@ -3016,16 +3030,6 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 22,
     backgroundColor: colors.accentStrong,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  muteHeaderButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surfaceTransparent,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
   },

@@ -36,7 +36,6 @@ import {
     type AiSummarizeResponse,
     type AiTone,
 } from "../../../shared/services/aiService";
-import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage } from "../components";
 import profileCardService from "../../../shared/services/profileCardService";
 import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage, PollCard, CreatePollModal, ProfileCardMessage, ContactPickerSheet } from "../components";
 import { JUMBO_EMOJI_ASSETS } from "../components/AnimatedEmojiMessage";
@@ -1913,20 +1912,6 @@ export const GroupChatScreen: React.FC<{
                     </Pressable>
                     <Pressable
                         style={styles.headerIconButton}
-                        onPress={handleMuteButtonPress}
-                        disabled={muteLoading}
-                        hitSlop={8}
-                    >
-                        {muteLoading ? (
-                            <ActivityIndicator size="small" color={colors.text} />
-                        ) : (
-                            <Ionicons
-                                name={isGroupMuted ? "notifications-off-outline" : "notifications-outline"}
-                                size={24}
-                                color={isGroupMuted ? colors.accentStrong : colors.text}
-                            />
-                        )}
-                    </Pressable>
                         onPress={handleStartGroupCall}
                         disabled={callState.status !== "idle"}
                         hitSlop={8}
@@ -1950,17 +1935,6 @@ export const GroupChatScreen: React.FC<{
                             />
                         </Pressable>
                     )}
-                    <Pressable
-                        style={styles.headerIconButton}
-                        onPress={onAddMembersPress}
-                        hitSlop={8}
-                    >
-                        <Ionicons
-                            name="person-add-outline"
-                            size={24}
-                            color={colors.text}
-                        />
-                    </Pressable>
                     <Pressable
                         style={styles.headerIconButton}
                         onPress={onSettingsPress}
@@ -2472,6 +2446,7 @@ export const GroupChatScreen: React.FC<{
                         )}
                     </View>
                 </View>
+            </Modal>
             <Modal
                 transparent
                 visible={!!actionMenuMessage}
@@ -3471,6 +3446,7 @@ const styles = StyleSheet.create({
         backgroundColor: colors.surface,
         borderWidth: 1,
         borderColor: colors.border,
+    },
     contextOverlay: {
         flex: 1,
         backgroundColor: "rgba(0,0,0,0.55)",

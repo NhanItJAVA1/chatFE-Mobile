@@ -1,8 +1,5 @@
-import { Platform } from "react-native";
 import { api } from "./api";
-import { authStorage } from "../runtime/storage";
-
-const DEVICE_ID_KEY = "deviceId";
+import { getDeviceHeaders, getOrCreateDeviceId } from "./deviceInfo";
 
 export type AuthSession = {
     id?: string;
@@ -21,37 +18,7 @@ export type AuthSession = {
     current?: boolean;
 };
 
-const createDeviceId = (): string => {
-    return `device-${Platform.OS}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-};
-
-const getDeviceUserAgent = (): string => {
-    const version = Platform.Version ? String(Platform.Version) : "unknown";
-    return `ChatChitMobile/${Platform.OS}; ${Platform.OS}/${version}`;
-};
-
-export const getOrCreateDeviceId = async (): Promise<string> => {
-    const existing = await authStorage.getItem(DEVICE_ID_KEY);
-    if (existing) {
-        return String(existing);
-    }
-
-    const next = createDeviceId();
-    await authStorage.setItem(DEVICE_ID_KEY, next);
-    return next;
-};
-
-export const getDeviceHeaders = async (): Promise<Record<string, string>> => {
-    const deviceId = await getOrCreateDeviceId();
-    const isWeb = Platform.OS === "web";
-    return {
-        "x-device-id": deviceId,
-        "x-device-type": isWeb ? "desktop-web" : "mobile-app",
-        "x-device-platform": isWeb ? "web" : "app",
-        "x-display-label": Platform.OS === "ios" ? "iPhone" : Platform.OS === "android" ? "Android device" : "Web browser",
-        ...(isWeb ? {} : { "user-agent": getDeviceUserAgent() }),
-    };
-};
+export { getDeviceHeaders, getOrCreateDeviceId };
 
 export class SessionService {
     static async getSessions(): Promise<AuthSession[]> {

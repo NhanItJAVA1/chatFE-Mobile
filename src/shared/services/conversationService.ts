@@ -381,6 +381,10 @@ export class ConversationService {
             const response = await api.delete(`/conversations/${conversationId}/mute`);
             return response.data || response;
         } catch (error: any) {
+            throw error;
+        }
+    }
+
     /**
      * Pin a conversation
      */

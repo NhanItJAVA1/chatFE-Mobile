@@ -459,6 +459,7 @@ const MainShell = () => {
                                         setGroupChatVersion((version) => version + 1);
                                         navigation.goBack();
                                     }}
+                                    onAddMembersPress={() => navigation.navigate("AddMembers", { groupId: route.params.groupId })}
                                 />
                             )}
                         </Stack.Screen>

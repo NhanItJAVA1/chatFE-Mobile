@@ -11,6 +11,7 @@ export type AuthResponse = {
     accessToken?: string;
     token?: string;
     refreshToken?: string;
+    refresh_token?: string;
     user?: User;
     data?: User;
     [key: string]: any;

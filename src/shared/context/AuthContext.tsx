@@ -1,10 +1,26 @@
 import React, { createContext, useEffect, useState, ReactNode } from "react";
 import { DeviceEventEmitter } from "react-native";
 import { authService } from "../services/authService";
+import { getDeviceInfo, getOrCreateDeviceId } from "../services/deviceInfo";
 import { updateProfile as updateProfileAPI } from "../services/userService";
 import type { User, AuthContextType, AuthProviderProps } from "@/types";
 
 export const AuthContext = createContext<AuthContextType | null>(null);
+
+const AUTH_DEBUG_PREFIX = "[AUTH_DEBUG]";
+
+const maskToken = (token?: string | null): string => {
+    if (!token) {
+        return "missing";
+    }
+
+    return `${token.slice(0, 8)}...${token.slice(-6)}`;
+};
+
+const readAccessToken = (payload: any): string => {
+    const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+    return data?.accessToken || data?.access_token || "";
+};
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
     const [user, setUser] = useState<User | null>(null);
@@ -18,23 +34,68 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         const restoreSession = async () => {
             try {
                 const savedToken = await authService.getToken();
+                const savedRefreshToken = await authService.getRefreshToken();
                 const savedUser = await authService.getUser();
 
                 if (!isActive) return;
 
-                if (savedToken) {
-                    setToken(savedToken);
+                console.log(`${AUTH_DEBUG_PREFIX} Restore session from storage`, {
+                    accessToken: maskToken(savedToken),
+                    hasRefreshToken: !!savedRefreshToken,
+                    hasUser: !!savedUser,
+                });
+
+                let activeToken = savedToken;
+                let didRefresh = false;
+
+                if (!activeToken && savedRefreshToken) {
+                    try {
+                        activeToken = await authService.refreshAccessToken();
+                        didRefresh = true;
+                    } catch (err: any) {
+                        console.error(`${AUTH_DEBUG_PREFIX} Restore refresh failed with no access token`, err?.message || err);
+                        await authService.clearLocalSession();
+                        setToken(null);
+                        setUser(null);
+                        return;
+                    }
+                }
+
+                if (activeToken) {
+                    try {
+                        const introspection = await authService.introspect(activeToken);
+                        if (!introspection.active) {
+                            if (savedRefreshToken) {
+                                activeToken = await authService.refreshAccessToken();
+                                didRefresh = true;
+                            } else {
+                                await authService.clearLocalSession();
+                                setToken(null);
+                                setUser(null);
+                                return;
+                            }
+                        }
+                    } catch (err: any) {
+                        if (savedRefreshToken) {
+                            try {
+                                activeToken = await authService.refreshAccessToken();
+                                didRefresh = true;
+                            } catch (refreshErr: any) {
+                                console.error(`${AUTH_DEBUG_PREFIX} Restore refresh failed after introspection error`, refreshErr?.message || refreshErr);
+                                await authService.clearLocalSession();
+                                setToken(null);
+                                setUser(null);
+                                return;
+                            }
+                        } else {
+                            throw err;
+                        }
+                    }
 
                     try {
-                        const introspection = await authService.introspect(savedToken);
-                        if (!introspection.active) {
-                            await authService.logout();
-                            setToken(null);
-                            setUser(null);
-                            return;
-                        }
+                        setToken(activeToken);
 
-                        const profileResponse = await authService.getProfile(savedToken);
+                        const profileResponse = await authService.getProfile(activeToken);
                         let profile = profileResponse;
 
                         if (!isActive) {
@@ -42,37 +103,65 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                         }
 
                         if (!profile.avatarUrl && profile.avatar) {
-                            profile.avatarUrl = profile.avatar;                        }
+                            profile.avatarUrl = profile.avatar;
+                        }
 
                         setUser(profile);
                         await authService.saveUser(profile);
+                        console.log(`${AUTH_DEBUG_PREFIX} Restore session succeeded`, {
+                            accessToken: maskToken(activeToken),
+                            refreshed: didRefresh,
+                            userId: profile?.id || (profile as any)?._id || (profile as any)?.userId,
+                        });
                     } catch (err: any) {
                         if (!isActive) {
                             return;
                         }
 
-                        console.error(
-                            "[AuthContext] Profile fetch failed during restore:",
-                            err.message
-                        );
+                        console.error(`${AUTH_DEBUG_PREFIX} Profile fetch failed during restore`, err.message);
 
-                        // If token is invalid or user not found, log out instead of falling back
-                        if (err.message?.includes("401") || err.message?.includes("404") || err.message?.includes("403")) {
-                            console.error("[AuthContext] Token invalid or user not found, logging out...");
-                            await authService.logout();
+                        const isAuthProfileError =
+                            err.status === 401 ||
+                            err.status === 403 ||
+                            err.status === 404 ||
+                            err.message?.includes("401") ||
+                            err.message?.includes("404") ||
+                            err.message?.includes("403");
+
+                        if (isAuthProfileError && savedRefreshToken && !didRefresh) {
+                            try {
+                                const refreshedToken = await authService.refreshAccessToken();
+                                const profile = await authService.getProfile(refreshedToken);
+                                if (!profile.avatarUrl && profile.avatar) {
+                                    profile.avatarUrl = profile.avatar;
+                                }
+                                setToken(refreshedToken);
+                                setUser(profile);
+                                await authService.saveUser(profile);
+                                console.log(`${AUTH_DEBUG_PREFIX} Restore profile succeeded after refresh`, {
+                                    accessToken: maskToken(refreshedToken),
+                                });
+                            } catch (refreshErr: any) {
+                                console.error(`${AUTH_DEBUG_PREFIX} Restore profile refresh failed`, refreshErr?.message || refreshErr);
+                                await authService.clearLocalSession();
+                                setToken(null);
+                                setUser(null);
+                            }
+                        } else if (isAuthProfileError) {
+                            await authService.clearLocalSession();
                             setToken(null);
                             setUser(null);
-                        } else if (savedUser) {                            setUser(savedUser);
+                        } else if (savedUser) {
+                            setUser(savedUser);
                         }
                     }
-                } else if (savedUser) {                    setUser(savedUser);
+                } else if (savedUser) {
+                    setUser(savedUser);
                 }
 
-                if (isActive) {
-                    setLoading(false);
-                }
             } catch (error: any) {
-                console.error("[AuthContext] Session restore error:", error);
+                console.error(`${AUTH_DEBUG_PREFIX} Session restore error`, error?.message || error);
+            } finally {
                 if (isActive) {
                     setLoading(false);
                 }
@@ -81,7 +170,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
         restoreSession();
 
-        const logoutSub = DeviceEventEmitter.addListener("forceLogout", () => {            setToken(null);
+        const logoutSub = DeviceEventEmitter.addListener("forceLogout", () => {
+            console.log(`${AUTH_DEBUG_PREFIX} Force logout event received`);
+            setToken(null);
             setUser(null);
         });
 
@@ -96,12 +187,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
             setError(null);
             setLoading(true);
             const response = await authService.register(userData);
+            const responseData = response?.data && typeof response.data === "object" ? response.data : response;
             const accessToken =
                 response?.accessToken ||
                 response?.access_token ||
-                response?.token;
+                response?.data?.accessToken ||
+                response?.data?.access_token;
 
-            if (!accessToken || response?.pendingVerification) {
+            if (!accessToken || responseData?.pendingVerification) {
                 return response;
             }
 
@@ -140,15 +233,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                 throw new Error("Phone/email and password are required");
             }
 
+            const deviceId = await getOrCreateDeviceId();
             const response = await authService.login({
                 ...(loginPhone ? { phone: loginPhone } : {}),
                 ...(loginEmail ? { email: loginEmail } : {}),
                 password: loginPassword,
+                deviceInfo: getDeviceInfo(deviceId),
             });
-            const token =
-                response?.token ||
-                response?.accessToken ||
-                response?.data?.token;
+            const token = readAccessToken(response) || await authService.getToken();
             if (!token) {
                 throw new Error("No token in login response");
             }
@@ -159,9 +251,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
             }
 
             setToken(token);
+            console.log(`${AUTH_DEBUG_PREFIX} Login set auth context token`, {
+                accessToken: maskToken(token),
+            });
 
-            const profile = await authService.getProfile(token);            if (!profile.avatarUrl && profile.avatar) {
-                profile.avatarUrl = profile.avatar;            }
+            const profile = await authService.getProfile(token);
+            if (!profile.avatarUrl && profile.avatar) {
+                profile.avatarUrl = profile.avatar;
+            }
 
             await authService.saveUser(profile);
             setUser(profile);
@@ -179,6 +276,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
     const logout = async (): Promise<void> => {
         try {
+            console.log(`${AUTH_DEBUG_PREFIX} Logout called from AuthContext`);
             await authService.logout();
         } catch (err: any) {
             console.error("Logout error:", err);

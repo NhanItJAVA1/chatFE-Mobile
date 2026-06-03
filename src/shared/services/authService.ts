@@ -1,16 +1,37 @@
-import { api } from "./api";
+import { api, tokenManager } from "./api";
 import { authStorage } from "../runtime/storage";
 import { getApiBaseUrl } from "../runtime/config";
 import { getDeviceHeaders } from "./sessionService";
 import { DeviceEventEmitter } from "react-native";
 import type { AuthResponse, User } from "@/types";
 
+const AUTH_DEBUG_PREFIX = "[AUTH_DEBUG]";
+
+const maskToken = (token?: string | null): string => {
+    if (!token) {
+        return "missing";
+    }
+
+    return `${token.slice(0, 8)}...${token.slice(-6)}`;
+};
+
+const unwrapPayload = (payload: any): any => {
+    return payload?.data && typeof payload.data === "object" ? payload.data : payload;
+};
+
 const readAccessToken = (payload: any): string => {
-    return payload?.accessToken || payload?.access_token || payload?.token || "";
+    const data = unwrapPayload(payload);
+    return data?.accessToken || data?.access_token || "";
+};
+
+const readRefreshToken = (payload: any): string => {
+    const data = unwrapPayload(payload);
+    return data?.refreshToken || data?.refresh_token || "";
 };
 
 const readUserProfile = (payload: any): User | null => {
-    return payload?.user || payload?.profile || null;
+    const data = unwrapPayload(payload);
+    return data?.user || data?.profile || null;
 };
 
 const publicAuthOptions = {
@@ -39,6 +60,27 @@ export const authService = {
                 headers: await getDeviceHeaders(),
                 ...publicAuthOptions,
             });
+            const responseData = unwrapPayload(response);
+            const pendingVerification = !!responseData?.pendingVerification;
+            const accessToken = readAccessToken(response);
+            const refreshToken = readRefreshToken(response);
+            const userProfile = readUserProfile(response);
+
+            if (accessToken && !pendingVerification) {
+                await authStorage.setItem("token", accessToken);
+                if (refreshToken) {
+                    await authStorage.setItem("refreshToken", refreshToken);
+                }
+                console.log(`${AUTH_DEBUG_PREFIX} Register stored token`, {
+                    accessToken: maskToken(accessToken),
+                    hasRefreshToken: !!refreshToken,
+                });
+            }
+
+            if (userProfile && !pendingVerification) {
+                await authStorage.setItem("user", JSON.stringify(userProfile));
+            }
+
             return response;
         } catch (error: any) {
             throw error;
@@ -59,24 +101,31 @@ export const authService = {
                 ...(phone ? { phone } : {}),
                 ...(email ? { email } : {}),
                 password,
+                ...(payload?.deviceInfo ? { deviceInfo: payload.deviceInfo } : {}),
             };
             let authData = await api.post("/auth/login", loginPayload, {
                 headers: await getDeviceHeaders(),
                 ...publicAuthOptions,
             });
 
-            if (authData?.data && !authData?.token && !authData?.accessToken) {
+            if (authData?.data && !authData?.accessToken && !authData?.access_token) {
                 authData = authData.data;
             }
 
             const accessToken = readAccessToken(authData);
+            const refreshToken = readRefreshToken(authData);
 
-            if (accessToken) {                await authStorage.setItem("token", accessToken);
-                if (authData.refreshToken) {
-                    await authStorage.setItem("refreshToken", authData.refreshToken);
+            if (accessToken) {
+                await authStorage.setItem("token", accessToken);
+                if (refreshToken) {
+                    await authStorage.setItem("refreshToken", refreshToken);
                 }
+                console.log(`${AUTH_DEBUG_PREFIX} Login stored token`, {
+                    accessToken: maskToken(accessToken),
+                    hasRefreshToken: !!refreshToken,
+                });
             } else {
-                console.warn("[AUTH] No token in login response:", authData);
+                console.warn(`${AUTH_DEBUG_PREFIX} Login response did not include access token`, authData);
             }
 
             const userProfile = readUserProfile(authData);
@@ -153,8 +202,11 @@ export const authService = {
                     },
                 });
 
-                if (!response.ok)
-                    throw new Error(`Profile fetch failed: ${response.status}`);
+                if (!response.ok) {
+                    const profileError: any = new Error(`Profile fetch failed: ${response.status}`);
+                    profileError.status = response.status;
+                    throw profileError;
+                }
 
                 const responseData = await response.json();
                 const profile = responseData.data || responseData;
@@ -174,16 +226,25 @@ export const authService = {
             return profile;
         } catch (error: any) {
             console.error("[authService] Get profile error:", error);
-            throw new Error("Failed to fetch profile");
+            const profileError: any = new Error(error?.message || "Failed to fetch profile");
+            profileError.status = error?.status;
+            throw profileError;
         }
     },
 
     saveToken: async (token: string): Promise<void> => {
         await authStorage.setItem("token", token);
+        console.log(`${AUTH_DEBUG_PREFIX} Saved access token`, {
+            accessToken: maskToken(token),
+        });
     },
 
     getToken: async (): Promise<string | null> => {
         return await authStorage.getItem("token");
+    },
+
+    getRefreshToken: async (): Promise<string | null> => {
+        return await authStorage.getItem("refreshToken");
     },
 
     saveUser: async (user: User): Promise<void> => {
@@ -198,12 +259,20 @@ export const authService = {
     logout: async (): Promise<void> => {
         try {
             const refreshToken = await authStorage.getItem("refreshToken");
+            console.log(`${AUTH_DEBUG_PREFIX} Logout requested`, {
+                hasRefreshToken: !!refreshToken,
+            });
             if (refreshToken) {
-                await api.post("/auth/logout", { refreshToken });
+                await api.post("/auth/logout", { refreshToken }, {
+                    headers: await getDeviceHeaders(),
+                    skipAuth: true,
+                    skipRefresh: true,
+                });
             }
         } catch (error: any) {
             console.error("Logout failed:", error);
         } finally {
+            console.log(`${AUTH_DEBUG_PREFIX} Clearing local auth session`);
             await authStorage.removeItem("token");
             await authStorage.removeItem("refreshToken");
             await authStorage.removeItem("user");
@@ -230,6 +299,7 @@ export const authService = {
     },
 
     clearLocalSession: async (): Promise<void> => {
+        console.log(`${AUTH_DEBUG_PREFIX} Clearing local auth session`);
         await authStorage.removeItem("token");
         await authStorage.removeItem("refreshToken");
         await authStorage.removeItem("user");
@@ -254,27 +324,30 @@ export const authService = {
 
     refreshAccessToken: async (): Promise<string> => {
         try {
-            const refreshToken = await authStorage.getItem("refreshToken");
-            if (!refreshToken) {
+            const currentRefreshToken = await tokenManager.getRefreshToken();
+            if (!currentRefreshToken) {
                 throw new Error("No refresh token available");
             }
 
-            const response = await api.post("/auth/refresh", { refreshToken }, {
-                ...publicAuthOptions,
+            console.log(`${AUTH_DEBUG_PREFIX} AuthService attempting token refresh`, {
+                refreshToken: maskToken(currentRefreshToken),
             });
-            const payload = response?.data || response;
-            const newToken = payload?.accessToken || payload?.token;
-
-            if (newToken) {
-                await authStorage.setItem("token", newToken);
-                if (payload?.refreshToken) {
-                    await authStorage.setItem("refreshToken", payload.refreshToken);
-                }
-                return newToken;
+            const refreshed = await tokenManager.refreshAccessToken();
+            if (!refreshed) {
+                throw new Error("Token refresh failed");
             }
 
-            throw new Error("No token in refresh response");
+            const newToken = await tokenManager.getAccessToken();
+            if (!newToken) {
+                throw new Error("No auth accessToken after refresh");
+            }
+
+            console.log(`${AUTH_DEBUG_PREFIX} Refresh token succeeded via authService`, {
+                accessToken: maskToken(newToken),
+            });
+            return newToken;
         } catch (error: any) {
+            console.error(`${AUTH_DEBUG_PREFIX} Refresh token failed via authService`, error?.message || error);
             throw new Error(error.message || "Token refresh failed");
         }
     },

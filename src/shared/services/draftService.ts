@@ -74,7 +74,7 @@ export const draftService = {
         await api.post(
             `/conversations/${conversationId}/drafts`,
             { text },
-            { suppressErrorLog: true },
+            { suppressErrorLog: true, skipRefresh: true },
         );
     },
 
@@ -83,6 +83,7 @@ export const draftService = {
 
         await api.delete(`/conversations/${conversationId}/drafts`, {
             suppressErrorLog: true,
+            skipRefresh: true,
         });
     },
 };

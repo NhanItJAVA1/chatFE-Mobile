@@ -35,6 +35,7 @@ import searchService, {
 import { Avatar, Card, SectionTitle } from "../components";
 import { colors } from "../theme";
 import type { Friend } from "@/types";
+import type { UseFriendshipActions, UseFriendshipState } from "../../../shared/hooks/useFriendship";
 
 interface HomeScreenProps {
     friendshipState: UseFriendshipState;

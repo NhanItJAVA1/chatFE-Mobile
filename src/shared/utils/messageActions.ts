@@ -43,6 +43,8 @@ export const buildMessageActionSheetOptions = ({
 
     if (onTranslate) {
         buttons.push({ text: "Dịch tin nhắn", style: "default", onPress: onTranslate });
+    }
+
     if (onForward) {
         buttons.push({ text: "Chuyển tiếp", style: "default", onPress: onForward });
     }
