@@ -10,7 +10,6 @@ import {
     Alert,
     KeyboardAvoidingView,
     Platform,
-    StatusBar,
     Image,
     ScrollView,
     Modal,
@@ -164,230 +163,230 @@ const GroupMessageBubble: React.FC<{
     isHighlighted,
     messageMap = {},
 }) => {
-    const [showReactionPicker, setShowReactionPicker] = useState(false);
-    const hasMedia = message.media && message.media.length > 0;
-    const trimmedText = String(message.text || "").trim();
-    const compactText = String(message.text || "").replace(/\s+/g, "");
-    const hasText = trimmedText.length > 0;
-    const isJumboEmojiOnly = !!JUMBO_EMOJI_ASSETS[trimmedText] && compactText === trimmedText;
-    const isProfileCard = String(message.type || message.messageType || "").toLowerCase() === "profile_card";
-    const isForwarded = Boolean(
-        message?.isForwarded ||
-        message?.forwarded ||
-        message?.forwardedFrom ||
-        message?.forwardedFromMessageId ||
-        message?.originalMessageId ||
-        message?.sourceMessageId
-    );
-    const resolvedQuotedMessage =
-        message.quotedMessage || (message.quotedMessageId && messageMap[message.quotedMessageId]) || null;
-    const reactionGroups = Object.values(
-        ((message.reactions || []) as any[]).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
-            const emoji = reaction?.emoji;
-            if (!emoji) return acc;
-            if (!acc[emoji]) {
-                acc[emoji] = { emoji, count: 0, selected: false };
-            }
-            acc[emoji].count += 1;
-            if (currentUserId && reaction.userId === currentUserId) {
-                acc[emoji].selected = true;
-            }
-            return acc;
-        }, {})
-    );
-    const reactionSummary = {
-        emojis: reactionGroups.map((reaction) => reaction.emoji),
-        total: reactionGroups.reduce((sum, reaction) => sum + reaction.count, 0),
-        selected: reactionGroups.some((reaction) => reaction.selected),
-    };
-    const myLastReaction = [...((message.reactions || []) as any[])]
-        .reverse()
-        .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
-    const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
-    const hasDefaultReaction = !!myLastReaction;
-    const timeText = new Date(message.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+        const [showReactionPicker, setShowReactionPicker] = useState(false);
+        const hasMedia = message.media && message.media.length > 0;
+        const trimmedText = String(message.text || "").trim();
+        const compactText = String(message.text || "").replace(/\s+/g, "");
+        const hasText = trimmedText.length > 0;
+        const isJumboEmojiOnly = !!JUMBO_EMOJI_ASSETS[trimmedText] && compactText === trimmedText;
+        const isProfileCard = String(message.type || message.messageType || "").toLowerCase() === "profile_card";
+        const isForwarded = Boolean(
+            message?.isForwarded ||
+            message?.forwarded ||
+            message?.forwardedFrom ||
+            message?.forwardedFromMessageId ||
+            message?.originalMessageId ||
+            message?.sourceMessageId
+        );
+        const resolvedQuotedMessage =
+            message.quotedMessage || (message.quotedMessageId && messageMap[message.quotedMessageId]) || null;
+        const reactionGroups = Object.values(
+            ((message.reactions || []) as any[]).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
+                const emoji = reaction?.emoji;
+                if (!emoji) return acc;
+                if (!acc[emoji]) {
+                    acc[emoji] = { emoji, count: 0, selected: false };
+                }
+                acc[emoji].count += 1;
+                if (currentUserId && reaction.userId === currentUserId) {
+                    acc[emoji].selected = true;
+                }
+                return acc;
+            }, {})
+        );
+        const reactionSummary = {
+            emojis: reactionGroups.map((reaction) => reaction.emoji),
+            total: reactionGroups.reduce((sum, reaction) => sum + reaction.count, 0),
+            selected: reactionGroups.some((reaction) => reaction.selected),
+        };
+        const myLastReaction = [...((message.reactions || []) as any[])]
+            .reverse()
+            .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
+        const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
+        const hasDefaultReaction = !!myLastReaction;
+        const timeText = new Date(message.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
 
-    const renderSenderName = () => !isOwn ? (
-        <View style={styles.senderNameRow}>
-            <Text style={styles.senderName}>{senderName}</Text>
-            {roleIcon ? <Text style={styles.roleIcon}>{roleIcon}</Text> : null}
-        </View>
-    ) : null;
+        const renderSenderName = () => !isOwn ? (
+            <View style={styles.senderNameRow}>
+                <Text style={styles.senderName}>{senderName}</Text>
+                {roleIcon ? <Text style={styles.roleIcon}>{roleIcon}</Text> : null}
+            </View>
+        ) : null;
 
-    const renderReactionPicker = () => (
-        <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
-            {QUICK_REACTIONS.map((emoji) => {
-                const selected = ((message.reactions || []) as any[]).some(
-                    (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
-                );
-                return (
+        const renderReactionPicker = () => (
+            <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+                {QUICK_REACTIONS.map((emoji) => {
+                    const selected = ((message.reactions || []) as any[]).some(
+                        (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
+                    );
+                    return (
+                        <Pressable
+                            key={emoji}
+                            style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                            onPress={() => {
+                                setShowReactionPicker(false);
+                                onToggleReaction?.(emoji, false);
+                            }}
+                        >
+                            <Text style={styles.quickReactionText}>{emoji}</Text>
+                        </Pressable>
+                    );
+                })}
+                {hasDefaultReaction && (
                     <Pressable
-                        key={emoji}
-                        style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                        style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
                         onPress={() => {
                             setShowReactionPicker(false);
-                            onToggleReaction?.(emoji, false);
+                            onClearMyReactions?.();
                         }}
                     >
-                        <Text style={styles.quickReactionText}>{emoji}</Text>
+                        <Ionicons name="close" size={17} color={colors.danger} />
                     </Pressable>
-                );
-            })}
-            {hasDefaultReaction && (
+                )}
+            </View>
+        );
+
+        const renderReactionSummary = () => reactionGroups.length > 0 ? (
+            <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
                 <Pressable
-                    style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
-                    onPress={() => {
-                        setShowReactionPicker(false);
-                        onClearMyReactions?.();
-                    }}
+                    style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                    onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
                 >
-                    <Ionicons name="close" size={17} color={colors.danger} />
+                    <Text style={styles.reactionText}>
+                        {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                    </Text>
                 </Pressable>
-            )}
-        </View>
-    );
+            </View>
+        ) : null;
 
-    const renderReactionSummary = () => reactionGroups.length > 0 ? (
-        <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+        const renderQuickReactionButton = () => (
             <Pressable
-                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+                hitSlop={8}
                 onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+                onLongPress={() => setShowReactionPicker((value) => !value)}
+                delayLongPress={220}
             >
-                <Text style={styles.reactionText}>
-                    {reactionSummary.emojis.join(" ")} {reactionSummary.total}
-                </Text>
+                {hasDefaultReaction ? (
+                    <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                        {defaultReactionEmoji}
+                    </Text>
+                ) : (
+                    <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+                )}
             </Pressable>
-        </View>
-    ) : null;
+        );
 
-    const renderQuickReactionButton = () => (
-        <Pressable
-            style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
-            hitSlop={8}
-            onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
-            onLongPress={() => setShowReactionPicker((value) => !value)}
-            delayLongPress={220}
-        >
-            {hasDefaultReaction ? (
-                <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
-                    {defaultReactionEmoji}
-                </Text>
-            ) : (
-                <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
-            )}
-        </Pressable>
-    );
-
-    return (
-        <HighlightableMessage
-            onLongPress={onLongPress}
-            delayLongPress={300}
-            isHighlighted={!!isHighlighted}
-            style={[
-                styles.messageBubbleRow,
-                isOwn ? styles.outgoingRow : styles.incomingRow,
-                isHighlighted && styles.messageHighlighted,
-            ]}
-        >
-            {!isOwn && (
-                <Avatar
-                    label={senderInitials}
-                    size={32}
-                    backgroundColor={colors.accentStrong}
-                    imageUrl={senderAvatar}
-                />
-            )}
-
-            <View style={[
-                styles.messageContentWrapper,
-                hasMedia && !hasText && (
-                    isOwn
-                        ? styles.messageContentWrapperMediaOnlyOutgoing
-                        : styles.messageContentWrapperMediaOnlyIncoming
-                ),
-                !isOwn && styles.messageContentWrapperIncoming,
-                isOwn && styles.messageContentWrapperOutgoing,
-            ]}>
-                {isProfileCard && (
-                    <ProfileCardMessage
-                        user={message.profileCard}
-                        userId={message.profileCardUserId}
-                        isOwn={isOwn}
-                        onMessagePress={onProfileCardPress}
-                        onViewProfilePress={onProfileCardPress}
+        return (
+            <HighlightableMessage
+                onLongPress={onLongPress}
+                delayLongPress={300}
+                isHighlighted={!!isHighlighted}
+                style={[
+                    styles.messageBubbleRow,
+                    isOwn ? styles.outgoingRow : styles.incomingRow,
+                    isHighlighted && styles.messageHighlighted,
+                ]}
+            >
+                {!isOwn && (
+                    <Avatar
+                        label={senderInitials}
+                        size={32}
+                        backgroundColor={colors.accentStrong}
+                        imageUrl={senderAvatar}
                     />
                 )}
 
-                {!isProfileCard && hasMedia && (
-                    <View style={[styles.mediaContainer, !hasText && styles.mediaReactionWrap]}>
-                        {!hasText && isForwarded && (
-                            <View style={styles.forwardedLabelRow}>
-                                <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
-                                <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
-                            </View>
-                        )}
-                        {!hasText && showReactionPicker && renderReactionPicker()}
-                        {message.media.map((m: any, idx: number) => (
-                            <MediaMessage
-                                key={idx}
-                                media={m}
-                                isSender={isOwn}
-                                layoutMode={hasText ? "compact" : "standalone"}
-                            />
-                        ))}
-                        {!hasText && renderReactionSummary()}
-                        {!hasText && renderQuickReactionButton()}
-                    </View>
-                )}
-
-                {!isProfileCard && !hasMedia && isJumboEmojiOnly && (
-                    <View style={styles.jumboEmojiWrap}>
-                        {showReactionPicker && renderReactionPicker()}
-                        {renderSenderName()}
-                        <AnimatedEmojiMessage
-                            emoji={trimmedText}
-                            isNew={message.createdAt ? new Date().getTime() - new Date(message.createdAt).getTime() < 5000 : false}
-                            isMine={isOwn}
+                <View style={[
+                    styles.messageContentWrapper,
+                    hasMedia && !hasText && (
+                        isOwn
+                            ? styles.messageContentWrapperMediaOnlyOutgoing
+                            : styles.messageContentWrapperMediaOnlyIncoming
+                    ),
+                    !isOwn && styles.messageContentWrapperIncoming,
+                    isOwn && styles.messageContentWrapperOutgoing,
+                ]}>
+                    {isProfileCard && (
+                        <ProfileCardMessage
+                            user={message.profileCard}
+                            userId={message.profileCardUserId}
+                            isOwn={isOwn}
+                            onMessagePress={onProfileCardPress}
+                            onViewProfilePress={onProfileCardPress}
                         />
-                        <View style={[styles.jumboEmojiTimePill, isOwn ? styles.jumboEmojiTimePillOwn : styles.jumboEmojiTimePillOther]}>
-                            <Text style={styles.messageTime}>{timeText}</Text>
+                    )}
+
+                    {!isProfileCard && hasMedia && (
+                        <View style={[styles.mediaContainer, !hasText && styles.mediaReactionWrap]}>
+                            {!hasText && isForwarded && (
+                                <View style={styles.forwardedLabelRow}>
+                                    <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
+                                    <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
+                                </View>
+                            )}
+                            {!hasText && showReactionPicker && renderReactionPicker()}
+                            {message.media.map((m: any, idx: number) => (
+                                <MediaMessage
+                                    key={idx}
+                                    media={m}
+                                    isSender={isOwn}
+                                    layoutMode={hasText ? "compact" : "standalone"}
+                                />
+                            ))}
+                            {!hasText && renderReactionSummary()}
+                            {!hasText && renderQuickReactionButton()}
                         </View>
-                        {renderReactionSummary()}
-                        {renderQuickReactionButton()}
-                    </View>
-                )}
+                    )}
 
-                {!isProfileCard && hasText && !isJumboEmojiOnly && (
-                    <View style={[styles.messageBubble, isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther]}>
-                        {isForwarded && (
-                            <View style={styles.forwardedLabelRow}>
-                                <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
-                                <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
-                            </View>
-                        )}
-                        {showReactionPicker && renderReactionPicker()}
-                        {renderSenderName()}
-                        {resolvedQuotedMessage ? (
-                            <QuotedMessageBlock
-                                quotedMessage={resolvedQuotedMessage}
-                                isOwn={isOwn}
-                                onPress={() => message.quotedMessageId && onPressQuoted?.(message.quotedMessageId)}
+                    {!isProfileCard && !hasMedia && isJumboEmojiOnly && (
+                        <View style={styles.jumboEmojiWrap}>
+                            {showReactionPicker && renderReactionPicker()}
+                            {renderSenderName()}
+                            <AnimatedEmojiMessage
+                                emoji={trimmedText}
+                                isNew={message.createdAt ? new Date().getTime() - new Date(message.createdAt).getTime() < 5000 : false}
+                                isMine={isOwn}
                             />
-                        ) : null}
-                        <Text style={[styles.messageText, isOwn ? styles.messageTextOwn : styles.messageTextOther]}>
-                            {trimmedText}
-                        </Text>
-                        <Text style={styles.messageTime}>{timeText}</Text>
-                        {renderReactionSummary()}
-                        {renderQuickReactionButton()}
-                    </View>
-                )}
+                            <View style={[styles.jumboEmojiTimePill, isOwn ? styles.jumboEmojiTimePillOwn : styles.jumboEmojiTimePillOther]}>
+                                <Text style={styles.messageTime}>{timeText}</Text>
+                            </View>
+                            {renderReactionSummary()}
+                            {renderQuickReactionButton()}
+                        </View>
+                    )}
 
-                {hasMedia && !hasText && renderSenderName()}
-            </View>
-        </HighlightableMessage>
-    );
-};
+                    {!isProfileCard && hasText && !isJumboEmojiOnly && (
+                        <View style={[styles.messageBubble, isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther]}>
+                            {isForwarded && (
+                                <View style={styles.forwardedLabelRow}>
+                                    <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
+                                    <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
+                                </View>
+                            )}
+                            {showReactionPicker && renderReactionPicker()}
+                            {renderSenderName()}
+                            {resolvedQuotedMessage ? (
+                                <QuotedMessageBlock
+                                    quotedMessage={resolvedQuotedMessage}
+                                    isOwn={isOwn}
+                                    onPress={() => message.quotedMessageId && onPressQuoted?.(message.quotedMessageId)}
+                                />
+                            ) : null}
+                            <Text style={[styles.messageText, isOwn ? styles.messageTextOwn : styles.messageTextOther]}>
+                                {trimmedText}
+                            </Text>
+                            <Text style={styles.messageTime}>{timeText}</Text>
+                            {renderReactionSummary()}
+                            {renderQuickReactionButton()}
+                        </View>
+                    )}
+
+                    {hasMedia && !hasText && renderSenderName()}
+                </View>
+            </HighlightableMessage>
+        );
+    };
 
 const getMessageCreatedAtMs = (message: any): number => {
     const timestamp = new Date(message?.createdAt || "").getTime();
@@ -515,293 +514,263 @@ export const GroupChatScreen: React.FC<{
     onOpenPrivateChat,
     aiSmartReplyEnabled = false,
 }) => {
-    const { groupId, searchTargetMessageId, searchTargetMessage, searchContextMessages } = route.params || {};
-    const authContext = useAuth();
-    const token = authContext.token;
-    const { user } = authContext;
-    const {
-        state: chatState,
-        actions: chatActions,
-        flatListRef,
-        highlightedMessageId,
-    } = useGroupChatMessage(groupId, token || "");
+        const { groupId, searchTargetMessageId, searchTargetMessage, searchContextMessages } = route.params || {};
+        const authContext = useAuth();
+        const token = authContext.token;
+        const { user } = authContext;
+        const {
+            state: chatState,
+            actions: chatActions,
+            flatListRef,
+            highlightedMessageId,
+        } = useGroupChatMessage(groupId, token || "");
 
-    // Highlight state is managed inside useScrollToMessage (via useGroupChatMessage)
-    const { state: groupState, actions: groupActions } = useGroupChat();
-    const { startCall, joinActiveCall, state: callState } = useCall();
-    const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
-    const { draftText: messageText, setDraftText: setMessageText, clearDraft } = useDraft(groupId || "");
+        // Highlight state is managed inside useScrollToMessage (via useGroupChatMessage)
+        const { state: groupState, actions: groupActions } = useGroupChat();
+        const { startCall, joinActiveCall, state: callState } = useCall();
+        const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
+        const { draftText: messageText, setDraftText: setMessageText, clearDraft } = useDraft(groupId || "");
 
-    useEffect(() => {
-        groupActions.setupGroupListeners();
-        return () => {
-            groupActions.cleanupGroupListeners();
-        };
-    }, [groupActions]);
+        useEffect(() => {
+            groupActions.setupGroupListeners();
+            return () => {
+                groupActions.cleanupGroupListeners();
+            };
+        }, [groupActions]);
 
-    useEffect(() => {
-        const normalizedGroupId = String(groupId || "");
-        return () => {
-            if (!normalizedGroupId) {
-                return;
-            }
-
-            SocketService.leaveConversation(normalizedGroupId).catch(() => { });
-        };
-    }, [groupId]);
-
-    // Local state
-    const [isSending, setIsSending] = useState(false);
-    const [showMediaMenu, setShowMediaMenu] = useState(false);
-    const [showContactPicker, setShowContactPicker] = useState(false);
-    const [profileCardSendingUserId, setProfileCardSendingUserId] = useState<string | null>(null);
-    const [profileCardSentUserIds, setProfileCardSentUserIds] = useState<Set<string>>(new Set());
-    const [draftMedia, setDraftMedia] = useState<DraftMediaAsset[]>([]);
-    const [uploading, setUploading] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState(0);
-    const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
-    const [showForwardDialog, setShowForwardDialog] = useState(false);
-    const [forwardMessageIds, setForwardMessageIds] = useState<string[]>([]);
-    const [showEditDialog, setShowEditDialog] = useState(false);
-    const [editText, setEditText] = useState("");
-    const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
-    const [actionMenuMessage, setActionMenuMessage] = useState<any | null>(null);
-    const [actionMenuButtons, setActionMenuButtons] = useState<MessageActionButton[]>([]);
-    const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
-    const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-    const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
-    const [showAiQuickMenu, setShowAiQuickMenu] = useState(false);
-    const [showTonePicker, setShowTonePicker] = useState(false);
-    const [showAiPanel, setShowAiPanel] = useState(false);
-    const [aiPanelMode, setAiPanelMode] = useState<AiPanelMode>("summary");
-    const [aiLoading, setAiLoading] = useState(false);
-    const [aiSummary, setAiSummary] = useState<AiSummarizeResponse | null>(null);
-    const [aiSearchQuery, setAiSearchQuery] = useState("");
-    const [aiSearchResult, setAiSearchResult] = useState<AiSmartSearchResponse | null>(null);
-    const [aiTasks, setAiTasks] = useState<AiExtractTasksResponse | null>(null);
-    const [smartReplies, setSmartReplies] = useState<string[]>([]);
-    const [smartReplyHiddenFor, setSmartReplyHiddenFor] = useState<string | null>(null);
-    const [toneLoading, setToneLoading] = useState<AiTone | null>(null);
-    const [previousDraft, setPreviousDraft] = useState<string | null>(null);
-    const [showMuteDialog, setShowMuteDialog] = useState(false);
-    const [selectedMuteOption, setSelectedMuteOption] = useState<MuteOptionKey>("1h");
-    const [muteLoading, setMuteLoading] = useState(false);
-    const [localMuteUntil, setLocalMuteUntil] = useState<string | null>(null);
-    const [showCreatePollModal, setShowCreatePollModal] = useState(false);
-    const [isCreatingPoll, setIsCreatingPoll] = useState(false);
-    const [activeGroupCall, setActiveGroupCall] = useState<CallSession | null>(null);
-
-    // Refs
-    // flatListRef comes from useGroupChatMessage → useScrollToMessage (enables scrollToMessage)
-    const imageViewerScrollRef = useRef<FlatList>(null);
-    const actionsRef = useRef(chatActions);
-    const kickedOutRef = useRef(false);
-    const currentMemberMuteUntil = useMemo(() => {
-        const currentMember = groupState.members?.find((member: any) => {
-            const memberUserId = member?.userId || member?._id || member?.id || "";
-            return String(memberUserId) === String(currentUserId);
-        });
-
-        return (currentMember as any)?.muteUntil || null;
-    }, [currentUserId, groupState.members]);
-    const groupMuteUntil = localMuteUntil || currentMemberMuteUntil;
-    const isGroupMuted = isMuteUntilActive(groupMuteUntil);
-    const onBackPressRef = useRef(onBackPress);
-    const latestMessage = chatState.messages[0];
-    const latestMessageKey = String(latestMessage?._id || latestMessage?.id || latestMessage?.createdAt || "");
-    const shouldShowSmartReplies =
-        aiSmartReplyEnabled &&
-        !!groupId &&
-        !messageText.trim() &&
-        !!latestMessage?.text &&
-        String(latestMessage.senderId || "") !== String(currentUserId) &&
-        smartReplyHiddenFor !== latestMessageKey;
-
-    const scrollToLatestMessage = useCallback((animated = true) => {
-        // For inverted FlatList, latest message is at offset 0.
-        flatListRef.current?.scrollToOffset({ offset: 0, animated });
-    }, []);
-
-    // Update actionsRef when chatActions changes
-    useEffect(() => {
-        actionsRef.current = chatActions;
-    }, [chatActions]);
-
-    useEffect(() => {
-        onBackPressRef.current = onBackPress;
-    }, [onBackPress]);
-
-    useEffect(() => {
-        let isActive = true;
-
-        const loadSmartReplies = async () => {
-            if (!aiSmartReplyEnabled || !shouldShowSmartReplies) {
-                setSmartReplies([]);
-                return;
-            }
-
-            try {
-                const result = await aiService.smartReply(String(groupId));
-                if (isActive) {
-                    setSmartReplies(result.replies || []);
+        useEffect(() => {
+            const normalizedGroupId = String(groupId || "");
+            return () => {
+                if (!normalizedGroupId) {
+                    return;
                 }
-            } catch {
-                if (isActive) {
-                    setSmartReplies([]);
-                }
-            }
-        };
 
-        loadSmartReplies();
+                SocketService.leaveConversation(normalizedGroupId).catch(() => { });
+            };
+        }, [groupId]);
 
-        return () => {
-            isActive = false;
-        };
-    }, [aiSmartReplyEnabled, groupId, latestMessageKey, shouldShowSmartReplies]);
+        // Local state
+        const [isSending, setIsSending] = useState(false);
+        const [showMediaMenu, setShowMediaMenu] = useState(false);
+        const [showContactPicker, setShowContactPicker] = useState(false);
+        const [profileCardSendingUserId, setProfileCardSendingUserId] = useState<string | null>(null);
+        const [profileCardSentUserIds, setProfileCardSentUserIds] = useState<Set<string>>(new Set());
+        const [draftMedia, setDraftMedia] = useState<DraftMediaAsset[]>([]);
+        const [uploading, setUploading] = useState(false);
+        const [uploadProgress, setUploadProgress] = useState(0);
+        const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
+        const [showForwardDialog, setShowForwardDialog] = useState(false);
+        const [forwardMessageIds, setForwardMessageIds] = useState<string[]>([]);
+        const [showEditDialog, setShowEditDialog] = useState(false);
+        const [editText, setEditText] = useState("");
+        const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+        const [actionMenuMessage, setActionMenuMessage] = useState<any | null>(null);
+        const [actionMenuButtons, setActionMenuButtons] = useState<MessageActionButton[]>([]);
+        const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
+        const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+        const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
+        const [showAiQuickMenu, setShowAiQuickMenu] = useState(false);
+        const [showTonePicker, setShowTonePicker] = useState(false);
+        const [showAiPanel, setShowAiPanel] = useState(false);
+        const [aiPanelMode, setAiPanelMode] = useState<AiPanelMode>("summary");
+        const [aiLoading, setAiLoading] = useState(false);
+        const [aiSummary, setAiSummary] = useState<AiSummarizeResponse | null>(null);
+        const [aiSearchQuery, setAiSearchQuery] = useState("");
+        const [aiSearchResult, setAiSearchResult] = useState<AiSmartSearchResponse | null>(null);
+        const [aiTasks, setAiTasks] = useState<AiExtractTasksResponse | null>(null);
+        const [smartReplies, setSmartReplies] = useState<string[]>([]);
+        const [smartReplyHiddenFor, setSmartReplyHiddenFor] = useState<string | null>(null);
+        const [toneLoading, setToneLoading] = useState<AiTone | null>(null);
+        const [previousDraft, setPreviousDraft] = useState<string | null>(null);
+        const [showMuteDialog, setShowMuteDialog] = useState(false);
+        const [selectedMuteOption, setSelectedMuteOption] = useState<MuteOptionKey>("1h");
+        const [muteLoading, setMuteLoading] = useState(false);
+        const [localMuteUntil, setLocalMuteUntil] = useState<string | null>(null);
+        const [showCreatePollModal, setShowCreatePollModal] = useState(false);
+        const [isCreatingPoll, setIsCreatingPoll] = useState(false);
+        const [activeGroupCall, setActiveGroupCall] = useState<CallSession | null>(null);
 
-    useEffect(() => {
-        if (!groupId || !token) {
-            return;
-        }
-
-        if (!SocketService.isConnected()) {
-            SocketService.connect(token);
-        }
-
-        const socket = SocketService.getSocket();
-        const normalizedGroupId = String(groupId);
-
-        const handleSettingsUpdated = (data: any) => {
-            const conversationId = String(
-                data?.conversationId ||
-                data?.groupId ||
-                data?.conversation?._id ||
-                data?.conversation?.id ||
-                ""
-            );
-
-            if (conversationId !== normalizedGroupId) {
-                return;
-            }
-
-            groupActions.loadGroupInfo(groupId).catch((error: any) => {
-                console.warn("[GroupChatScreen] Failed to refresh group settings:", error?.message);
+        // Refs
+        // flatListRef comes from useGroupChatMessage → useScrollToMessage (enables scrollToMessage)
+        const imageViewerScrollRef = useRef<FlatList>(null);
+        const actionsRef = useRef(chatActions);
+        const kickedOutRef = useRef(false);
+        const currentMemberMuteUntil = useMemo(() => {
+            const currentMember = groupState.members?.find((member: any) => {
+                const memberUserId = member?.userId || member?._id || member?.id || "";
+                return String(memberUserId) === String(currentUserId);
             });
-        };
 
-        socket?.on("group:settings_updated", handleSettingsUpdated);
+            return (currentMember as any)?.muteUntil || null;
+        }, [currentUserId, groupState.members]);
+        const groupMuteUntil = localMuteUntil || currentMemberMuteUntil;
+        const isGroupMuted = isMuteUntilActive(groupMuteUntil);
+        const onBackPressRef = useRef(onBackPress);
+        const latestMessage = chatState.messages[0];
+        const latestMessageKey = String(latestMessage?._id || latestMessage?.id || latestMessage?.createdAt || "");
+        const shouldShowSmartReplies =
+            aiSmartReplyEnabled &&
+            !!groupId &&
+            !messageText.trim() &&
+            !!latestMessage?.text &&
+            String(latestMessage.senderId || "") !== String(currentUserId) &&
+            smartReplyHiddenFor !== latestMessageKey;
 
-        return () => {
-            socket?.off("group:settings_updated", handleSettingsUpdated);
-        };
-    }, [groupId, token, groupActions]);
+        const scrollToLatestMessage = useCallback((animated = true) => {
+            // For inverted FlatList, latest message is at offset 0.
+            flatListRef.current?.scrollToOffset({ offset: 0, animated });
+        }, []);
 
-    // Load group and messages on mount
-    useEffect(() => {
-        loadGroupData();
-    }, [groupId]);
+        // Update actionsRef when chatActions changes
+        useEffect(() => {
+            actionsRef.current = chatActions;
+        }, [chatActions]);
 
-    useEffect(() => {
-        if (allViewerImages.length > 0 && selectedImageIndex > 0 && imageViewerScrollRef.current) {
-            setTimeout(() => {
-                (imageViewerScrollRef.current as any)?.scrollToIndex({
-                    index: selectedImageIndex,
-                    animated: false,
+        useEffect(() => {
+            onBackPressRef.current = onBackPress;
+        }, [onBackPress]);
+
+        useEffect(() => {
+            let isActive = true;
+
+            const loadSmartReplies = async () => {
+                if (!aiSmartReplyEnabled || !shouldShowSmartReplies) {
+                    setSmartReplies([]);
+                    return;
+                }
+
+                try {
+                    const result = await aiService.smartReply(String(groupId));
+                    if (isActive) {
+                        setSmartReplies(result.replies || []);
+                    }
+                } catch {
+                    if (isActive) {
+                        setSmartReplies([]);
+                    }
+                }
+            };
+
+            loadSmartReplies();
+
+            return () => {
+                isActive = false;
+            };
+        }, [aiSmartReplyEnabled, groupId, latestMessageKey, shouldShowSmartReplies]);
+
+        useEffect(() => {
+            if (!groupId || !token) {
+                return;
+            }
+
+            if (!SocketService.isConnected()) {
+                SocketService.connect(token);
+            }
+
+            const socket = SocketService.getSocket();
+            const normalizedGroupId = String(groupId);
+
+            const handleSettingsUpdated = (data: any) => {
+                const conversationId = String(
+                    data?.conversationId ||
+                    data?.groupId ||
+                    data?.conversation?._id ||
+                    data?.conversation?.id ||
+                    ""
+                );
+
+                if (conversationId !== normalizedGroupId) {
+                    return;
+                }
+
+                groupActions.loadGroupInfo(groupId).catch((error: any) => {
+                    console.warn("[GroupChatScreen] Failed to refresh group settings:", error?.message);
                 });
-            }, 100);
-        }
-    }, [allViewerImages.length, selectedImageIndex]);
+            };
 
-    // Mark messages as seen when they come into view
-    useEffect(() => {
-        if (chatState.messages.length > 0) {
-            const messageIds = chatState.messages
-                .filter((msg) => msg.senderId !== user?.id)
-                .map((msg) => msg._id || msg.id)
-                .filter(Boolean);
+            socket?.on("group:settings_updated", handleSettingsUpdated);
 
-            if (messageIds.length > 0) {
-                chatActions.markAsSeen?.(messageIds);
+            return () => {
+                socket?.off("group:settings_updated", handleSettingsUpdated);
+            };
+        }, [groupId, token, groupActions]);
+
+        // Load group and messages on mount
+        useEffect(() => {
+            loadGroupData();
+        }, [groupId]);
+
+        useEffect(() => {
+            if (allViewerImages.length > 0 && selectedImageIndex > 0 && imageViewerScrollRef.current) {
+                setTimeout(() => {
+                    (imageViewerScrollRef.current as any)?.scrollToIndex({
+                        index: selectedImageIndex,
+                        animated: false,
+                    });
+                }, 100);
             }
-        }
-    }, [chatState.messages.length, user?.id, chatActions]);
+        }, [allViewerImages.length, selectedImageIndex]);
 
-    // If current user is removed from this group, exit chat immediately without waiting for reload.
-    useEffect(() => {
-        const normalizedGroupId = String(groupId || "");
-        const userCandidateIds = [user?.id, (user as any)?._id, (user as any)?.userId]
-            .filter(Boolean)
-            .map((id) => String(id));
+        // Mark messages as seen when they come into view
+        useEffect(() => {
+            if (chatState.messages.length > 0) {
+                const messageIds = chatState.messages
+                    .filter((msg) => msg.senderId !== user?.id)
+                    .map((msg) => msg._id || msg.id)
+                    .filter(Boolean);
 
-        if (!normalizedGroupId || userCandidateIds.length === 0 || !token) {
-            return;
-        }
-
-        if (!SocketService.isConnected()) {
-            SocketService.connect(token);
-        }
-
-        const socket = SocketService.getSocket();
-
-        const unsubscribe = SocketService.subscribeGroupMemberRemoved((data: any) => {
-            const conversationId = String(
-                data?.conversationId ||
-                data?.groupId ||
-                data?.conversation?._id ||
-                data?.conversation?.id ||
-                ""
-            );
-            const removedUserId = String(
-                data?.removedUserId ||
-                data?.userId ||
-                data?.member?.userId ||
-                ""
-            );
-
-            const isCurrentUserRemoved = userCandidateIds.includes(removedUserId);
-
-            if (conversationId !== normalizedGroupId || !isCurrentUserRemoved) {
-                return;
+                if (messageIds.length > 0) {
+                    chatActions.markAsSeen?.(messageIds);
+                }
             }
+        }, [chatState.messages.length, user?.id, chatActions]);
 
-            if (kickedOutRef.current) {
-                return;
-            }
-
-            kickedOutRef.current = true;
-
-            SocketService.leaveConversation(groupId).catch(() => { });
-
-            Alert.alert(
-                "Bạn đã bị xóa khỏi nhóm",
-                "Bạn không còn quyền truy cập cuộc trò chuyện này.",
-                [
-                    {
-                        text: "OK",
-                        onPress: () => {
-                            onBackPress?.();
-                        },
-                    },
-                ]
-            );
-        });
-
-        const handleConversationUpdated = (data: any) => {
-            const conversationId = String(
-                data?.conversationId || data?.conversation?._id || data?.conversation?.id || ""
-            );
-
-            if (conversationId !== normalizedGroupId || kickedOutRef.current) {
-                return;
-            }
-
-            const members: string[] = (data?.data?.members || data?.conversation?.members || [])
+        // If current user is removed from this group, exit chat immediately without waiting for reload.
+        useEffect(() => {
+            const normalizedGroupId = String(groupId || "");
+            const userCandidateIds = [user?.id, (user as any)?._id, (user as any)?.userId]
                 .filter(Boolean)
-                .map((id: any) => String(id));
+                .map((id) => String(id));
 
-            if (members.length > 0 && !userCandidateIds.some((id) => members.includes(id))) {
+            if (!normalizedGroupId || userCandidateIds.length === 0 || !token) {
+                return;
+            }
+
+            if (!SocketService.isConnected()) {
+                SocketService.connect(token);
+            }
+
+            const socket = SocketService.getSocket();
+
+            const unsubscribe = SocketService.subscribeGroupMemberRemoved((data: any) => {
+                const conversationId = String(
+                    data?.conversationId ||
+                    data?.groupId ||
+                    data?.conversation?._id ||
+                    data?.conversation?.id ||
+                    ""
+                );
+                const removedUserId = String(
+                    data?.removedUserId ||
+                    data?.userId ||
+                    data?.member?.userId ||
+                    ""
+                );
+
+                const isCurrentUserRemoved = userCandidateIds.includes(removedUserId);
+
+                if (conversationId !== normalizedGroupId || !isCurrentUserRemoved) {
+                    return;
+                }
+
+                if (kickedOutRef.current) {
+                    return;
+                }
+
                 kickedOutRef.current = true;
+
                 SocketService.leaveConversation(groupId).catch(() => { });
+
                 Alert.alert(
                     "Bạn đã bị xóa khỏi nhóm",
                     "Bạn không còn quyền truy cập cuộc trò chuyện này.",
@@ -814,55 +783,22 @@ export const GroupChatScreen: React.FC<{
                         },
                     ]
                 );
-            }
-        };
+            });
 
-        socket?.on("conversation:updated", handleConversationUpdated);
+            const handleConversationUpdated = (data: any) => {
+                const conversationId = String(
+                    data?.conversationId || data?.conversation?._id || data?.conversation?.id || ""
+                );
 
-        return () => {
-            unsubscribe();
-            socket?.off("conversation:updated", handleConversationUpdated);
-        };
-    }, [groupId, user?.id, (user as any)?._id, token, onBackPress]);
-
-    // Fallback for environments where backend does not emit socket kick events.
-    useEffect(() => {
-        const normalizedGroupId = String(groupId || "");
-        const userCandidateIds = [user?.id, (user as any)?._id, (user as any)?.userId]
-            .filter(Boolean)
-            .map((id) => String(id));
-
-        if (!normalizedGroupId || userCandidateIds.length === 0 || !token) {
-            return;
-        }
-
-        let isMounted = true;
-
-        const verifyMembership = async () => {
-            if (!isMounted || kickedOutRef.current) {
-                return;
-            }
-
-            try {
-                const groupInfo = await GroupChatService.getGroupInfo(normalizedGroupId);
-                const memberIds = extractMemberIds(groupInfo);
-                const ownerId = String(groupInfo?.ownerId || "");
-                const adminIds: string[] = (groupInfo?.admins || (groupInfo as any)?.adminIds || [])
-                    .filter(Boolean)
-                    .map((id: any) => String(id));
-
-                const hasReliableMembershipData = memberIds.length > 0;
-                const isOwner = !!ownerId && userCandidateIds.includes(ownerId);
-                const isAdmin = adminIds.some((id) => userCandidateIds.includes(id));
-                const isMemberFromList = userCandidateIds.some((id) => memberIds.includes(id));
-                const isStillMember = isOwner || isAdmin || isMemberFromList;
-
-                // Avoid false kick when backend group info does not include members array.
-                if (!hasReliableMembershipData && !isOwner && !isAdmin) {
+                if (conversationId !== normalizedGroupId || kickedOutRef.current) {
                     return;
                 }
 
-                if (!isStillMember) {
+                const members: string[] = (data?.data?.members || data?.conversation?.members || [])
+                    .filter(Boolean)
+                    .map((id: any) => String(id));
+
+                if (members.length > 0 && !userCandidateIds.some((id) => members.includes(id))) {
                     kickedOutRef.current = true;
                     SocketService.leaveConversation(groupId).catch(() => { });
                     Alert.alert(
@@ -872,892 +808,1130 @@ export const GroupChatScreen: React.FC<{
                             {
                                 text: "OK",
                                 onPress: () => {
-                                    onBackPressRef.current?.();
+                                    onBackPress?.();
                                 },
                             },
                         ]
                     );
                 }
-            } catch {
-                // Keep UI responsive; retry by interval.
-            }
-        };
+            };
 
-        verifyMembership();
-        const interval = setInterval(verifyMembership, 30000);
+            socket?.on("conversation:updated", handleConversationUpdated);
 
-        return () => {
-            isMounted = false;
-            clearInterval(interval);
-        };
-    }, [groupId, user?.id, (user as any)?._id, (user as any)?.userId, token]);
+            return () => {
+                unsubscribe();
+                socket?.off("conversation:updated", handleConversationUpdated);
+            };
+        }, [groupId, user?.id, (user as any)?._id, token, onBackPress]);
 
-    const loadGroupData = useCallback(async () => {
-        try {
-            await Promise.all([
-                groupActions.loadGroupInfo(groupId),
-                groupActions.loadMembers(groupId),
-                chatActions.retryLoadConversation?.(),
-            ]);
+        // Fallback for environments where backend does not emit socket kick events.
+        useEffect(() => {
+            const normalizedGroupId = String(groupId || "");
+            const userCandidateIds = [user?.id, (user as any)?._id, (user as any)?.userId]
+                .filter(Boolean)
+                .map((id) => String(id));
 
-            // Join group room
-            try {
-                await SocketService.joinConversation(groupId);
-            } catch (err) {
-                console.warn("Failed to join group room:", err);
-            }
-        } catch (err: any) {
-            Alert.alert("Lỗi", err.message || "Failed to load group data");
-        }
-    }, [groupId]);
-
-    const refreshActiveGroupCall = useCallback(async () => {
-        if (!groupId) {
-            setActiveGroupCall(null);
-            return;
-        }
-
-        try {
-            const activeCall = await callService.getActiveByConversation(String(groupId));
-            setActiveGroupCall(activeCall?.callId ? activeCall : null);
-        } catch {
-            setActiveGroupCall(null);
-        }
-    }, [groupId]);
-
-    useEffect(() => {
-        if (!groupId) return;
-
-        let mounted = true;
-        const refresh = async () => {
-            if (!mounted) return;
-            await refreshActiveGroupCall();
-        };
-
-        refresh();
-        const interval = setInterval(refresh, 15000);
-
-        return () => {
-            mounted = false;
-            clearInterval(interval);
-        };
-    }, [groupId, refreshActiveGroupCall]);
-
-    useEffect(() => {
-        if (
-            activeGroupCall?.callId &&
-            callState.callId === activeGroupCall.callId &&
-            callState.status !== "idle"
-        ) {
-            setActiveGroupCall(null);
-        }
-    }, [activeGroupCall?.callId, callState.callId, callState.status]);
-
-    const searchTargetHandledRef = useRef<string | null>(null);
-
-    const normalizeSearchMessage = useCallback((raw: any): any | null => {
-        if (!raw) return null;
-        const id = raw._id || raw.id || raw.messageId;
-        if (!id || !groupId) return null;
-
-        return {
-            ...raw,
-            _id: String(id),
-            id: String(id),
-            conversationId: raw.conversationId || groupId,
-            senderId: raw.senderId || "",
-            senderName: raw.senderName || "Người dùng",
-            senderAvatar: raw.senderAvatar || "",
-            text: raw.text || "",
-            media: raw.media || [],
-            status: raw.status || "sent",
-            createdAt: raw.createdAt || new Date().toISOString(),
-            updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
-        };
-    }, [groupId]);
-
-    useEffect(() => {
-        const targetId = String(searchTargetMessageId || "");
-        if (!targetId || chatState.isLoading || !groupId || searchTargetHandledRef.current === targetId) return;
-
-        searchTargetHandledRef.current = targetId;
-        const extraMessages = [
-            normalizeSearchMessage(searchTargetMessage),
-            ...(Array.isArray(searchContextMessages) ? searchContextMessages.map(normalizeSearchMessage) : []),
-        ].filter(Boolean);
-
-        if (extraMessages.length > 0) {
-            chatActions.addMessages(extraMessages as any);
-        }
-
-        setTimeout(() => {
-            chatActions.scrollToMessage(targetId).then((success: boolean) => {
-                if (!success) {
-                    Alert.alert("Thông báo", "Không tìm thấy tin nhắn trong nhóm");
-                }
-            });
-        }, 250);
-    }, [searchTargetMessageId, searchTargetMessage, searchContextMessages, chatState.isLoading, groupId, chatActions, normalizeSearchMessage]);
-
-    const appendDraftMedia = useCallback((assets: any[]) => {
-        setDraftMedia((prev) => {
-            const existingIds = new Set(prev.map((item) => item.id));
-            const nextItems: (DraftMediaAsset | null)[] = assets
-                .map((asset) => {
-                    const uri = asset?.uri;
-                    if (!uri) return null;
-
-                    const name = asset.fileName || uri.split("/").pop() || "media";
-                    const type = asset.mimeType || asset.type || "application/octet-stream";
-
-                    return {
-                        id: getDraftAssetId(asset),
-                        uri,
-                        name,
-                        type,
-                        mimeType: type,
-                        size: asset.fileSize || asset.size,
-                        width: asset.width,
-                        height: asset.height,
-                    } as DraftMediaAsset;
-                })
-                .filter((asset) => !!asset && !existingIds.has(asset!.id)) as DraftMediaAsset[];
-
-            return [...prev, ...nextItems];
-        });
-    }, []);
-
-    const handlePickImage = useCallback(async () => {
-        try {
-            const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (!permissionResult.granted) {
-                Alert.alert(
-                    "Yêu cầu quyền",
-                    "Chúng tôi cần quyền truy cập thư viện ảnh. Vui lòng bật nó trong cài đặt."
-                );
+            if (!normalizedGroupId || userCandidateIds.length === 0 || !token) {
                 return;
-            } try {
+            }
+
+            let isMounted = true;
+
+            const verifyMembership = async () => {
+                if (!isMounted || kickedOutRef.current) {
+                    return;
+                }
+
+                try {
+                    const groupInfo = await GroupChatService.getGroupInfo(normalizedGroupId);
+                    const memberIds = extractMemberIds(groupInfo);
+                    const ownerId = String(groupInfo?.ownerId || "");
+                    const adminIds: string[] = (groupInfo?.admins || (groupInfo as any)?.adminIds || [])
+                        .filter(Boolean)
+                        .map((id: any) => String(id));
+
+                    const hasReliableMembershipData = memberIds.length > 0;
+                    const isOwner = !!ownerId && userCandidateIds.includes(ownerId);
+                    const isAdmin = adminIds.some((id) => userCandidateIds.includes(id));
+                    const isMemberFromList = userCandidateIds.some((id) => memberIds.includes(id));
+                    const isStillMember = isOwner || isAdmin || isMemberFromList;
+
+                    // Avoid false kick when backend group info does not include members array.
+                    if (!hasReliableMembershipData && !isOwner && !isAdmin) {
+                        return;
+                    }
+
+                    if (!isStillMember) {
+                        kickedOutRef.current = true;
+                        SocketService.leaveConversation(groupId).catch(() => { });
+                        Alert.alert(
+                            "Bạn đã bị xóa khỏi nhóm",
+                            "Bạn không còn quyền truy cập cuộc trò chuyện này.",
+                            [
+                                {
+                                    text: "OK",
+                                    onPress: () => {
+                                        onBackPressRef.current?.();
+                                    },
+                                },
+                            ]
+                        );
+                    }
+                } catch {
+                    // Keep UI responsive; retry by interval.
+                }
+            };
+
+            verifyMembership();
+            const interval = setInterval(verifyMembership, 30000);
+
+            return () => {
+                isMounted = false;
+                clearInterval(interval);
+            };
+        }, [groupId, user?.id, (user as any)?._id, (user as any)?.userId, token]);
+
+        const loadGroupData = useCallback(async () => {
+            try {
+                await Promise.all([
+                    groupActions.loadGroupInfo(groupId),
+                    groupActions.loadMembers(groupId),
+                    chatActions.retryLoadConversation?.(),
+                ]);
+
+                // Join group room
+                try {
+                    await SocketService.joinConversation(groupId);
+                } catch (err) {
+                    console.warn("Failed to join group room:", err);
+                }
+            } catch (err: any) {
+                Alert.alert("Lỗi", err.message || "Failed to load group data");
+            }
+        }, [groupId]);
+
+        const refreshActiveGroupCall = useCallback(async () => {
+            if (!groupId) {
+                setActiveGroupCall(null);
+                return;
+            }
+
+            try {
+                const activeCall = await callService.getActiveByConversation(String(groupId));
+                setActiveGroupCall(activeCall?.callId ? activeCall : null);
+            } catch {
+                setActiveGroupCall(null);
+            }
+        }, [groupId]);
+
+        useEffect(() => {
+            if (!groupId) return;
+
+            let mounted = true;
+            const refresh = async () => {
+                if (!mounted) return;
+                await refreshActiveGroupCall();
+            };
+
+            refresh();
+            const interval = setInterval(refresh, 15000);
+
+            return () => {
+                mounted = false;
+                clearInterval(interval);
+            };
+        }, [groupId, refreshActiveGroupCall]);
+
+        useEffect(() => {
+            if (
+                activeGroupCall?.callId &&
+                callState.callId === activeGroupCall.callId &&
+                callState.status !== "idle"
+            ) {
+                setActiveGroupCall(null);
+            }
+        }, [activeGroupCall?.callId, callState.callId, callState.status]);
+
+        const searchTargetHandledRef = useRef<string | null>(null);
+
+        const normalizeSearchMessage = useCallback((raw: any): any | null => {
+            if (!raw) return null;
+            const id = raw._id || raw.id || raw.messageId;
+            if (!id || !groupId) return null;
+
+            return {
+                ...raw,
+                _id: String(id),
+                id: String(id),
+                conversationId: raw.conversationId || groupId,
+                senderId: raw.senderId || "",
+                senderName: raw.senderName || "Người dùng",
+                senderAvatar: raw.senderAvatar || "",
+                text: raw.text || "",
+                media: raw.media || [],
+                status: raw.status || "sent",
+                createdAt: raw.createdAt || new Date().toISOString(),
+                updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
+            };
+        }, [groupId]);
+
+        useEffect(() => {
+            const targetId = String(searchTargetMessageId || "");
+            if (!targetId || chatState.isLoading || !groupId || searchTargetHandledRef.current === targetId) return;
+
+            searchTargetHandledRef.current = targetId;
+            const extraMessages = [
+                normalizeSearchMessage(searchTargetMessage),
+                ...(Array.isArray(searchContextMessages) ? searchContextMessages.map(normalizeSearchMessage) : []),
+            ].filter(Boolean);
+
+            if (extraMessages.length > 0) {
+                chatActions.addMessages(extraMessages as any);
+            }
+
+            setTimeout(() => {
+                chatActions.scrollToMessage(targetId).then((success: boolean) => {
+                    if (!success) {
+                        Alert.alert("Thông báo", "Không tìm thấy tin nhắn trong nhóm");
+                    }
+                });
+            }, 250);
+        }, [searchTargetMessageId, searchTargetMessage, searchContextMessages, chatState.isLoading, groupId, chatActions, normalizeSearchMessage]);
+
+        const appendDraftMedia = useCallback((assets: any[]) => {
+            setDraftMedia((prev) => {
+                const existingIds = new Set(prev.map((item) => item.id));
+                const nextItems: (DraftMediaAsset | null)[] = assets
+                    .map((asset) => {
+                        const uri = asset?.uri;
+                        if (!uri) return null;
+
+                        const name = asset.fileName || uri.split("/").pop() || "media";
+                        const type = asset.mimeType || asset.type || "application/octet-stream";
+
+                        return {
+                            id: getDraftAssetId(asset),
+                            uri,
+                            name,
+                            type,
+                            mimeType: type,
+                            size: asset.fileSize || asset.size,
+                            width: asset.width,
+                            height: asset.height,
+                        } as DraftMediaAsset;
+                    })
+                    .filter((asset) => !!asset && !existingIds.has(asset!.id)) as DraftMediaAsset[];
+
+                return [...prev, ...nextItems];
+            });
+        }, []);
+
+        const handlePickImage = useCallback(async () => {
+            try {
+                const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                if (!permissionResult.granted) {
+                    Alert.alert(
+                        "Yêu cầu quyền",
+                        "Chúng tôi cần quyền truy cập thư viện ảnh. Vui lòng bật nó trong cài đặt."
+                    );
+                    return;
+                } try {
+                    const result = await ImagePicker.launchImageLibraryAsync({
+                        mediaTypes: ['images'],
+                        allowsMultipleSelection: true,
+                        selectionLimit: 0,
+                    } as any);
+                    if (result.canceled) {
+                        return;
+                    }
+
+                    if (!result.assets || result.assets.length === 0) {
+                        Alert.alert("Lỗi", "Chưa chọn ảnh");
+                        return;
+                    }
+
+                    const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
+                    if (validAssets.length === 0) {
+                        Alert.alert("Lỗi", "File ảnh không hợp lệ");
+                        return;
+                    }
+                    appendDraftMedia(validAssets);
+                } catch (pickerError: any) {
+                    console.error('[GroupChatScreen] Image picker error:', pickerError);
+                    const errorMsg = pickerError.message || 'Lỗi không xác định';
+                    Alert.alert("Lỗi gửi ảnh", errorMsg);
+                } finally {
+                    setShowMediaMenu(false);
+                }
+            } catch (permissionError: any) {
+                console.error('[GroupChatScreen] Permission error:', permissionError);
+                Alert.alert("Lỗi", "Không thể yêu cầu quyền");
+            }
+        }, [appendDraftMedia]);
+
+        const handlePickVideo = useCallback(async () => {
+            try {
                 const result = await ImagePicker.launchImageLibraryAsync({
-                    mediaTypes: ['images'],
+                    mediaTypes: ['videos'],
                     allowsMultipleSelection: true,
-                    selectionLimit: 0,
                 } as any);
+
                 if (result.canceled) {
                     return;
                 }
 
                 if (!result.assets || result.assets.length === 0) {
-                    Alert.alert("Lỗi", "Chưa chọn ảnh");
+                    Alert.alert("Lỗi", "Chưa chọn video");
                     return;
                 }
 
                 const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
                 if (validAssets.length === 0) {
-                    Alert.alert("Lỗi", "File ảnh không hợp lệ");
+                    Alert.alert("Lỗi", "File video không hợp lệ");
                     return;
                 }
                 appendDraftMedia(validAssets);
             } catch (pickerError: any) {
-                console.error('[GroupChatScreen] Image picker error:', pickerError);
+                console.error('[GroupChatScreen] Video picker error:', pickerError);
                 const errorMsg = pickerError.message || 'Lỗi không xác định';
-                Alert.alert("Lỗi gửi ảnh", errorMsg);
+                Alert.alert("Lỗi gửi video", errorMsg);
             } finally {
                 setShowMediaMenu(false);
             }
-        } catch (permissionError: any) {
-            console.error('[GroupChatScreen] Permission error:', permissionError);
-            Alert.alert("Lỗi", "Không thể yêu cầu quyền");
-        }
-    }, [appendDraftMedia]);
+        }, [appendDraftMedia]);
 
-    const handlePickVideo = useCallback(async () => {
-        try {
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['videos'],
-                allowsMultipleSelection: true,
-            } as any);
-
-            if (result.canceled) {
-                return;
-            }
-
-            if (!result.assets || result.assets.length === 0) {
-                Alert.alert("Lỗi", "Chưa chọn video");
-                return;
-            }
-
-            const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
-            if (validAssets.length === 0) {
-                Alert.alert("Lỗi", "File video không hợp lệ");
-                return;
-            }
-            appendDraftMedia(validAssets);
-        } catch (pickerError: any) {
-            console.error('[GroupChatScreen] Video picker error:', pickerError);
-            const errorMsg = pickerError.message || 'Lỗi không xác định';
-            Alert.alert("Lỗi gửi video", errorMsg);
-        } finally {
-            setShowMediaMenu(false);
-        }
-    }, [appendDraftMedia]);
-
-    const handlePickAudioFile = useCallback(async () => {
-        try {
-            const result = await DocumentPicker.getDocumentAsync({
-                type: ["audio/*"],
-            });
-
-            if (result.canceled) {
-                return;
-            }
-
-            if (!result.assets || result.assets.length === 0) {
-                Alert.alert("Lỗi", "Chưa chọn file audio");
-                return;
-            }
-
-            const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
-            if (validAssets.length === 0) {
-                Alert.alert("Lỗi", "File audio không hợp lệ");
-                return;
-            }
-            appendDraftMedia(validAssets);
-        } catch (pickerError: any) {
-            console.error('[GroupChatScreen] Audio picker error:', pickerError);
-            const errorMsg = pickerError.message || 'Lỗi không xác định';
-            Alert.alert("Lỗi gửi audio", errorMsg);
-        } finally {
-            setShowMediaMenu(false);
-        }
-    }, [appendDraftMedia]);
-
-    const handlePickDocument = useCallback(async () => {
-        try {
-            const result = await DocumentPicker.getDocumentAsync({
-                type: [
-                    "application/pdf",
-                    "application/msword",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "application/vnd.ms-excel",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    "application/vnd.ms-powerpoint",
-                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                    "text/plain",
-                    "application/x-zip-compressed",
-                    "application/x-rar-compressed",
-                ],
-            });
-
-            if (result.canceled) {
-                return;
-            }
-
-            if (!result.assets || result.assets.length === 0) {
-                Alert.alert("Lỗi", "Chưa chọn tài liệu");
-                return;
-            }
-
-            const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
-            if (validAssets.length === 0) {
-                Alert.alert("Lỗi", "File tài liệu không hợp lệ");
-                return;
-            }
-            appendDraftMedia(validAssets);
-        } catch (pickerError: any) {
-            console.error('[GroupChatScreen] Document picker error:', pickerError);
-            const errorMsg = pickerError.message || 'Lỗi không xác định';
-            Alert.alert("Lỗi gửi tài liệu", errorMsg);
-        } finally {
-            setShowMediaMenu(false);
-        }
-    }, [appendDraftMedia]);
-
-    const handlePickAudio = useCallback(async () => {
-        setShowVoiceRecorder(true);
-        setShowMediaMenu(false);
-    }, []);
-
-    const removeDraftMedia = useCallback((assetId: string) => {
-        setDraftMedia((prev) => prev.filter((item) => item.id !== assetId));
-    }, []);
-
-    const clearDraftMedia = useCallback(() => {
-        setDraftMedia([]);
-    }, []);
-
-    const sendDraftMedia = useCallback(
-        async (caption?: string) => {
-            if (!groupId || draftMedia.length === 0) {
-                return [];
-            }
-
-            const sentMessages: any[] = [];
-            setUploading(true);
-            setUploadProgress(0);
-
+        const handlePickAudioFile = useCallback(async () => {
             try {
-                const files = draftMedia.map((item) => ({
-                    uri: item.uri,
-                    name: item.name,
-                    type: item.type,
-                    mimeType: item.mimeType,
-                    size: item.size || 0,
-                    width: item.width,
-                    height: item.height,
-                }));
+                const result = await DocumentPicker.getDocumentAsync({
+                    type: ["audio/*"],
+                });
 
-                const allImages =
-                    files.length > 1 &&
-                    files.every((file) =>
-                        detectDraftMediaKind(file.mimeType, file.type) === "image"
-                    );
+                if (result.canceled) {
+                    return;
+                }
 
-                // Send a single message containing multiple images when user selects many images at once.
-                if (allImages) {
-                    const result = await chatMediaService.sendMultipleMedia(
-                        groupId,
-                        files,
-                        caption
-                    );
+                if (!result.assets || result.assets.length === 0) {
+                    Alert.alert("Lỗi", "Chưa chọn file audio");
+                    return;
+                }
 
-                    if (result.length > 0) {
-                        sentMessages.push(...result);
-                    }
+                const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
+                if (validAssets.length === 0) {
+                    Alert.alert("Lỗi", "File audio không hợp lệ");
+                    return;
+                }
+                appendDraftMedia(validAssets);
+            } catch (pickerError: any) {
+                console.error('[GroupChatScreen] Audio picker error:', pickerError);
+                const errorMsg = pickerError.message || 'Lỗi không xác định';
+                Alert.alert("Lỗi gửi audio", errorMsg);
+            } finally {
+                setShowMediaMenu(false);
+            }
+        }, [appendDraftMedia]);
 
-                    setUploadProgress(100);
-                } else {
-                    for (let index = 0; index < draftMedia.length; index += 1) {
-                        const item = draftMedia[index];
-                        const file = {
-                            uri: item.uri,
-                            name: item.name,
-                            type: item.type,
-                            mimeType: item.mimeType,
-                            size: item.size || 0,
-                            width: item.width,
-                            height: item.height,
-                        };
+        const handlePickDocument = useCallback(async () => {
+            try {
+                const result = await DocumentPicker.getDocumentAsync({
+                    type: [
+                        "application/pdf",
+                        "application/msword",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "application/vnd.ms-excel",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "application/vnd.ms-powerpoint",
+                        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        "text/plain",
+                        "application/x-zip-compressed",
+                        "application/x-rar-compressed",
+                    ],
+                });
 
-                        let result = [];
-                        const mediaKind = detectDraftMediaKind(item.mimeType, item.type);
+                if (result.canceled) {
+                    return;
+                }
 
-                        // Determine file type and call appropriate method
-                        if (mediaKind === "image") {
-                            result = await chatMediaService.sendImage(
-                                groupId,
-                                file,
-                                index === 0 ? caption : undefined
-                            );
-                        } else if (mediaKind === "video") {
-                            result = await chatMediaService.sendVideo(
-                                groupId,
-                                file,
-                                index === 0 ? caption : undefined
-                            );
-                        } else if (mediaKind === "audio") {
-                            result = await chatMediaService.sendAudio(
-                                groupId,
-                                file,
-                                index === 0 ? caption : undefined
-                            );
-                        } else {
-                            // Document or other file types
-                            result = await chatMediaService.sendDocument(
-                                groupId,
-                                file
-                            );
-                        }
+                if (!result.assets || result.assets.length === 0) {
+                    Alert.alert("Lỗi", "Chưa chọn tài liệu");
+                    return;
+                }
+
+                const validAssets = result.assets.filter((asset) => asset?.uri && asset?.mimeType);
+                if (validAssets.length === 0) {
+                    Alert.alert("Lỗi", "File tài liệu không hợp lệ");
+                    return;
+                }
+                appendDraftMedia(validAssets);
+            } catch (pickerError: any) {
+                console.error('[GroupChatScreen] Document picker error:', pickerError);
+                const errorMsg = pickerError.message || 'Lỗi không xác định';
+                Alert.alert("Lỗi gửi tài liệu", errorMsg);
+            } finally {
+                setShowMediaMenu(false);
+            }
+        }, [appendDraftMedia]);
+
+        const handlePickAudio = useCallback(async () => {
+            setShowVoiceRecorder(true);
+            setShowMediaMenu(false);
+        }, []);
+
+        const removeDraftMedia = useCallback((assetId: string) => {
+            setDraftMedia((prev) => prev.filter((item) => item.id !== assetId));
+        }, []);
+
+        const clearDraftMedia = useCallback(() => {
+            setDraftMedia([]);
+        }, []);
+
+        const sendDraftMedia = useCallback(
+            async (caption?: string) => {
+                if (!groupId || draftMedia.length === 0) {
+                    return [];
+                }
+
+                const sentMessages: any[] = [];
+                setUploading(true);
+                setUploadProgress(0);
+
+                try {
+                    const files = draftMedia.map((item) => ({
+                        uri: item.uri,
+                        name: item.name,
+                        type: item.type,
+                        mimeType: item.mimeType,
+                        size: item.size || 0,
+                        width: item.width,
+                        height: item.height,
+                    }));
+
+                    const allImages =
+                        files.length > 1 &&
+                        files.every((file) =>
+                            detectDraftMediaKind(file.mimeType, file.type) === "image"
+                        );
+
+                    // Send a single message containing multiple images when user selects many images at once.
+                    if (allImages) {
+                        const result = await chatMediaService.sendMultipleMedia(
+                            groupId,
+                            files,
+                            caption
+                        );
 
                         if (result.length > 0) {
                             sentMessages.push(...result);
                         }
 
-                        const progress = Math.round(((index + 1) / draftMedia.length) * 100);
-                        setUploadProgress(progress);
-                    }
-                }
+                        setUploadProgress(100);
+                    } else {
+                        for (let index = 0; index < draftMedia.length; index += 1) {
+                            const item = draftMedia[index];
+                            const file = {
+                                uri: item.uri,
+                                name: item.name,
+                                type: item.type,
+                                mimeType: item.mimeType,
+                                size: item.size || 0,
+                                width: item.width,
+                                height: item.height,
+                            };
 
-                // Add all sent messages at once
-                if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
-                    actionsRef.current.addMessages(sentMessages);
-                }
+                            let result = [];
+                            const mediaKind = detectDraftMediaKind(item.mimeType, item.type);
 
-                return sentMessages;
-            } catch (err: any) {
-                console.error("[GroupChat] Error sending media:", err);
-                Alert.alert("Lỗi", `Gửi media thất bại: ${err.message}`);
-                return [];
-            } finally {
-                setUploading(false);
-                setUploadProgress(0);
-                clearDraftMedia();
-            }
-        },
-        [groupId, draftMedia, clearDraftMedia]
-    );
+                            // Determine file type and call appropriate method
+                            if (mediaKind === "image") {
+                                result = await chatMediaService.sendImage(
+                                    groupId,
+                                    file,
+                                    index === 0 ? caption : undefined
+                                );
+                            } else if (mediaKind === "video") {
+                                result = await chatMediaService.sendVideo(
+                                    groupId,
+                                    file,
+                                    index === 0 ? caption : undefined
+                                );
+                            } else if (mediaKind === "audio") {
+                                result = await chatMediaService.sendAudio(
+                                    groupId,
+                                    file,
+                                    index === 0 ? caption : undefined
+                                );
+                            } else {
+                                // Document or other file types
+                                result = await chatMediaService.sendDocument(
+                                    groupId,
+                                    file
+                                );
+                            }
 
-    const hasSendableContent = draftMedia.length > 0 || messageText.trim().length > 0;
+                            if (result.length > 0) {
+                                sentMessages.push(...result);
+                            }
 
-    const currentUserIds = useMemo(
-        () => [user?.id, (user as any)?._id, (user as any)?.userId]
-            .filter(Boolean)
-            .map((id) => String(id)),
-        [user?.id, (user as any)?._id, (user as any)?.userId]
-    );
-
-    const isCurrentUserOwner = currentUserIds.includes(String(groupState.group?.ownerId || ""));
-    const isCurrentUserAdmin = (groupState.group?.admins || []).some((admin: any) => {
-        const adminId = typeof admin === "string"
-            ? admin
-            : admin?.userId || admin?._id || admin?.id || "";
-        return currentUserIds.includes(String(adminId));
-    });
-    const pollPermission = (groupState.group?.settings as any)?.utilityPermissions?.poll || "all";
-    const canCreatePoll = pollPermission === "all" || isCurrentUserOwner || isCurrentUserAdmin;
-
-    const canManagePoll = useCallback((poll: any) => {
-        const creatorId = String(poll?.creatorId || poll?.createdBy || "");
-        return isCurrentUserOwner || isCurrentUserAdmin || (!!creatorId && currentUserIds.includes(creatorId));
-    }, [currentUserIds, isCurrentUserAdmin, isCurrentUserOwner]);
-
-    const handleCreatePoll = useCallback(async (payload: any) => {
-        try {
-            setIsCreatingPoll(true);
-            await actionsRef.current?.createPoll(payload);
-            setShowCreatePollModal(false);
-            scrollToLatestMessage(true);
-        } catch (error: any) {
-            Alert.alert("Lỗi", error?.message || "Không thể tạo bình chọn");
-        } finally {
-            setIsCreatingPoll(false);
-        }
-    }, [scrollToLatestMessage]);
-
-    const handleSendMessage = useCallback(async () => {
-        const trimmedText = messageText.trim();
-
-        if (!hasSendableContent) return;
-
-        try {
-            setIsSending(true);
-
-            // If replying to a message, send as quoted message
-            if (chatState.replyingTo) {
-                const quotedMessageId = chatState.replyingTo._id || chatState.replyingTo.id;
-                if (quotedMessageId && chatActions.sendQuotedMessage) {
-                    if (draftMedia.length > 0) {
-                        await chatActions.sendQuotedMessage(quotedMessageId, trimmedText || "", draftMedia);
-                        await clearDraft();
-                    } else if (trimmedText) {
-                        await chatActions.sendQuotedMessage(quotedMessageId, trimmedText);
-                        await clearDraft();
-                    }
-                }
-            } else {
-                // Send text message normally
-                if (trimmedText) {
-                    await chatActions.sendMessage(trimmedText);
-                    await clearDraft();
-                }
-
-                // Send media
-                if (draftMedia.length > 0) {
-                    await sendDraftMedia(trimmedText || undefined);
-                    await clearDraft();
-                }
-            }
-
-            scrollToLatestMessage(true);
-        } catch (err: any) {
-            Alert.alert("Lỗi", err.message || "Failed to send message");
-        } finally {
-            setIsSending(false);
-        }
-    }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia, scrollToLatestMessage, chatState.replyingTo, clearDraft]);
-
-    const handleInputChange = useCallback((text: string) => {
-        setMessageText(text);
-        if (text.trim()) {
-            chatActions.handleTyping();
-        }
-    }, [chatActions]);
-
-    const openAiPanel = useCallback(async (mode: AiPanelMode) => {
-        if (!groupId) return;
-
-        setAiPanelMode(mode);
-        setShowAiPanel(true);
-        setAiLoading(true);
-
-        try {
-            if (mode === "summary") {
-                setAiSummary(await aiService.summarize(groupId, 100));
-            } else if (mode === "tasks") {
-                setAiTasks(await aiService.extractTasks(groupId, 100));
-            } else if (aiSearchQuery.trim()) {
-                setAiSearchResult(await aiService.smartSearch(aiSearchQuery.trim(), groupId));
-            }
-        } catch (err: any) {
-            Alert.alert("AI", err?.message || "Không thể gọi AI lúc này.");
-        } finally {
-            setAiLoading(false);
-        }
-    }, [aiSearchQuery, groupId]);
-
-    const handleToneAdjust = useCallback(async (tone: AiTone) => {
-        const text = messageText.trim();
-        if (!text) {
-            Alert.alert("AI", "Nhập tin nhắn trước khi chỉnh giọng văn.");
-            return;
-        }
-
-        try {
-            setToneLoading(tone);
-            setPreviousDraft(messageText);
-            const result = await aiService.toneAdjust(text, tone);
-            setMessageText(result.adjusted);
-        } catch (err: any) {
-            Alert.alert("AI", err?.message || "Không thể chỉnh giọng văn.");
-        } finally {
-            setToneLoading(null);
-        }
-    }, [messageText]);
-
-    const showToneMenu = useCallback(() => {
-        setShowTonePicker(true);
-    }, []);
-
-    const showAiMenu = useCallback(() => {
-        setShowAiQuickMenu(true);
-    }, []);
-
-    const handleConfirmMute = useCallback(async () => {
-        if (!groupId) {
-            Alert.alert("Thông báo", "Chưa có nhóm để tắt thông báo.");
-            return;
-        }
-
-        const { payload, localMuteUntil: nextMuteUntil } = buildMutePayload(selectedMuteOption);
-
-        try {
-            setMuteLoading(true);
-            await ConversationService.muteConversation(String(groupId), payload);
-            setLocalMuteUntil(nextMuteUntil);
-            setShowMuteDialog(false);
-            Alert.alert("Thông báo", "Đã tắt thông báo nhóm này.");
-        } catch (err: any) {
-            Alert.alert("Thông báo", err?.message || "Không thể tắt thông báo lúc này.");
-        } finally {
-            setMuteLoading(false);
-        }
-    }, [groupId, selectedMuteOption]);
-
-    const handleUnmuteConversation = useCallback(async () => {
-        if (!groupId) {
-            Alert.alert("Thông báo", "Chưa có nhóm để bật thông báo.");
-            return;
-        }
-
-        try {
-            setMuteLoading(true);
-            await ConversationService.unmuteConversation(String(groupId));
-            setLocalMuteUntil(null);
-            Alert.alert("Thông báo", "Đã bật lại thông báo nhóm này.");
-        } catch (err: any) {
-            Alert.alert("Thông báo", err?.message || "Không thể bật thông báo lúc này.");
-        } finally {
-            setMuteLoading(false);
-        }
-    }, [groupId]);
-
-    const handleMuteButtonPress = useCallback(() => {
-        if (isGroupMuted) {
-            handleUnmuteConversation();
-            return;
-        }
-
-        setShowMuteDialog(true);
-    }, [handleUnmuteConversation, isGroupMuted]);
-
-    const handleToggleReaction = useCallback(async (messageId: string, emoji: string, selected: boolean) => {
-        try {
-            if (selected) {
-                await actionsRef.current?.removeReaction?.(messageId, emoji);
-            } else {
-                await actionsRef.current?.addReaction?.(messageId, emoji);
-            }
-        } catch (error: any) {
-            Alert.alert("Lỗi", error?.message || "Không thể cập nhật react");
-        }
-    }, []);
-
-    const closeActionMenu = useCallback(() => {
-        setActionMenuMessage(null);
-        setActionMenuButtons([]);
-    }, []);
-
-    const handleOpenProfileCardUser = useCallback((profileUser: any) => {
-        const targetUserId = profileUser?.id || profileUser?._id || profileUser?.userId;
-        if (!targetUserId) return;
-        onOpenPrivateChat?.({
-            ...profileUser,
-            id: targetUserId,
-            displayName: profileUser.displayName || profileUser.name || "Người dùng",
-            conversationType: "PRIVATE",
-            relationship: String(targetUserId) === String(currentUserId) ? "self" : (profileUser.relationship || "stranger"),
-        });
-    }, [currentUserId, onOpenPrivateChat]);
-
-    const handleSendProfileCard = useCallback(async (targetUser: { id: string; displayName: string }) => {
-        if (!groupId || !targetUser.id) return;
-        setProfileCardSendingUserId(targetUser.id);
-        try {
-            await profileCardService.sendProfileCard(groupId, { userId: targetUser.id });
-            setProfileCardSentUserIds((prev) => new Set(prev).add(targetUser.id));
-        } catch (error: any) {
-            const message = error?.status === 403
-                ? "Người này đang ẩn danh thiếp hoặc không cho phép chia sẻ."
-                : error?.message || "Không gửi được danh thiếp";
-            Alert.alert("Lỗi", message);
-        } finally {
-            setProfileCardSendingUserId(null);
-        }
-    }, [groupId]);
-
-    const handleMessageLongPress = useCallback((message: any) => {
-        const messageId = message._id || message.id;
-        if (!messageId) return;
-
-        const isOwn = !!currentUserId && String(message.senderId || "") === String(currentUserId);
-        setActionMenuMessage(message);
-        setActionMenuButtons(
-            buildMessageActionSheetOptions({
-                isOwn,
-                onDeleteForMe: async () => {
-                    Alert.alert(
-                        "Xóa tin nhắn",
-                        "Xóa tin nhắn này khỏi phía bạn?",
-                        [
-                            { text: "Hủy", style: "cancel" },
-                            {
-                                text: "Xóa",
-                                style: "destructive",
-                                onPress: async () => {
-                                    try {
-                                        if (actionsRef.current?.deleteMessage) {
-                                            await actionsRef.current.deleteMessage(messageId);
-                                        }
-                                    } catch (error: any) {
-                                        Alert.alert("Lỗi", error.message || "Không thể xóa tin nhắn");
-                                    }
-                                },
-                            },
-                        ]
-                    );
-                },
-                onEdit: () => {
-                    setSelectedMessageId(messageId);
-                    setEditText(message.text || "");
-                    setShowEditDialog(true);
-                },
-                onRevoke: async () => {
-                    Alert.alert(
-                        "Thu hồi tin nhắn",
-                        "Tin nhắn sẽ bị xóa với tất cả mọi người?",
-                        [
-                            { text: "Hủy", style: "cancel" },
-                            {
-                                text: "Thu hồi",
-                                style: "destructive",
-                                onPress: async () => {
-                                    try {
-                                        if (actionsRef.current?.revokeMessage) {
-                                            await actionsRef.current.revokeMessage(messageId);
-                                        }
-                                    } catch (error: any) {
-                                        Alert.alert("Lỗi", error.message || "Không thể thu hồi tin nhắn");
-                                    }
-                                },
-                            },
-                        ]
-                    );
-                },
-                onForward: () => {
-                    setForwardMessageIds([messageId]);
-                    setShowForwardDialog(true);
-                },
-                onPin: async () => {
-                    try {
-                        if (actionsRef.current?.pinMessage) {
-                            await actionsRef.current.pinMessage(messageId);
+                            const progress = Math.round(((index + 1) / draftMedia.length) * 100);
+                            setUploadProgress(progress);
                         }
-                    } catch (error: any) {
-                        Alert.alert("Lỗi", error.message || "Không thể ghim tin nhắn");
                     }
-                },
-                onReply: () => {
-                    if (actionsRef.current?.setReplyingTo) {
-                        actionsRef.current.setReplyingTo(message);
+
+                    // Add all sent messages at once
+                    if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
+                        actionsRef.current.addMessages(sentMessages);
                     }
-                },
-            })
+
+                    return sentMessages;
+                } catch (err: any) {
+                    console.error("[GroupChat] Error sending media:", err);
+                    Alert.alert("Lỗi", `Gửi media thất bại: ${err.message}`);
+                    return [];
+                } finally {
+                    setUploading(false);
+                    setUploadProgress(0);
+                    clearDraftMedia();
+                }
+            },
+            [groupId, draftMedia, clearDraftMedia]
         );
-    }, [currentUserId]);
 
-    const handleSaveEdit = useCallback(async () => {
-        if (!selectedMessageId || !editText.trim()) {
-            Alert.alert("Lỗi", "Tin nhắn không có nội dung");
-            return;
-        }
+        const hasSendableContent = draftMedia.length > 0 || messageText.trim().length > 0;
 
-        try {
-            if (actionsRef.current?.editMessage) {
-                await actionsRef.current.editMessage(selectedMessageId, editText.trim());
-                setShowEditDialog(false);
-                setSelectedMessageId(null);
-                setEditText("");
+        const currentUserIds = useMemo(
+            () => [user?.id, (user as any)?._id, (user as any)?.userId]
+                .filter(Boolean)
+                .map((id) => String(id)),
+            [user?.id, (user as any)?._id, (user as any)?.userId]
+        );
+
+        const isCurrentUserOwner = currentUserIds.includes(String(groupState.group?.ownerId || ""));
+        const isCurrentUserAdmin = (groupState.group?.admins || []).some((admin: any) => {
+            const adminId = typeof admin === "string"
+                ? admin
+                : admin?.userId || admin?._id || admin?.id || "";
+            return currentUserIds.includes(String(adminId));
+        });
+        const pollPermission = (groupState.group?.settings as any)?.utilityPermissions?.poll || "all";
+        const canCreatePoll = pollPermission === "all" || isCurrentUserOwner || isCurrentUserAdmin;
+
+        const canManagePoll = useCallback((poll: any) => {
+            const creatorId = String(poll?.creatorId || poll?.createdBy || "");
+            return isCurrentUserOwner || isCurrentUserAdmin || (!!creatorId && currentUserIds.includes(creatorId));
+        }, [currentUserIds, isCurrentUserAdmin, isCurrentUserOwner]);
+
+        const handleCreatePoll = useCallback(async (payload: any) => {
+            try {
+                setIsCreatingPoll(true);
+                await actionsRef.current?.createPoll(payload);
+                setShowCreatePollModal(false);
+                scrollToLatestMessage(true);
+            } catch (error: any) {
+                Alert.alert("Lỗi", error?.message || "Không thể tạo bình chọn");
+            } finally {
+                setIsCreatingPoll(false);
             }
-        } catch (error: any) {
-            Alert.alert("Lỗi", error.message || "Không thể sửa tin nhắn");
-        }
-    }, [selectedMessageId, editText]);
+        }, [scrollToLatestMessage]);
 
-    const handleLeaveGroup = useCallback(() => {
-        Alert.alert(
-            "Xác nhận",
-            "Bạn có chắc muốn rời nhóm này?",
-            [
-                { text: "Hủy", onPress: () => { } },
-                {
-                    text: "Rời nhóm",
-                    onPress: async () => {
+        const handleSendMessage = useCallback(async () => {
+            const trimmedText = messageText.trim();
+
+            if (!hasSendableContent) return;
+
+            try {
+                setIsSending(true);
+
+                // If replying to a message, send as quoted message
+                if (chatState.replyingTo) {
+                    const quotedMessageId = chatState.replyingTo._id || chatState.replyingTo.id;
+                    if (quotedMessageId && chatActions.sendQuotedMessage) {
+                        if (draftMedia.length > 0) {
+                            await chatActions.sendQuotedMessage(quotedMessageId, trimmedText || "", draftMedia);
+                            await clearDraft();
+                        } else if (trimmedText) {
+                            await chatActions.sendQuotedMessage(quotedMessageId, trimmedText);
+                            await clearDraft();
+                        }
+                    }
+                } else {
+                    // Send text message normally
+                    if (trimmedText) {
+                        await chatActions.sendMessage(trimmedText);
+                        await clearDraft();
+                    }
+
+                    // Send media
+                    if (draftMedia.length > 0) {
+                        await sendDraftMedia(trimmedText || undefined);
+                        await clearDraft();
+                    }
+                }
+
+                scrollToLatestMessage(true);
+            } catch (err: any) {
+                Alert.alert("Lỗi", err.message || "Failed to send message");
+            } finally {
+                setIsSending(false);
+            }
+        }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia, scrollToLatestMessage, chatState.replyingTo, clearDraft]);
+
+        const handleInputChange = useCallback((text: string) => {
+            setMessageText(text);
+            if (text.trim()) {
+                chatActions.handleTyping();
+            }
+        }, [chatActions]);
+
+        const openAiPanel = useCallback(async (mode: AiPanelMode) => {
+            if (!groupId) return;
+
+            setAiPanelMode(mode);
+            setShowAiPanel(true);
+            setAiLoading(true);
+
+            try {
+                if (mode === "summary") {
+                    setAiSummary(await aiService.summarize(groupId, 100));
+                } else if (mode === "tasks") {
+                    setAiTasks(await aiService.extractTasks(groupId, 100));
+                } else if (aiSearchQuery.trim()) {
+                    setAiSearchResult(await aiService.smartSearch(aiSearchQuery.trim(), groupId));
+                }
+            } catch (err: any) {
+                Alert.alert("AI", err?.message || "Không thể gọi AI lúc này.");
+            } finally {
+                setAiLoading(false);
+            }
+        }, [aiSearchQuery, groupId]);
+
+        const handleToneAdjust = useCallback(async (tone: AiTone) => {
+            const text = messageText.trim();
+            if (!text) {
+                Alert.alert("AI", "Nhập tin nhắn trước khi chỉnh giọng văn.");
+                return;
+            }
+
+            try {
+                setToneLoading(tone);
+                setPreviousDraft(messageText);
+                const result = await aiService.toneAdjust(text, tone);
+                setMessageText(result.adjusted);
+            } catch (err: any) {
+                Alert.alert("AI", err?.message || "Không thể chỉnh giọng văn.");
+            } finally {
+                setToneLoading(null);
+            }
+        }, [messageText]);
+
+        const showToneMenu = useCallback(() => {
+            setShowTonePicker(true);
+        }, []);
+
+        const showAiMenu = useCallback(() => {
+            setShowAiQuickMenu(true);
+        }, []);
+
+        const handleConfirmMute = useCallback(async () => {
+            if (!groupId) {
+                Alert.alert("Thông báo", "Chưa có nhóm để tắt thông báo.");
+                return;
+            }
+
+            const { payload, localMuteUntil: nextMuteUntil } = buildMutePayload(selectedMuteOption);
+
+            try {
+                setMuteLoading(true);
+                await ConversationService.muteConversation(String(groupId), payload);
+                setLocalMuteUntil(nextMuteUntil);
+                setShowMuteDialog(false);
+                Alert.alert("Thông báo", "Đã tắt thông báo nhóm này.");
+            } catch (err: any) {
+                Alert.alert("Thông báo", err?.message || "Không thể tắt thông báo lúc này.");
+            } finally {
+                setMuteLoading(false);
+            }
+        }, [groupId, selectedMuteOption]);
+
+        const handleUnmuteConversation = useCallback(async () => {
+            if (!groupId) {
+                Alert.alert("Thông báo", "Chưa có nhóm để bật thông báo.");
+                return;
+            }
+
+            try {
+                setMuteLoading(true);
+                await ConversationService.unmuteConversation(String(groupId));
+                setLocalMuteUntil(null);
+                Alert.alert("Thông báo", "Đã bật lại thông báo nhóm này.");
+            } catch (err: any) {
+                Alert.alert("Thông báo", err?.message || "Không thể bật thông báo lúc này.");
+            } finally {
+                setMuteLoading(false);
+            }
+        }, [groupId]);
+
+        const handleMuteButtonPress = useCallback(() => {
+            if (isGroupMuted) {
+                handleUnmuteConversation();
+                return;
+            }
+
+            setShowMuteDialog(true);
+        }, [handleUnmuteConversation, isGroupMuted]);
+
+        const handleToggleReaction = useCallback(async (messageId: string, emoji: string, selected: boolean) => {
+            try {
+                if (selected) {
+                    await actionsRef.current?.removeReaction?.(messageId, emoji);
+                } else {
+                    await actionsRef.current?.addReaction?.(messageId, emoji);
+                }
+            } catch (error: any) {
+                Alert.alert("Lỗi", error?.message || "Không thể cập nhật react");
+            }
+        }, []);
+
+        const closeActionMenu = useCallback(() => {
+            setActionMenuMessage(null);
+            setActionMenuButtons([]);
+        }, []);
+
+        const handleOpenProfileCardUser = useCallback((profileUser: any) => {
+            const targetUserId = profileUser?.id || profileUser?._id || profileUser?.userId;
+            if (!targetUserId) return;
+            onOpenPrivateChat?.({
+                ...profileUser,
+                id: targetUserId,
+                displayName: profileUser.displayName || profileUser.name || "Người dùng",
+                conversationType: "PRIVATE",
+                relationship: String(targetUserId) === String(currentUserId) ? "self" : (profileUser.relationship || "stranger"),
+            });
+        }, [currentUserId, onOpenPrivateChat]);
+
+        const handleSendProfileCard = useCallback(async (targetUser: { id: string; displayName: string }) => {
+            if (!groupId || !targetUser.id) return;
+            setProfileCardSendingUserId(targetUser.id);
+            try {
+                await profileCardService.sendProfileCard(groupId, { userId: targetUser.id });
+                setProfileCardSentUserIds((prev) => new Set(prev).add(targetUser.id));
+            } catch (error: any) {
+                const message = error?.status === 403
+                    ? "Người này đang ẩn danh thiếp hoặc không cho phép chia sẻ."
+                    : error?.message || "Không gửi được danh thiếp";
+                Alert.alert("Lỗi", message);
+            } finally {
+                setProfileCardSendingUserId(null);
+            }
+        }, [groupId]);
+
+        const handleMessageLongPress = useCallback((message: any) => {
+            const messageId = message._id || message.id;
+            if (!messageId) return;
+
+            const isOwn = !!currentUserId && String(message.senderId || "") === String(currentUserId);
+            setActionMenuMessage(message);
+            setActionMenuButtons(
+                buildMessageActionSheetOptions({
+                    isOwn,
+                    onDeleteForMe: async () => {
+                        Alert.alert(
+                            "Xóa tin nhắn",
+                            "Xóa tin nhắn này khỏi phía bạn?",
+                            [
+                                { text: "Hủy", style: "cancel" },
+                                {
+                                    text: "Xóa",
+                                    style: "destructive",
+                                    onPress: async () => {
+                                        try {
+                                            if (actionsRef.current?.deleteMessage) {
+                                                await actionsRef.current.deleteMessage(messageId);
+                                            }
+                                        } catch (error: any) {
+                                            Alert.alert("Lỗi", error.message || "Không thể xóa tin nhắn");
+                                        }
+                                    },
+                                },
+                            ]
+                        );
+                    },
+                    onEdit: () => {
+                        setSelectedMessageId(messageId);
+                        setEditText(message.text || "");
+                        setShowEditDialog(true);
+                    },
+                    onRevoke: async () => {
+                        Alert.alert(
+                            "Thu hồi tin nhắn",
+                            "Tin nhắn sẽ bị xóa với tất cả mọi người?",
+                            [
+                                { text: "Hủy", style: "cancel" },
+                                {
+                                    text: "Thu hồi",
+                                    style: "destructive",
+                                    onPress: async () => {
+                                        try {
+                                            if (actionsRef.current?.revokeMessage) {
+                                                await actionsRef.current.revokeMessage(messageId);
+                                            }
+                                        } catch (error: any) {
+                                            Alert.alert("Lỗi", error.message || "Không thể thu hồi tin nhắn");
+                                        }
+                                    },
+                                },
+                            ]
+                        );
+                    },
+                    onForward: () => {
+                        setForwardMessageIds([messageId]);
+                        setShowForwardDialog(true);
+                    },
+                    onPin: async () => {
                         try {
-                            await groupActions.leaveGroup(groupId);
-                            onBackPress?.();
-                        } catch (err: any) {
-                            Alert.alert("Lỗi", err.message);
+                            if (actionsRef.current?.pinMessage) {
+                                await actionsRef.current.pinMessage(messageId);
+                            }
+                        } catch (error: any) {
+                            Alert.alert("Lỗi", error.message || "Không thể ghim tin nhắn");
                         }
                     },
-                    style: "destructive",
-                },
-            ]
-        );
-    }, [groupId]);
+                    onReply: () => {
+                        if (actionsRef.current?.setReplyingTo) {
+                            actionsRef.current.setReplyingTo(message);
+                        }
+                    },
+                })
+            );
+        }, [currentUserId]);
 
-    const handleStartGroupCall = useCallback(async () => {
-        if (!groupId) {
-            Alert.alert("Không thể gọi", "Nhóm chưa sẵn sàng.");
-            return;
-        }
-
-        if (activeGroupCall?.callId) {
-            await joinActiveCall(activeGroupCall, "GROUP");
-            setActiveGroupCall(null);
-            return;
-        }
-
-        await startCall({
-            conversationId: String(groupId),
-            conversationType: "GROUP",
-            type: "audio",
-            inviteAll: true,
-        });
-    }, [activeGroupCall, groupId, joinActiveCall, startCall]);
-
-    const getAllUserImages = useCallback((senderId: string, firstImageUri?: string) => {
-        const userMessagesWithImages = chatState.messages.filter(
-            (message) =>
-                message.senderId === senderId &&
-                Array.isArray(message.media) &&
-                message.media.some((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image")
-        );
-
-        const allImages = userMessagesWithImages
-            .flatMap((message) =>
-                (message.media || [])
-                    .filter((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image")
-                    .map((media: any, index: number) => ({
-                        uri: media?.url,
-                        key: `${message._id || message.id || message.createdAt}-${index}`,
-                    }))
-            )
-            .filter((image) => !!image.uri);
-
-        const startingIndex = firstImageUri
-            ? Math.max(0, allImages.findIndex((image) => image.uri === firstImageUri))
-            : 0;
-
-        return { allImages, startingIndex };
-    }, [chatState.messages]);
-
-    const openImageViewer = useCallback((senderId: string, firstImageUri?: string) => {
-        const { allImages, startingIndex } = getAllUserImages(senderId, firstImageUri);
-        if (allImages.length === 0) {
-            return;
-        }
-
-        setSelectedImageIndex(startingIndex);
-        setAllViewerImages(allImages);
-    }, [getAllUserImages]);
-
-    const closeImageViewer = useCallback(() => {
-        setAllViewerImages([]);
-        setSelectedImageIndex(0);
-    }, []);
-
-    // Create lookup map for quoted messages (must be before renderMessage)
-    const messageMap = useMemo(() => {
-        const map: Record<string, any | undefined> = {};
-        chatState.messages.forEach(msg => {
-            const msgId = msg._id || msg.id;
-            if (msgId) {
-                map[msgId] = msg;
+        const handleSaveEdit = useCallback(async () => {
+            if (!selectedMessageId || !editText.trim()) {
+                Alert.alert("Lỗi", "Tin nhắn không có nội dung");
+                return;
             }
-        }); return map;
-    }, [chatState.messages]);
 
-    const renderMessage = useCallback(
-        ({ item }: any) => {
-            const itemType = String(item.type || item.messageType || "").toLowerCase();
-            const pollId = item.poll?.id || item.pollId;
-            const poll = item.poll || chatState.polls.find((candidate: any) => candidate.id === pollId);
+            try {
+                if (actionsRef.current?.editMessage) {
+                    await actionsRef.current.editMessage(selectedMessageId, editText.trim());
+                    setShowEditDialog(false);
+                    setSelectedMessageId(null);
+                    setEditText("");
+                }
+            } catch (error: any) {
+                Alert.alert("Lỗi", error.message || "Không thể sửa tin nhắn");
+            }
+        }, [selectedMessageId, editText]);
 
-            if (itemType === "poll" || poll) {
-                if (!poll) {
-                    return null;
+        const handleLeaveGroup = useCallback(() => {
+            Alert.alert(
+                "Xác nhận",
+                "Bạn có chắc muốn rời nhóm này?",
+                [
+                    { text: "Hủy", onPress: () => { } },
+                    {
+                        text: "Rời nhóm",
+                        onPress: async () => {
+                            try {
+                                await groupActions.leaveGroup(groupId);
+                                onBackPress?.();
+                            } catch (err: any) {
+                                Alert.alert("Lỗi", err.message);
+                            }
+                        },
+                        style: "destructive",
+                    },
+                ]
+            );
+        }, [groupId]);
+
+        const handleStartGroupCall = useCallback(async () => {
+            if (!groupId) {
+                Alert.alert("Không thể gọi", "Nhóm chưa sẵn sàng.");
+                return;
+            }
+
+            if (activeGroupCall?.callId) {
+                await joinActiveCall(activeGroupCall, "GROUP");
+                setActiveGroupCall(null);
+                return;
+            }
+
+            await startCall({
+                conversationId: String(groupId),
+                conversationType: "GROUP",
+                type: "audio",
+                inviteAll: true,
+            });
+        }, [activeGroupCall, groupId, joinActiveCall, startCall]);
+
+        const getAllUserImages = useCallback((senderId: string, firstImageUri?: string) => {
+            const userMessagesWithImages = chatState.messages.filter(
+                (message) =>
+                    message.senderId === senderId &&
+                    Array.isArray(message.media) &&
+                    message.media.some((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image")
+            );
+
+            const allImages = userMessagesWithImages
+                .flatMap((message) =>
+                    (message.media || [])
+                        .filter((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image")
+                        .map((media: any, index: number) => ({
+                            uri: media?.url,
+                            key: `${message._id || message.id || message.createdAt}-${index}`,
+                        }))
+                )
+                .filter((image) => !!image.uri);
+
+            const startingIndex = firstImageUri
+                ? Math.max(0, allImages.findIndex((image) => image.uri === firstImageUri))
+                : 0;
+
+            return { allImages, startingIndex };
+        }, [chatState.messages]);
+
+        const openImageViewer = useCallback((senderId: string, firstImageUri?: string) => {
+            const { allImages, startingIndex } = getAllUserImages(senderId, firstImageUri);
+            if (allImages.length === 0) {
+                return;
+            }
+
+            setSelectedImageIndex(startingIndex);
+            setAllViewerImages(allImages);
+        }, [getAllUserImages]);
+
+        const closeImageViewer = useCallback(() => {
+            setAllViewerImages([]);
+            setSelectedImageIndex(0);
+        }, []);
+
+        // Create lookup map for quoted messages (must be before renderMessage)
+        const messageMap = useMemo(() => {
+            const map: Record<string, any | undefined> = {};
+            chatState.messages.forEach(msg => {
+                const msgId = msg._id || msg.id;
+                if (msgId) {
+                    map[msgId] = msg;
+                }
+            }); return map;
+        }, [chatState.messages]);
+
+        const renderMessage = useCallback(
+            ({ item }: any) => {
+                const itemType = String(item.type || item.messageType || "").toLowerCase();
+                const pollId = item.poll?.id || item.pollId;
+                const poll = item.poll || chatState.polls.find((candidate: any) => candidate.id === pollId);
+
+                if (itemType === "poll" || poll) {
+                    if (!poll) {
+                        return null;
+                    }
+
+                    const messageId = item._id || item.id || `poll-${poll.id}`;
+                    const isHighlighted = !!messageId && messageId === highlightedMessageId;
+
+                    return (
+                        <HighlightableMessage
+                            isHighlighted={isHighlighted}
+                            style={[
+                                styles.pollWidgetRow,
+                                isHighlighted && styles.messageHighlighted,
+                            ]}
+                        >
+                            <PollCard
+                                poll={poll}
+                                currentUserId={currentUserId}
+                                canManage={canManagePoll(poll)}
+                                members={groupState.members}
+                                onVote={(targetPollId, optionIds) => actionsRef.current.votePoll(targetPollId, { optionIds })}
+                                onLock={(targetPollId) => actionsRef.current.lockPoll(targetPollId)}
+                                onPin={(targetPollId) => actionsRef.current.pinPoll(targetPollId)}
+                                onUnpin={(targetPollId) => actionsRef.current.unpinPoll(targetPollId)}
+                                onDelete={(targetPollId) => actionsRef.current.deletePoll(targetPollId)}
+                                onAddOption={(targetPollId, text) => actionsRef.current.addPollOption(targetPollId, { text })}
+                            />
+                        </HighlightableMessage>
+                    );
                 }
 
-                const messageId = item._id || item.id || `poll-${poll.id}`;
-                const isHighlighted = !!messageId && messageId === highlightedMessageId;
+                if (itemType === "profile_card") {
+                    const messageId = item._id || item.id;
+                    const isHighlighted = !!messageId && messageId === highlightedMessageId;
+                    const isOwn = item.senderId === user?.id;
 
-                return (
-                    <HighlightableMessage
-                        isHighlighted={isHighlighted}
-                        style={[
-                            styles.pollWidgetRow,
-                            isHighlighted && styles.messageHighlighted,
-                        ]}
-                    >
-                        <PollCard
-                            poll={poll}
+                    return (
+                        <HighlightableMessage
+                            onLongPress={() => handleMessageLongPress(item)}
+                            delayLongPress={300}
+                            isHighlighted={isHighlighted}
+                            style={[
+                                styles.messageBubbleRow,
+                                isOwn ? styles.outgoingRow : styles.incomingRow,
+                                isHighlighted && styles.messageHighlighted,
+                            ]}
+                        >
+                            <ProfileCardMessage
+                                user={item.profileCard}
+                                userId={item.profileCardUserId}
+                                isOwn={isOwn}
+                                onMessagePress={handleOpenProfileCardUser}
+                                onViewProfilePress={handleOpenProfileCardUser}
+                            />
+                        </HighlightableMessage>
+                    );
+                }
+
+                // Check if it's a system/activity message
+                if (
+                    item.isSystemMessage ||
+                    itemType === "system" ||
+                    itemType === "activity" ||
+                    String(item.messageType || "").toLowerCase() === "system"
+                ) {
+                    return <SystemMessageBubble text={item.text || item.content || item.message || ""} />;
+                }
+
+                {
+                    const messageId = item._id || item.id;
+                    const isHighlighted = !!messageId && messageId === highlightedMessageId;
+                    const isOwn = String(item.senderId || "") === String(currentUserId);
+                    const senderMember = groupState.members?.find(
+                        (member) => String(member.userId) === String(item.senderId)
+                    );
+                    const senderName = item.senderName || senderMember?.name || "Unknown";
+                    const senderInitials = (senderName || "?")
+                        .split(" ")
+                        .map((n: string) => n[0]?.toUpperCase())
+                        .join("")
+                        .slice(0, 2);
+                    const isOwner = String(groupState.group?.ownerId || "") === String(item.senderId);
+                    const isAdmin = (groupState.group?.admins || []).some((adminId: any) => String(adminId) === String(item.senderId));
+                    const roleIcon = isOwner ? "👑" : isAdmin ? "🔑" : null;
+
+                    return (
+                        <GroupMessageBubble
+                            message={item}
+                            isOwn={isOwn}
                             currentUserId={currentUserId}
-                            canManage={canManagePoll(poll)}
-                            members={groupState.members}
-                            onVote={(targetPollId, optionIds) => actionsRef.current.votePoll(targetPollId, { optionIds })}
-                            onLock={(targetPollId) => actionsRef.current.lockPoll(targetPollId)}
-                            onPin={(targetPollId) => actionsRef.current.pinPoll(targetPollId)}
-                            onUnpin={(targetPollId) => actionsRef.current.unpinPoll(targetPollId)}
-                            onDelete={(targetPollId) => actionsRef.current.deletePoll(targetPollId)}
-                            onAddOption={(targetPollId, text) => actionsRef.current.addPollOption(targetPollId, { text })}
+                            senderName={senderName}
+                            senderInitials={senderInitials}
+                            senderAvatar={senderMember?.avatar}
+                            roleIcon={roleIcon}
+                            onLongPress={() => handleMessageLongPress(item)}
+                            onToggleReaction={(emoji, selected) => {
+                                if (messageId) {
+                                    handleToggleReaction(messageId, emoji, selected);
+                                }
+                            }}
+                            onClearMyReactions={() => {
+                                if (messageId) {
+                                    handleToggleReaction(messageId, "", true);
+                                }
+                            }}
+                            onProfileCardPress={handleOpenProfileCardUser}
+                            onPressQuoted={async (quotedId) => {
+                                if (chatActions.scrollToMessage) {
+                                    const success = await chatActions.scrollToMessage(quotedId);
+                                    if (!success) {
+                                        Alert.alert("Thông báo", "Không tìm thấy tin nhắn gốc hoặc tin nhắn đã quá cũ");
+                                    }
+                                }
+                            }}
+                            isHighlighted={isHighlighted}
+                            messageMap={messageMap}
                         />
-                    </HighlightableMessage>
-                );
-            }
+                    );
+                }
 
-            if (itemType === "profile_card") {
+                // Resolve quoted message: use existing quotedMessage OR lookup by quotedMessageId
+                const resolvedQuotedMessage = item.quotedMessage ||
+                    (item.quotedMessageId && messageMap[item.quotedMessageId]) ||
+                    null;
+
+                // Use correct field: user.id (not user._id)
+                const isOwn = item.senderId === user?.id;
+
+                // Get sender name from message or fallback to member data
+                let senderName = item.senderName;
+                if (!senderName) {
+                    // Fallback: find member name from group members
+                    const senderMember = groupState.members?.find(
+                        (member) => member.userId === item.senderId
+                    );
+                    senderName = senderMember?.name || "Unknown";
+                }
+
+                const senderInitials = (senderName || "?")
+                    .split(" ")
+                    .map((n: string) => n[0].toUpperCase())
+                    .join("")
+                    .slice(0, 2);
+
+                // Get sender's avatar from group members
+                const senderMember = groupState.members?.find(
+                    (member) => member.userId === item.senderId
+                );
+                const senderAvatar = senderMember?.avatar;
+
+                // Determine sender's role for badge
+                const isOwner = groupState.group?.ownerId === item.senderId;
+                const isAdmin = groupState.group?.admins?.includes(item.senderId);
+
+                const getRoleIcon = () => {
+                    if (isOwner) {
+                        return "👑"; // Owner - Golden crown
+                    } else if (isAdmin) {
+                        return "🔑"; // Admin - Silver key
+                    }
+                    return null;
+                };
+
+                const roleIcon = getRoleIcon();
+                const hasMedia = item.media && item.media.length > 0;
+                const trimmedText = String(item.text || "").trim();
+                const compactText = String(item.text || "").replace(/\s+/g, "");
+                const hasText = trimmedText.length > 0;
+                const isJumboEmojiOnly = !!JUMBO_EMOJI_ASSETS[trimmedText] && compactText === trimmedText;
+                const isForwarded = Boolean(
+                    item?.isForwarded ||
+                    item?.forwarded ||
+                    item?.forwardedFrom ||
+                    item?.forwardedFromMessageId ||
+                    item?.originalMessageId ||
+                    item?.sourceMessageId
+                );
+                const hasGalleryMedia =
+                    hasMedia &&
+                    item.media.length >= 2 &&
+                    item.media.every((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image");
+                const galleryPreviewMedia = hasGalleryMedia ? item.media.slice(0, 3) : [];
+                const galleryExtraCount = hasGalleryMedia ? Math.max(0, item.media.length - galleryPreviewMedia.length) : 0;
+
                 const messageId = item._id || item.id;
                 const isHighlighted = !!messageId && messageId === highlightedMessageId;
-                const isOwn = item.senderId === user?.id;
+                const reactionGroups = Object.values(
+                    ((item.reactions || []) as any[]).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
+                        const emoji = reaction?.emoji;
+                        if (!emoji) return acc;
+                        if (!acc[emoji]) {
+                            acc[emoji] = { emoji, count: 0, selected: false };
+                        }
+                        acc[emoji].count += 1;
+                        if (currentUserId && reaction.userId === currentUserId) {
+                            acc[emoji].selected = true;
+                        }
+                        return acc;
+                    }, {})
+                );
+                const reactionSummary = {
+                    emojis: reactionGroups.map((reaction) => reaction.emoji),
+                    total: reactionGroups.reduce((sum, reaction) => sum + reaction.count, 0),
+                    selected: reactionGroups.some((reaction) => reaction.selected),
+                };
+                const myLastReaction = [...((item.reactions || []) as any[])]
+                    .reverse()
+                    .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
+                const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
+                const hasDefaultReaction = !!myLastReaction;
 
                 return (
                     <HighlightableMessage
@@ -1770,292 +1944,202 @@ export const GroupChatScreen: React.FC<{
                             isHighlighted && styles.messageHighlighted,
                         ]}
                     >
-                        <ProfileCardMessage
-                            user={item.profileCard}
-                            userId={item.profileCardUserId}
-                            isOwn={isOwn}
-                            onMessagePress={handleOpenProfileCardUser}
-                            onViewProfilePress={handleOpenProfileCardUser}
-                        />
-                    </HighlightableMessage>
-                );
-            }
+                        {/* Avatar for incoming messages */}
+                        {!isOwn && (
+                            <Avatar
+                                label={senderInitials}
+                                size={32}
+                                backgroundColor={colors.accentStrong}
+                                imageUrl={senderAvatar}
+                            />
+                        )}
 
-            // Check if it's a system/activity message
-            if (
-                item.isSystemMessage ||
-                itemType === "system" ||
-                itemType === "activity" ||
-                String(item.messageType || "").toLowerCase() === "system"
-            ) {
-                return <SystemMessageBubble text={item.text || item.content || item.message || ""} />;
-            }
-
-            {
-                const messageId = item._id || item.id;
-                const isHighlighted = !!messageId && messageId === highlightedMessageId;
-                const isOwn = String(item.senderId || "") === String(currentUserId);
-                const senderMember = groupState.members?.find(
-                    (member) => String(member.userId) === String(item.senderId)
-                );
-                const senderName = item.senderName || senderMember?.name || "Unknown";
-                const senderInitials = (senderName || "?")
-                    .split(" ")
-                    .map((n: string) => n[0]?.toUpperCase())
-                    .join("")
-                    .slice(0, 2);
-                const isOwner = String(groupState.group?.ownerId || "") === String(item.senderId);
-                const isAdmin = (groupState.group?.admins || []).some((adminId: any) => String(adminId) === String(item.senderId));
-                const roleIcon = isOwner ? "👑" : isAdmin ? "🔑" : null;
-
-                return (
-                    <GroupMessageBubble
-                        message={item}
-                        isOwn={isOwn}
-                        currentUserId={currentUserId}
-                        senderName={senderName}
-                        senderInitials={senderInitials}
-                        senderAvatar={senderMember?.avatar}
-                        roleIcon={roleIcon}
-                        onLongPress={() => handleMessageLongPress(item)}
-                        onToggleReaction={(emoji, selected) => {
-                            if (messageId) {
-                                handleToggleReaction(messageId, emoji, selected);
-                            }
-                        }}
-                        onClearMyReactions={() => {
-                            if (messageId) {
-                                handleToggleReaction(messageId, "", true);
-                            }
-                        }}
-                        onProfileCardPress={handleOpenProfileCardUser}
-                        onPressQuoted={async (quotedId) => {
-                            if (chatActions.scrollToMessage) {
-                                const success = await chatActions.scrollToMessage(quotedId);
-                                if (!success) {
-                                    Alert.alert("Thông báo", "Không tìm thấy tin nhắn gốc hoặc tin nhắn đã quá cũ");
-                                }
-                            }
-                        }}
-                        isHighlighted={isHighlighted}
-                        messageMap={messageMap}
-                    />
-                );
-            }
-
-            // Resolve quoted message: use existing quotedMessage OR lookup by quotedMessageId
-            const resolvedQuotedMessage = item.quotedMessage ||
-                (item.quotedMessageId && messageMap[item.quotedMessageId]) ||
-                null;
-
-            // Use correct field: user.id (not user._id)
-            const isOwn = item.senderId === user?.id;
-
-            // Get sender name from message or fallback to member data
-            let senderName = item.senderName;
-            if (!senderName) {
-                // Fallback: find member name from group members
-                const senderMember = groupState.members?.find(
-                    (member) => member.userId === item.senderId
-                );
-                senderName = senderMember?.name || "Unknown";
-            }
-
-            const senderInitials = (senderName || "?")
-                .split(" ")
-                .map((n: string) => n[0].toUpperCase())
-                .join("")
-                .slice(0, 2);
-
-            // Get sender's avatar from group members
-            const senderMember = groupState.members?.find(
-                (member) => member.userId === item.senderId
-            );
-            const senderAvatar = senderMember?.avatar;
-
-            // Determine sender's role for badge
-            const isOwner = groupState.group?.ownerId === item.senderId;
-            const isAdmin = groupState.group?.admins?.includes(item.senderId);
-
-            const getRoleIcon = () => {
-                if (isOwner) {
-                    return "👑"; // Owner - Golden crown
-                } else if (isAdmin) {
-                    return "🔑"; // Admin - Silver key
-                }
-                return null;
-            };
-
-            const roleIcon = getRoleIcon();
-            const hasMedia = item.media && item.media.length > 0;
-            const trimmedText = String(item.text || "").trim();
-            const compactText = String(item.text || "").replace(/\s+/g, "");
-            const hasText = trimmedText.length > 0;
-            const isJumboEmojiOnly = !!JUMBO_EMOJI_ASSETS[trimmedText] && compactText === trimmedText;
-            const isForwarded = Boolean(
-                item?.isForwarded ||
-                item?.forwarded ||
-                item?.forwardedFrom ||
-                item?.forwardedFromMessageId ||
-                item?.originalMessageId ||
-                item?.sourceMessageId
-            );
-            const hasGalleryMedia =
-                hasMedia &&
-                item.media.length >= 2 &&
-                item.media.every((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image");
-            const galleryPreviewMedia = hasGalleryMedia ? item.media.slice(0, 3) : [];
-            const galleryExtraCount = hasGalleryMedia ? Math.max(0, item.media.length - galleryPreviewMedia.length) : 0;
-
-            const messageId = item._id || item.id;
-            const isHighlighted = !!messageId && messageId === highlightedMessageId;
-            const reactionGroups = Object.values(
-                ((item.reactions || []) as any[]).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
-                    const emoji = reaction?.emoji;
-                    if (!emoji) return acc;
-                    if (!acc[emoji]) {
-                        acc[emoji] = { emoji, count: 0, selected: false };
-                    }
-                    acc[emoji].count += 1;
-                    if (currentUserId && reaction.userId === currentUserId) {
-                        acc[emoji].selected = true;
-                    }
-                    return acc;
-                }, {})
-            );
-            const reactionSummary = {
-                emojis: reactionGroups.map((reaction) => reaction.emoji),
-                total: reactionGroups.reduce((sum, reaction) => sum + reaction.count, 0),
-                selected: reactionGroups.some((reaction) => reaction.selected),
-            };
-            const myLastReaction = [...((item.reactions || []) as any[])]
-                .reverse()
-                .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
-            const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
-            const hasDefaultReaction = !!myLastReaction;
-
-            return (
-                <HighlightableMessage
-                    onLongPress={() => handleMessageLongPress(item)}
-                    delayLongPress={300}
-                    isHighlighted={isHighlighted}
-                    style={[
-                        styles.messageBubbleRow,
-                        isOwn ? styles.outgoingRow : styles.incomingRow,
-                        isHighlighted && styles.messageHighlighted,
-                    ]}
-                >
-                    {/* Avatar for incoming messages */}
-                    {!isOwn && (
-                        <Avatar
-                            label={senderInitials}
-                            size={32}
-                            backgroundColor={colors.accentStrong}
-                            imageUrl={senderAvatar}
-                        />
-                    )}
-
-                    {/* Message content container - handles alignment */}
-                    <View style={[
-                        styles.messageContentWrapper,
-                        hasMedia && !hasText && (
-                            isOwn
-                                ? styles.messageContentWrapperMediaOnlyOutgoing
-                                : styles.messageContentWrapperMediaOnlyIncoming
-                        ),
-                        !isOwn && styles.messageContentWrapperIncoming,
-                        isOwn && styles.messageContentWrapperOutgoing,
-                    ]}>
-                        {/* Render Media - Outside bubble for better sizing */}
-                        {hasMedia && (
-                            <View style={[styles.mediaContainer, !hasText && styles.mediaReactionWrap]}>
-                                {!hasText && isForwarded && (
-                                    <View style={styles.forwardedLabelRow}>
-                                        <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
-                                        <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
-                                    </View>
-                                )}
-                                {!hasText && reactionPickerMessageId === messageId && (
-                                    <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
-                                        {QUICK_REACTIONS.map((emoji) => {
-                                            const selected = ((item.reactions || []) as any[]).some(
-                                                (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
-                                            );
-                                            return (
+                        {/* Message content container - handles alignment */}
+                        <View style={[
+                            styles.messageContentWrapper,
+                            hasMedia && !hasText && (
+                                isOwn
+                                    ? styles.messageContentWrapperMediaOnlyOutgoing
+                                    : styles.messageContentWrapperMediaOnlyIncoming
+                            ),
+                            !isOwn && styles.messageContentWrapperIncoming,
+                            isOwn && styles.messageContentWrapperOutgoing,
+                        ]}>
+                            {/* Render Media - Outside bubble for better sizing */}
+                            {hasMedia && (
+                                <View style={[styles.mediaContainer, !hasText && styles.mediaReactionWrap]}>
+                                    {!hasText && isForwarded && (
+                                        <View style={styles.forwardedLabelRow}>
+                                            <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
+                                            <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
+                                        </View>
+                                    )}
+                                    {!hasText && reactionPickerMessageId === messageId && (
+                                        <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+                                            {QUICK_REACTIONS.map((emoji) => {
+                                                const selected = ((item.reactions || []) as any[]).some(
+                                                    (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
+                                                );
+                                                return (
+                                                    <Pressable
+                                                        key={emoji}
+                                                        style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                                                        onPress={() => {
+                                                            setReactionPickerMessageId(null);
+                                                            if (messageId) {
+                                                                handleToggleReaction(messageId, emoji, false);
+                                                            }
+                                                        }}
+                                                    >
+                                                        <Text style={styles.quickReactionText}>{emoji}</Text>
+                                                    </Pressable>
+                                                );
+                                            })}
+                                            {hasDefaultReaction && (
                                                 <Pressable
-                                                    key={emoji}
-                                                    style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                                                    style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
                                                     onPress={() => {
                                                         setReactionPickerMessageId(null);
                                                         if (messageId) {
-                                                            handleToggleReaction(messageId, emoji, false);
+                                                            handleToggleReaction(messageId, "", true);
                                                         }
                                                     }}
                                                 >
-                                                    <Text style={styles.quickReactionText}>{emoji}</Text>
+                                                    <Ionicons name="close" size={17} color={colors.danger} />
                                                 </Pressable>
-                                            );
-                                        })}
-                                        {hasDefaultReaction && (
-                                            <Pressable
-                                                style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
-                                                onPress={() => {
-                                                    setReactionPickerMessageId(null);
-                                                    if (messageId) {
-                                                        handleToggleReaction(messageId, "", true);
-                                                    }
-                                                }}
-                                            >
-                                                <Ionicons name="close" size={17} color={colors.danger} />
-                                            </Pressable>
-                                        )}
-                                    </View>
-                                )}
-                                {hasGalleryMedia ? (
-                                    <View style={styles.galleryBubble}>
-                                        <View style={styles.galleryGrid}>
-                                            {galleryPreviewMedia.map((media: any, index: number) => (
-                                                <Pressable
-                                                    key={`${media?.url || "media"}-${index}`}
-                                                    style={styles.galleryTileWrap}
-                                                    onPress={() => openImageViewer(item.senderId, media?.url)}
-                                                >
-                                                    <Image
-                                                        source={{ uri: media?.url }}
-                                                        style={styles.galleryTileImage}
-                                                    />
-                                                    {index === galleryPreviewMedia.length - 1 && galleryExtraCount > 0 && (
-                                                        <View style={styles.galleryOverlay}>
-                                                            <Text style={styles.galleryOverlayText}>+{galleryExtraCount}</Text>
-                                                        </View>
-                                                    )}
-                                                </Pressable>
-                                            ))}
+                                            )}
                                         </View>
-                                    </View>
-                                ) : (
-                                    item.media.map((m: any, idx: number) => (
-                                        <MediaMessage
-                                            key={idx}
-                                            media={m}
-                                            isSender={isOwn}
-                                            layoutMode={hasText ? 'compact' : 'standalone'}
-                                        />
-                                    ))
-                                )}
-                                {!hasText && reactionGroups.length > 0 && (
-                                    <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+                                    )}
+                                    {hasGalleryMedia ? (
+                                        <View style={styles.galleryBubble}>
+                                            <View style={styles.galleryGrid}>
+                                                {galleryPreviewMedia.map((media: any, index: number) => (
+                                                    <Pressable
+                                                        key={`${media?.url || "media"}-${index}`}
+                                                        style={styles.galleryTileWrap}
+                                                        onPress={() => openImageViewer(item.senderId, media?.url)}
+                                                    >
+                                                        <Image
+                                                            source={{ uri: media?.url }}
+                                                            style={styles.galleryTileImage}
+                                                        />
+                                                        {index === galleryPreviewMedia.length - 1 && galleryExtraCount > 0 && (
+                                                            <View style={styles.galleryOverlay}>
+                                                                <Text style={styles.galleryOverlayText}>+{galleryExtraCount}</Text>
+                                                            </View>
+                                                        )}
+                                                    </Pressable>
+                                                ))}
+                                            </View>
+                                        </View>
+                                    ) : (
+                                        item.media.map((m: any, idx: number) => (
+                                            <MediaMessage
+                                                key={idx}
+                                                media={m}
+                                                isSender={isOwn}
+                                                layoutMode={hasText ? 'compact' : 'standalone'}
+                                            />
+                                        ))
+                                    )}
+                                    {!hasText && reactionGroups.length > 0 && (
+                                        <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+                                            <Pressable
+                                                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                                                onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                            >
+                                                <Text style={styles.reactionText}>
+                                                    {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                                                </Text>
+                                            </Pressable>
+                                        </View>
+                                    )}
+                                    {!hasText && (
                                         <Pressable
-                                            style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                                            style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+                                            hitSlop={8}
                                             onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                            onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
+                                            delayLongPress={220}
                                         >
-                                            <Text style={styles.reactionText}>
-                                                {reactionSummary.emojis.join(" ")} {reactionSummary.total}
-                                            </Text>
+                                            {hasDefaultReaction ? (
+                                                <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                                                    {defaultReactionEmoji}
+                                                </Text>
+                                            ) : (
+                                                <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+                                            )}
                                         </Pressable>
+                                    )}
+                                </View>
+                            )}
+
+                            {!hasMedia && isJumboEmojiOnly && (
+                                <View style={styles.jumboEmojiWrap}>
+                                    {reactionPickerMessageId === messageId && (
+                                        <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+                                            {QUICK_REACTIONS.map((emoji) => {
+                                                const selected = ((item.reactions || []) as any[]).some(
+                                                    (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
+                                                );
+                                                return (
+                                                    <Pressable
+                                                        key={emoji}
+                                                        style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                                                        onPress={() => {
+                                                            setReactionPickerMessageId(null);
+                                                            if (messageId) {
+                                                                handleToggleReaction(messageId, emoji, false);
+                                                            }
+                                                        }}
+                                                    >
+                                                        <Text style={styles.quickReactionText}>{emoji}</Text>
+                                                    </Pressable>
+                                                );
+                                            })}
+                                            {hasDefaultReaction && (
+                                                <Pressable
+                                                    style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
+                                                    onPress={() => {
+                                                        setReactionPickerMessageId(null);
+                                                        if (messageId) {
+                                                            handleToggleReaction(messageId, "", true);
+                                                        }
+                                                    }}
+                                                >
+                                                    <Ionicons name="close" size={17} color={colors.danger} />
+                                                </Pressable>
+                                            )}
+                                        </View>
+                                    )}
+                                    {!isOwn && (
+                                        <View style={styles.senderNameRow}>
+                                            <Text style={styles.senderName}>{senderName}</Text>
+                                            {roleIcon && <Text style={styles.roleIcon}>{roleIcon}</Text>}
+                                        </View>
+                                    )}
+                                    <AnimatedEmojiMessage
+                                        emoji={trimmedText}
+                                        isNew={item.createdAt ? new Date().getTime() - new Date(item.createdAt).getTime() < 5000 : false}
+                                        isMine={isOwn}
+                                    />
+                                    <View style={[styles.jumboEmojiTimePill, isOwn ? styles.jumboEmojiTimePillOwn : styles.jumboEmojiTimePillOther]}>
+                                        <Text style={styles.messageTime}>
+                                            {new Date(item.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
+                                        </Text>
                                     </View>
-                                )}
-                                {!hasText && (
+                                    {reactionGroups.length > 0 && (
+                                        <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+                                            <Pressable
+                                                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                                                onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                            >
+                                                <Text style={styles.reactionText}>
+                                                    {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                                                </Text>
+                                            </Pressable>
+                                        </View>
+                                    )}
                                     <Pressable
                                         style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
                                         hitSlop={8}
@@ -2071,1090 +2155,1005 @@ export const GroupChatScreen: React.FC<{
                                             <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
                                         )}
                                     </Pressable>
-                                )}
-                            </View>
-                        )}
-
-                        {!hasMedia && isJumboEmojiOnly && (
-                            <View style={styles.jumboEmojiWrap}>
-                                {reactionPickerMessageId === messageId && (
-                                    <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
-                                        {QUICK_REACTIONS.map((emoji) => {
-                                            const selected = ((item.reactions || []) as any[]).some(
-                                                (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
-                                            );
-                                            return (
-                                                <Pressable
-                                                    key={emoji}
-                                                    style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
-                                                    onPress={() => {
-                                                        setReactionPickerMessageId(null);
-                                                        if (messageId) {
-                                                            handleToggleReaction(messageId, emoji, false);
-                                                        }
-                                                    }}
-                                                >
-                                                    <Text style={styles.quickReactionText}>{emoji}</Text>
-                                                </Pressable>
-                                            );
-                                        })}
-                                        {hasDefaultReaction && (
-                                            <Pressable
-                                                style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
-                                                onPress={() => {
-                                                    setReactionPickerMessageId(null);
-                                                    if (messageId) {
-                                                        handleToggleReaction(messageId, "", true);
-                                                    }
-                                                }}
-                                            >
-                                                <Ionicons name="close" size={17} color={colors.danger} />
-                                            </Pressable>
-                                        )}
-                                    </View>
-                                )}
-                                {!isOwn && (
-                                    <View style={styles.senderNameRow}>
-                                        <Text style={styles.senderName}>{senderName}</Text>
-                                        {roleIcon && <Text style={styles.roleIcon}>{roleIcon}</Text>}
-                                    </View>
-                                )}
-                                <AnimatedEmojiMessage
-                                    emoji={trimmedText}
-                                    isNew={item.createdAt ? new Date().getTime() - new Date(item.createdAt).getTime() < 5000 : false}
-                                    isMine={isOwn}
-                                />
-                                <View style={[styles.jumboEmojiTimePill, isOwn ? styles.jumboEmojiTimePillOwn : styles.jumboEmojiTimePillOther]}>
-                                    <Text style={styles.messageTime}>
-                                        {new Date(item.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
-                                    </Text>
                                 </View>
-                                {reactionGroups.length > 0 && (
-                                    <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
-                                        <Pressable
-                                            style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
-                                            onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
-                                        >
-                                            <Text style={styles.reactionText}>
-                                                {reactionSummary.emojis.join(" ")} {reactionSummary.total}
-                                            </Text>
-                                        </Pressable>
-                                    </View>
-                                )}
-                                <Pressable
-                                    style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
-                                    hitSlop={8}
-                                    onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
-                                    onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
-                                    delayLongPress={220}
-                                >
-                                    {hasDefaultReaction ? (
-                                        <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
-                                            {defaultReactionEmoji}
-                                        </Text>
-                                    ) : (
-                                        <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
-                                    )}
-                                </Pressable>
-                            </View>
-                        )}
+                            )}
 
-                        {/* Text Message Bubble */}
-                        {hasText && !isJumboEmojiOnly && (
-                            <View
-                                style={[
-                                    styles.messageBubble,
-                                    isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
-                                ]}
-                            >
-                                {isForwarded && (
-                                    <View style={styles.forwardedLabelRow}>
-                                        <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
-                                        <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
-                                    </View>
-                                )}
-                                {reactionPickerMessageId === messageId && (
-                                    <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
-                                        {QUICK_REACTIONS.map((emoji) => {
-                                            const selected = ((item.reactions || []) as any[]).some(
-                                                (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
-                                            );
-                                            return (
+                            {/* Text Message Bubble */}
+                            {hasText && !isJumboEmojiOnly && (
+                                <View
+                                    style={[
+                                        styles.messageBubble,
+                                        isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
+                                    ]}
+                                >
+                                    {isForwarded && (
+                                        <View style={styles.forwardedLabelRow}>
+                                            <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
+                                            <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
+                                        </View>
+                                    )}
+                                    {reactionPickerMessageId === messageId && (
+                                        <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+                                            {QUICK_REACTIONS.map((emoji) => {
+                                                const selected = ((item.reactions || []) as any[]).some(
+                                                    (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
+                                                );
+                                                return (
+                                                    <Pressable
+                                                        key={emoji}
+                                                        style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                                                        onPress={() => {
+                                                            setReactionPickerMessageId(null);
+                                                            if (messageId) {
+                                                                handleToggleReaction(messageId, emoji, false);
+                                                            }
+                                                        }}
+                                                    >
+                                                        <Text style={styles.quickReactionText}>{emoji}</Text>
+                                                    </Pressable>
+                                                );
+                                            })}
+                                            {hasDefaultReaction && (
                                                 <Pressable
-                                                    key={emoji}
-                                                    style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                                                    style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
                                                     onPress={() => {
                                                         setReactionPickerMessageId(null);
                                                         if (messageId) {
-                                                            handleToggleReaction(messageId, emoji, false);
+                                                            handleToggleReaction(messageId, "", true);
                                                         }
                                                     }}
                                                 >
-                                                    <Text style={styles.quickReactionText}>{emoji}</Text>
+                                                    <Ionicons name="close" size={17} color={colors.danger} />
                                                 </Pressable>
-                                            );
-                                        })}
-                                        {hasDefaultReaction && (
-                                            <Pressable
-                                                style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
-                                                onPress={() => {
-                                                    setReactionPickerMessageId(null);
-                                                    if (messageId) {
-                                                        handleToggleReaction(messageId, "", true);
+                                            )}
+                                        </View>
+                                    )}
+                                    {!isOwn && (
+                                        <View style={styles.senderNameRow}>
+                                            <Text style={styles.senderName}>
+                                                {senderName}
+                                            </Text>
+                                            {roleIcon && (
+                                                <Text style={styles.roleIcon}>{roleIcon}</Text>
+                                            )}
+                                        </View>
+                                    )}
+                                    {/* Quoted message block if this is a reply */}
+                                    {(() => {
+                                        const hasQuoted = resolvedQuotedMessage || item.quotedMessageId;
+                                        return resolvedQuotedMessage ? (
+                                            <QuotedMessageBlock
+                                                quotedMessage={resolvedQuotedMessage}
+                                                isOwn={isOwn}
+                                                onPress={async () => {
+                                                    const msgId = item.quotedMessageId;
+                                                    if (msgId && chatActions.scrollToMessage) {
+                                                        const success = await chatActions.scrollToMessage(msgId);
+                                                        if (!success) {
+                                                            Alert.alert("Thông báo", "Không tìm thấy tin nhắn gốc hoặc tin nhắn đã quá cũ");
+                                                        }
                                                     }
                                                 }}
-                                            >
-                                                <Ionicons name="close" size={17} color={colors.danger} />
-                                            </Pressable>
-                                        )}
-                                    </View>
-                                )}
-                                {!isOwn && (
-                                    <View style={styles.senderNameRow}>
-                                        <Text style={styles.senderName}>
-                                            {senderName}
-                                        </Text>
-                                        {roleIcon && (
-                                            <Text style={styles.roleIcon}>{roleIcon}</Text>
-                                        )}
-                                    </View>
-                                )}
-                                {/* Quoted message block if this is a reply */}
-                                {(() => {
-                                    const hasQuoted = resolvedQuotedMessage || item.quotedMessageId;
-                                    return resolvedQuotedMessage ? (
-                                        <QuotedMessageBlock
-                                            quotedMessage={resolvedQuotedMessage}
-                                            isOwn={isOwn}
-                                            onPress={async () => {
-                                                const msgId = item.quotedMessageId;
-                                                if (msgId && chatActions.scrollToMessage) {
-                                                    const success = await chatActions.scrollToMessage(msgId);
-                                                    if (!success) {
-                                                        Alert.alert("Thông báo", "Không tìm thấy tin nhắn gốc hoặc tin nhắn đã quá cũ");
-                                                    }
-                                                }
-                                            }}
-                                        />
-                                    ) : null;
-                                })()}
-                                {(() => {
-                                    return (
-                                        <Text style={[
-                                            styles.messageText,
-                                            isOwn ? styles.messageTextOwn : styles.messageTextOther,
-                                        ]}>
-                                            {trimmedText}
-                                        </Text>
-                                    );
-                                })()}
-                                <Text style={styles.messageTime}>
-                                    {new Date(item.createdAt).toLocaleTimeString(
-                                        "vi-VN",
-                                        { hour: "2-digit", minute: "2-digit" }
-                                    )}
-                                </Text>
-                                {reactionGroups.length > 0 && (
-                                    <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
-                                        <Pressable
-                                            style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
-                                            onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
-                                        >
-                                            <Text style={styles.reactionText}>
-                                                {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                                            />
+                                        ) : null;
+                                    })()}
+                                    {(() => {
+                                        return (
+                                            <Text style={[
+                                                styles.messageText,
+                                                isOwn ? styles.messageTextOwn : styles.messageTextOther,
+                                            ]}>
+                                                {trimmedText}
                                             </Text>
-                                        </Pressable>
-                                    </View>
-                                )}
-                                <Pressable
-                                    style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
-                                    hitSlop={8}
-                                    onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
-                                    onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
-                                    delayLongPress={220}
-                                >
-                                    {hasDefaultReaction ? (
-                                        <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
-                                            {defaultReactionEmoji}
-                                        </Text>
-                                    ) : (
-                                        <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+                                        );
+                                    })()}
+                                    <Text style={styles.messageTime}>
+                                        {new Date(item.createdAt).toLocaleTimeString(
+                                            "vi-VN",
+                                            { hour: "2-digit", minute: "2-digit" }
+                                        )}
+                                    </Text>
+                                    {reactionGroups.length > 0 && (
+                                        <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+                                            <Pressable
+                                                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                                                onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                            >
+                                                <Text style={styles.reactionText}>
+                                                    {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                                                </Text>
+                                            </Pressable>
+                                        </View>
                                     )}
-                                </Pressable>
-                            </View>
-                        )}
+                                    <Pressable
+                                        style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+                                        hitSlop={8}
+                                        onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
+                                        onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
+                                        delayLongPress={220}
+                                    >
+                                        {hasDefaultReaction ? (
+                                            <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                                                {defaultReactionEmoji}
+                                            </Text>
+                                        ) : (
+                                            <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+                                        )}
+                                    </Pressable>
+                                </View>
+                            )}
 
-                        {/* Show sender name for media-only messages */}
-                        {hasMedia && !hasText && !isOwn && (
-                            <View style={styles.senderNameRow}>
-                                <Text style={styles.senderName}>
-                                    {senderName}
-                                </Text>
-                                {roleIcon && (
-                                    <Text style={styles.roleIcon}>{roleIcon}</Text>
-                                )}
-                            </View>
-                        )}
-                    </View>
-                </HighlightableMessage>
-            );
-        },
-        [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId, handleOpenProfileCardUser, reactionPickerMessageId]
-    );
-
-    const handleViewableItemsChanged = useCallback(
-        ({ viewableItems }: any) => {
-            if (!viewableItems || viewableItems.length === 0) return;
-
-            const visibleMessageIds = viewableItems
-                .map((item: any) => item.item)
-                .filter((msg: any) => msg.senderId !== user?.id)
-                .flatMap((msg: any) => {
-                    if (Array.isArray(msg.groupedMessageIds) && msg.groupedMessageIds.length > 0) {
-                        return msg.groupedMessageIds;
-                    }
-                    return [msg._id || msg.id];
-                })
-                .filter(Boolean);
-
-            if (visibleMessageIds.length > 0) {
-                actionsRef.current?.markAsSeen?.(visibleMessageIds);
-            }
-        },
-        [user?.id]
-    );
-
-    const viewabilityConfigRef = useRef({
-        itemVisiblePercentThreshold: 10,
-        minimumViewTime: 300,
-    });
-
-    const renderableMessages = useMemo(
-        () => groupMessagesForGallery(keepLatestPollCards(chatState.messages)),
-        [chatState.messages]
-    );
-
-    const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
-        if (label.includes("Trả lời")) return "return-up-back-outline";
-        if (label.includes("Ghim")) return "pin";
-        if (label.includes("Sửa")) return "create-outline";
-        if (label.includes("Thu hồi")) return "refresh-outline";
-        if (label.includes("Chuyển tiếp")) return "arrow-redo-outline";
-        if (label.includes("Xóa")) return "trash-outline";
-        return "ellipse-outline";
-    }, []);
-
-    if (!groupState.group) {
-        return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.accent} />
-                <Text style={styles.loadingText}>Đang tải...</Text>
-            </View>
+                            {/* Show sender name for media-only messages */}
+                            {hasMedia && !hasText && !isOwn && (
+                                <View style={styles.senderNameRow}>
+                                    <Text style={styles.senderName}>
+                                        {senderName}
+                                    </Text>
+                                    {roleIcon && (
+                                        <Text style={styles.roleIcon}>{roleIcon}</Text>
+                                    )}
+                                </View>
+                            )}
+                        </View>
+                    </HighlightableMessage>
+                );
+            },
+            [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId, handleOpenProfileCardUser, reactionPickerMessageId]
         );
-    }
 
-    return (
-        <KeyboardAvoidingView
-            style={styles.screen}
-            behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
-            keyboardVerticalOffset={Platform.select({
-                ios: 60,
-                android: 76 + (StatusBar.currentHeight || 0),
-                default: 0,
-            })}
-        >
-            {/* Header */}
-            <View style={styles.chatHeaderWrap}>
-                <Pressable
-                    style={styles.backButton}
-                    onPress={onBackPress}
-                >
-                    <Ionicons name="chevron-back" size={24} color={colors.text} />
-                </Pressable>
+        const handleViewableItemsChanged = useCallback(
+            ({ viewableItems }: any) => {
+                if (!viewableItems || viewableItems.length === 0) return;
 
-                <View style={styles.chatHeaderCard}>
-                    <Text
-                        style={styles.chatHeaderTitle}
-                        numberOfLines={1}
-                    >
-                        {groupState.group?.name || "Nhóm"}
-                    </Text>
-                    <Text style={styles.chatHeaderSubtitle}>
-                        {chatState.typingUsers.size > 0
-                            ? `${Array.from(chatState.typingUsers).length} đang gõ...`
-                            : `${groupState.members?.length || 0} thành viên`}
-                    </Text>
+                const visibleMessageIds = viewableItems
+                    .map((item: any) => item.item)
+                    .filter((msg: any) => msg.senderId !== user?.id)
+                    .flatMap((msg: any) => {
+                        if (Array.isArray(msg.groupedMessageIds) && msg.groupedMessageIds.length > 0) {
+                            return msg.groupedMessageIds;
+                        }
+                        return [msg._id || msg.id];
+                    })
+                    .filter(Boolean);
+
+                if (visibleMessageIds.length > 0) {
+                    actionsRef.current?.markAsSeen?.(visibleMessageIds);
+                }
+            },
+            [user?.id]
+        );
+
+        const viewabilityConfigRef = useRef({
+            itemVisiblePercentThreshold: 10,
+            minimumViewTime: 300,
+        });
+
+        const renderableMessages = useMemo(
+            () => groupMessagesForGallery(keepLatestPollCards(chatState.messages)),
+            [chatState.messages]
+        );
+
+        const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
+            if (label.includes("Trả lời")) return "return-up-back-outline";
+            if (label.includes("Ghim")) return "pin";
+            if (label.includes("Sửa")) return "create-outline";
+            if (label.includes("Thu hồi")) return "refresh-outline";
+            if (label.includes("Chuyển tiếp")) return "arrow-redo-outline";
+            if (label.includes("Xóa")) return "trash-outline";
+            return "ellipse-outline";
+        }, []);
+
+        if (!groupState.group) {
+            return (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={colors.accent} />
+                    <Text style={styles.loadingText}>Đang tải...</Text>
                 </View>
-                <View style={styles.headerIconGroup}>
+            );
+        }
+
+        return (
+            <KeyboardAvoidingView
+                style={styles.screen}
+                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                keyboardVerticalOffset={Platform.select({
+                    ios: 60,
+                    android: 76 + (StatusBar.currentHeight || 0),
+                    default: 0,
+                })}
+            >
+                {/* Header */}
+                <View style={styles.chatHeaderWrap}>
                     <Pressable
-                        style={styles.headerIconButton}
-                        onPress={showAiMenu}
-                        hitSlop={8}
+                        style={styles.backButton}
+                        onPress={onBackPress}
                     >
-                        <Ionicons name="sparkles" size={16} color={colors.accentStrong} />
+                        <Ionicons name="chevron-back" size={24} color={colors.text} />
                     </Pressable>
-                    <Pressable
-                        style={styles.headerIconButton}
-                        onPress={handleStartGroupCall}
-                        disabled={callState.status !== "idle" || !!activeGroupCall?.callId}
-                        hitSlop={8}
-                    >
-                        <Ionicons
-                            name="call-outline"
-                            size={17}
-                            color={callState.status === "idle" && !activeGroupCall?.callId ? colors.text : colors.textMuted}
-                        />
-                    </Pressable>
-                    {canCreatePoll && (
+
+                    <View style={styles.chatHeaderCard}>
+                        <Text
+                            style={styles.chatHeaderTitle}
+                            numberOfLines={1}
+                        >
+                            {groupState.group?.name || "Nhóm"}
+                        </Text>
+                        <Text style={styles.chatHeaderSubtitle}>
+                            {chatState.typingUsers.size > 0
+                                ? `${Array.from(chatState.typingUsers).length} đang gõ...`
+                                : `${groupState.members?.length || 0} thành viên`}
+                        </Text>
+                    </View>
+                    <View style={styles.headerIconGroup}>
                         <Pressable
                             style={styles.headerIconButton}
-                            onPress={() => setShowCreatePollModal(true)}
+                            onPress={showAiMenu}
+                            hitSlop={8}
+                        >
+                            <Ionicons name="sparkles" size={16} color={colors.accentStrong} />
+                        </Pressable>
+                        <Pressable
+                            style={styles.headerIconButton}
+                            onPress={handleStartGroupCall}
+                            disabled={callState.status !== "idle" || !!activeGroupCall?.callId}
                             hitSlop={8}
                         >
                             <Ionicons
-                                name="stats-chart-outline"
+                                name="call-outline"
                                 size={17}
-                                color={colors.text}
+                                color={callState.status === "idle" && !activeGroupCall?.callId ? colors.text : colors.textMuted}
                             />
                         </Pressable>
-                    )}
-                </View>
-                <Pressable style={styles.groupHeaderAvatarWrap} onPress={onSettingsPress}>
-                    {groupState.group?.avatarUrl ? (
-                        <Image
-                            source={{ uri: groupState.group.avatarUrl }}
-                            blurRadius={0.5}
-                            style={styles.groupAvatarImage}
-                        />
-                    ) : (
-                        <Avatar
-                            label={(groupState.group?.name || "G").charAt(0).toUpperCase()}
-                            size={40}
-                            backgroundColor={colors.accentAlt}
-                            textSize={14}
-                        />
-                    )}
-                </Pressable>
-            </View>
-            {activeGroupCall?.callId && callState.status === "idle" ? (
-                <Pressable style={styles.joinCallBanner} onPress={handleStartGroupCall}>
-                    <View style={styles.joinCallBannerIcon}>
-                        <Ionicons name="call" size={18} color={colors.textOnAccent} />
-                    </View>
-                    <View style={styles.joinCallBannerTextWrap}>
-                        <Text style={styles.joinCallBannerTitle}>Cuộc gọi nhóm đang diễn ra</Text>
-                        <Text style={styles.joinCallBannerSubtitle}>Nhấn để tham gia</Text>
-                    </View>
-                    <Ionicons name="enter-outline" size={22} color={colors.text} />
-                </Pressable>
-            ) : null}
-
-            <Modal visible={showMuteDialog} transparent animationType="fade" onRequestClose={() => setShowMuteDialog(false)}>
-                <Pressable style={styles.muteDialogOverlay} onPress={() => setShowMuteDialog(false)}>
-                    <Pressable style={styles.muteDialogCard} onPress={(event) => event.stopPropagation()}>
-                        <View style={styles.muteDialogHeader}>
-                            <Text style={styles.muteDialogTitle}>Xác nhận</Text>
-                            <Pressable style={styles.muteDialogCloseButton} onPress={() => setShowMuteDialog(false)}>
-                                <Ionicons name="close" size={28} color={colors.text} />
-                            </Pressable>
-                        </View>
-                        <Text style={styles.muteDialogMessage}>Bạn có chắc muốn tắt thông báo hội thoại này:</Text>
-                        <View style={styles.muteOptionList}>
-                            {MUTE_OPTIONS.map((option) => {
-                                const selected = selectedMuteOption === option.key;
-                                return (
-                                    <Pressable
-                                        key={option.key}
-                                        style={styles.muteOptionRow}
-                                        onPress={() => setSelectedMuteOption(option.key)}
-                                    >
-                                        <Ionicons
-                                            name={selected ? "radio-button-on-outline" : "radio-button-off-outline"}
-                                            size={22}
-                                            color={selected ? colors.accentStrong : colors.textMuted}
-                                        />
-                                        <Text style={styles.muteOptionText}>{option.label}</Text>
-                                    </Pressable>
-                                );
-                            })}
-                        </View>
-                        <View style={styles.muteDialogActions}>
-                            <Pressable style={styles.muteCancelButton} onPress={() => setShowMuteDialog(false)} disabled={muteLoading}>
-                                <Text style={styles.muteCancelText}>Hủy</Text>
-                            </Pressable>
-                            <Pressable style={styles.muteConfirmButton} onPress={handleConfirmMute} disabled={muteLoading}>
-                                {muteLoading ? (
-                                    <ActivityIndicator size="small" color={colors.textOnAccent} />
-                                ) : (
-                                    <Text style={styles.muteConfirmText}>Đồng ý</Text>
-                                )}
-                            </Pressable>
-                        </View>
-                    </Pressable>
-                </Pressable>
-            </Modal>
-
-            {/* Loading state */}
-            {chatState.isLoading && chatState.messages.length === 0 && (
-                <View style={styles.centerContainer}>
-                    <ActivityIndicator size="large" color={colors.text} />
-                    <Text style={styles.loadingText}>Đang tải tin nhắn...</Text>
-                </View>
-            )}
-
-            {/* Messages List */}
-            {!chatState.isLoading && (
-                <ImageBackground
-                    source={assets.chatBackground}
-                    style={styles.chatBackground}
-                    resizeMode="cover"
-                >
-                    {/* Pinned Message Header */}
-                    {chatState.pinnedMessages.length > 0 && (
-                        <PinnedMessageHeader
-                            pinnedMessage={chatState.pinnedMessages[chatState.pinnedMessageIndex] || null}
-                            pinnedIndex={chatState.pinnedMessageIndex}
-                            pinnedTotal={chatState.pinnedMessages.length}
-                            onNavigate={(direction) => {
-                                if (chatActions.navigatePinnedMessages) {
-                                    chatActions.navigatePinnedMessages(direction);
-                                }
-                            }}
-                            onUnpin={async () => {
-                                const pinnedMsg = chatState.pinnedMessages[chatState.pinnedMessageIndex];
-                                const pinnedPollId = pinnedMsg?.poll?.id
-                                    || pinnedMsg?.pollId
-                                    || (String(pinnedMsg?._id || pinnedMsg?.id || "").startsWith("poll-")
-                                        ? String(pinnedMsg?._id || pinnedMsg?.id).slice("poll-".length)
-                                        : "");
-                                if (pinnedPollId && chatActions.unpinPoll) {
-                                    try {
-                                        await chatActions.unpinPoll(pinnedPollId);
-                                    } catch (error: any) {
-                                        Alert.alert("Lỗi", error.message || "Không thể bỏ ghim bình chọn");
-                                    }
-                                    return;
-                                }
-
-                                const msgId = pinnedMsg?._id || pinnedMsg?.id;
-                                if (msgId && chatActions.unpinMessage) {
-                                    try {
-                                        await chatActions.unpinMessage(msgId);
-                                    } catch (error: any) {
-                                        Alert.alert("Lỗi", error.message || "Không thể bỏ ghim tin nhắn");
-                                    }
-                                }
-                            }}
-                            onPress={() => {
-                                // Scroll to pinned message and highlight it
-                                const pinnedMsg = chatState.pinnedMessages[chatState.pinnedMessageIndex];
-                                const pinnedPollId = pinnedMsg?.poll?.id || pinnedMsg?.pollId;
-                                const pinnedMsgId = pinnedPollId ? `poll-${pinnedPollId}` : (pinnedMsg?._id || pinnedMsg?.id);
-                                if (pinnedMsgId && chatActions.scrollToMessage) {
-                                    chatActions.scrollToMessage(pinnedMsgId);
-                                }
-                            }}
-                            isAdmin={groupState?.group?.admins?.includes(currentUserId)}
-                        />
-                    )}
-                    <FlatList
-                        ref={flatListRef}
-                        data={renderableMessages}
-                        keyExtractor={(item) => item._id || item.id || `${item.senderId}-${item.createdAt}`}
-                        renderItem={renderMessage}
-                        inverted
-                        contentContainerStyle={styles.messagesContainer}
-                        scrollEventThrottle={16}
-                        onEndReachedThreshold={0.5}
-                        onEndReached={() => {
-                            if (chatState.hasMoreMessages && !isSending && !chatState.isLoading) {
-                                chatActions.loadMoreMessages?.();
-                            }
-                        }}
-                        onViewableItemsChanged={handleViewableItemsChanged}
-                        viewabilityConfig={viewabilityConfigRef.current}
-                        ListEmptyComponent={
-                            <View style={styles.emptyMessagesContainer}>
+                        {canCreatePoll && (
+                            <Pressable
+                                style={styles.headerIconButton}
+                                onPress={() => setShowCreatePollModal(true)}
+                                hitSlop={8}
+                            >
                                 <Ionicons
-                                    name="chatbubble-outline"
-                                    size={56}
-                                    color={colors.textMuted}
+                                    name="stats-chart-outline"
+                                    size={17}
+                                    color={colors.text}
                                 />
-                                <Text style={styles.emptyMessagesText}>
-                                    Hãy gửi lời chào đầu tiên
-                                </Text>
-                            </View>
-                        }
-                        ListFooterComponent={
-                            chatState.typingUsers.size > 0 && (
-                                <View style={styles.typingIndicator}>
-                                    <View style={styles.typingDots}>
-                                        <View style={styles.typingDot} />
-                                        <View style={styles.typingDot} />
-                                        <View style={styles.typingDot} />
-                                    </View>
-                                </View>
-                            )
-                        }
-                    />
-                </ImageBackground>
-            )}
-
-            {/* Upload progress bar */}
-            {uploading && (
-                <View style={styles.progressBarContainer}>
-                    <View style={[styles.progressBar, { width: `${uploadProgress}%` }]} />
-                    <Text style={styles.progressText}>{Math.round(uploadProgress)}%</Text>
-                </View>
-            )}
-
-            {/* Draft Media Tray */}
-            {draftMedia.length > 0 && (
-                <View style={styles.draftTrayContainer}>
-                    <View style={styles.draftTrayHeader}>
-                        <Text style={styles.draftTrayTitle}>
-                            {draftMedia.length} file đã chọn
-                        </Text>
-                        <Pressable onPress={clearDraftMedia} hitSlop={8}>
-                            <Ionicons name="trash-outline" size={20} color={colors.textOnAccent} />
-                        </Pressable>
+                            </Pressable>
+                        )}
                     </View>
+                    <Pressable style={styles.groupHeaderAvatarWrap} onPress={onSettingsPress}>
+                        {groupState.group?.avatarUrl ? (
+                            <Image
+                                source={{ uri: groupState.group.avatarUrl }}
+                                blurRadius={0.5}
+                                style={styles.groupAvatarImage}
+                            />
+                        ) : (
+                            <Avatar
+                                label={(groupState.group?.name || "G").charAt(0).toUpperCase()}
+                                size={40}
+                                backgroundColor={colors.accentAlt}
+                                textSize={14}
+                            />
+                        )}
+                    </Pressable>
+                </View>
+                {activeGroupCall?.callId && callState.status === "idle" ? (
+                    <Pressable style={styles.joinCallBanner} onPress={handleStartGroupCall}>
+                        <View style={styles.joinCallBannerIcon}>
+                            <Ionicons name="call" size={18} color={colors.textOnAccent} />
+                        </View>
+                        <View style={styles.joinCallBannerTextWrap}>
+                            <Text style={styles.joinCallBannerTitle}>Cuộc gọi nhóm đang diễn ra</Text>
+                            <Text style={styles.joinCallBannerSubtitle}>Nhấn để tham gia</Text>
+                        </View>
+                        <Ionicons name="enter-outline" size={22} color={colors.text} />
+                    </Pressable>
+                ) : null}
 
-                    <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.draftTrayScrollContent}
-                    >
-                        {draftMedia.map((item) => (
-                            <View key={item.id} style={styles.draftThumbWrap}>
-                                {item.mimeType?.startsWith("image/") && (
-                                    <Image source={{ uri: item.uri }} style={styles.draftThumbImage} />
-                                )}
-                                {item.mimeType?.startsWith("audio/") && (
-                                    <View style={[styles.draftThumbImage, { backgroundColor: colors.surfaceSoft, justifyContent: "center", alignItems: "center" }]}>
-                                        <Ionicons name="musical-note" size={24} color={colors.text} />
-                                    </View>
-                                )}
-                                <Pressable
-                                    style={styles.draftThumbRemove}
-                                    onPress={() => removeDraftMedia(item.id)}
-                                    hitSlop={8}
-                                >
-                                    <Ionicons name="close" size={14} color={colors.textOnAccent} />
+                <Modal visible={showMuteDialog} transparent animationType="fade" onRequestClose={() => setShowMuteDialog(false)}>
+                    <Pressable style={styles.muteDialogOverlay} onPress={() => setShowMuteDialog(false)}>
+                        <Pressable style={styles.muteDialogCard} onPress={(event) => event.stopPropagation()}>
+                            <View style={styles.muteDialogHeader}>
+                                <Text style={styles.muteDialogTitle}>Xác nhận</Text>
+                                <Pressable style={styles.muteDialogCloseButton} onPress={() => setShowMuteDialog(false)}>
+                                    <Ionicons name="close" size={28} color={colors.text} />
                                 </Pressable>
                             </View>
-                        ))}
-
-                        <Pressable
-                            style={styles.draftAddMore}
-                            onPress={handlePickImage}
-                            disabled={uploading}
-                        >
-                            <Ionicons name="add" size={24} color={colors.text} />
-                            <Text style={styles.draftAddMoreText}>Thêm</Text>
+                            <Text style={styles.muteDialogMessage}>Bạn có chắc muốn tắt thông báo hội thoại này:</Text>
+                            <View style={styles.muteOptionList}>
+                                {MUTE_OPTIONS.map((option) => {
+                                    const selected = selectedMuteOption === option.key;
+                                    return (
+                                        <Pressable
+                                            key={option.key}
+                                            style={styles.muteOptionRow}
+                                            onPress={() => setSelectedMuteOption(option.key)}
+                                        >
+                                            <Ionicons
+                                                name={selected ? "radio-button-on-outline" : "radio-button-off-outline"}
+                                                size={22}
+                                                color={selected ? colors.accentStrong : colors.textMuted}
+                                            />
+                                            <Text style={styles.muteOptionText}>{option.label}</Text>
+                                        </Pressable>
+                                    );
+                                })}
+                            </View>
+                            <View style={styles.muteDialogActions}>
+                                <Pressable style={styles.muteCancelButton} onPress={() => setShowMuteDialog(false)} disabled={muteLoading}>
+                                    <Text style={styles.muteCancelText}>Hủy</Text>
+                                </Pressable>
+                                <Pressable style={styles.muteConfirmButton} onPress={handleConfirmMute} disabled={muteLoading}>
+                                    {muteLoading ? (
+                                        <ActivityIndicator size="small" color={colors.textOnAccent} />
+                                    ) : (
+                                        <Text style={styles.muteConfirmText}>Đồng ý</Text>
+                                    )}
+                                </Pressable>
+                            </View>
                         </Pressable>
-                    </ScrollView>
-                </View>
-            )}
+                    </Pressable>
+                </Modal>
 
-            {/* Voice Recorder Component */}
-            <VoiceRecorder
-                visible={showVoiceRecorder}
-                onHide={() => setShowVoiceRecorder(false)}
-                conversationId={groupId}
-                messageText={messageText}
-                onMessageSent={(messages) => {
-                    if (actionsRef.current?.addMessages) {
-                        actionsRef.current.addMessages(messages);
-                    }
-                    scrollToLatestMessage(true);
-                }}
-                onUploadProgress={(progress) => {
-                    setUploadProgress(progress);
-                    if (progress > 0) {
-                        setUploading(true);
-                    } else {
-                        setUploading(false);
-                    }
-                }}
-            />
+                {/* Loading state */}
+                {chatState.isLoading && chatState.messages.length === 0 && (
+                    <View style={styles.centerContainer}>
+                        <ActivityIndicator size="large" color={colors.text} />
+                        <Text style={styles.loadingText}>Đang tải tin nhắn...</Text>
+                    </View>
+                )}
 
-            {/* Media Menu */}
-            {showMediaMenu && !showVoiceRecorder && (
-                <View style={styles.mediaMenuContainer}>
-                    <Text style={styles.mediaMenuTitle}>Ghim</Text>
-                    <Pressable
-                        style={styles.mediaMenuItem}
-                        onPress={handlePickImage}
+                {/* Messages List */}
+                {!chatState.isLoading && (
+                    <ImageBackground
+                        source={assets.chatBackground}
+                        style={styles.chatBackground}
+                        resizeMode="cover"
                     >
-                        <Ionicons name="image" size={24} color={colors.mediaImageIcon} />
-                        <Text style={styles.mediaMenuItemText}>Thư Viện</Text>
-                    </Pressable>
-                    <Pressable
-                        style={styles.mediaMenuItem}
-                        onPress={handlePickVideo}
-                    >
-                        <Ionicons name="videocam" size={24} color={colors.mediaVideoIcon} />
-                        <Text style={styles.mediaMenuItemText}>Video</Text>
-                    </Pressable>
-                    <Pressable
-                        style={styles.mediaMenuItem}
-                        onPress={handlePickAudioFile}
-                    >
-                        <Ionicons name="musical-note" size={24} color={colors.mediaAudioIcon} />
-                        <Text style={styles.mediaMenuItemText}>Audio</Text>
-                    </Pressable>
-                    <Pressable
-                        style={styles.mediaMenuItem}
-                        onPress={handlePickDocument}
-                    >
-                        <Ionicons name="document" size={24} color={colors.mediaDocumentIcon} />
-                        <Text style={styles.mediaMenuItemText}>Tài Liệu</Text>
-                    </Pressable>
-                    <Pressable
-                        style={styles.mediaMenuItem}
-                        onPress={() => {
-                            setShowMediaMenu(false);
-                            setShowContactPicker(true);
-                        }}
-                    >
-                        <Ionicons name="person-circle-outline" size={24} color={colors.accent} />
-                        <Text style={styles.mediaMenuItemText}>Chia sẻ liên hệ</Text>
-                    </Pressable>
-                </View>
-            )}
+                        {/* Pinned Message Header */}
+                        {chatState.pinnedMessages.length > 0 && (
+                            <PinnedMessageHeader
+                                pinnedMessage={chatState.pinnedMessages[chatState.pinnedMessageIndex] || null}
+                                pinnedIndex={chatState.pinnedMessageIndex}
+                                pinnedTotal={chatState.pinnedMessages.length}
+                                onNavigate={(direction) => {
+                                    if (chatActions.navigatePinnedMessages) {
+                                        chatActions.navigatePinnedMessages(direction);
+                                    }
+                                }}
+                                onUnpin={async () => {
+                                    const pinnedMsg = chatState.pinnedMessages[chatState.pinnedMessageIndex];
+                                    const pinnedPollId = pinnedMsg?.poll?.id
+                                        || pinnedMsg?.pollId
+                                        || (String(pinnedMsg?._id || pinnedMsg?.id || "").startsWith("poll-")
+                                            ? String(pinnedMsg?._id || pinnedMsg?.id).slice("poll-".length)
+                                            : "");
+                                    if (pinnedPollId && chatActions.unpinPoll) {
+                                        try {
+                                            await chatActions.unpinPoll(pinnedPollId);
+                                        } catch (error: any) {
+                                            Alert.alert("Lỗi", error.message || "Không thể bỏ ghim bình chọn");
+                                        }
+                                        return;
+                                    }
 
-            {/* Message Composer */}
-            {chatState.replyingTo && (
-                <ReplyPreview
-                    message={chatState.replyingTo}
-                    onCancel={() => {
-                        if (chatActions.setReplyingTo) {
-                            chatActions.setReplyingTo(null);
+                                    const msgId = pinnedMsg?._id || pinnedMsg?.id;
+                                    if (msgId && chatActions.unpinMessage) {
+                                        try {
+                                            await chatActions.unpinMessage(msgId);
+                                        } catch (error: any) {
+                                            Alert.alert("Lỗi", error.message || "Không thể bỏ ghim tin nhắn");
+                                        }
+                                    }
+                                }}
+                                onPress={() => {
+                                    // Scroll to pinned message and highlight it
+                                    const pinnedMsg = chatState.pinnedMessages[chatState.pinnedMessageIndex];
+                                    const pinnedPollId = pinnedMsg?.poll?.id || pinnedMsg?.pollId;
+                                    const pinnedMsgId = pinnedPollId ? `poll-${pinnedPollId}` : (pinnedMsg?._id || pinnedMsg?.id);
+                                    if (pinnedMsgId && chatActions.scrollToMessage) {
+                                        chatActions.scrollToMessage(pinnedMsgId);
+                                    }
+                                }}
+                                isAdmin={groupState?.group?.admins?.includes(currentUserId)}
+                            />
+                        )}
+                        <FlatList
+                            ref={flatListRef}
+                            data={renderableMessages}
+                            keyExtractor={(item) => item._id || item.id || `${item.senderId}-${item.createdAt}`}
+                            renderItem={renderMessage}
+                            inverted
+                            contentContainerStyle={styles.messagesContainer}
+                            scrollEventThrottle={16}
+                            onEndReachedThreshold={0.5}
+                            onEndReached={() => {
+                                if (chatState.hasMoreMessages && !isSending && !chatState.isLoading) {
+                                    chatActions.loadMoreMessages?.();
+                                }
+                            }}
+                            onViewableItemsChanged={handleViewableItemsChanged}
+                            viewabilityConfig={viewabilityConfigRef.current}
+                            ListEmptyComponent={
+                                <View style={styles.emptyMessagesContainer}>
+                                    <Ionicons
+                                        name="chatbubble-outline"
+                                        size={56}
+                                        color={colors.textMuted}
+                                    />
+                                    <Text style={styles.emptyMessagesText}>
+                                        Hãy gửi lời chào đầu tiên
+                                    </Text>
+                                </View>
+                            }
+                            ListFooterComponent={
+                                chatState.typingUsers.size > 0 && (
+                                    <View style={styles.typingIndicator}>
+                                        <View style={styles.typingDots}>
+                                            <View style={styles.typingDot} />
+                                            <View style={styles.typingDot} />
+                                            <View style={styles.typingDot} />
+                                        </View>
+                                    </View>
+                                )
+                            }
+                        />
+                    </ImageBackground>
+                )}
+
+                {/* Upload progress bar */}
+                {uploading && (
+                    <View style={styles.progressBarContainer}>
+                        <View style={[styles.progressBar, { width: `${uploadProgress}%` }]} />
+                        <Text style={styles.progressText}>{Math.round(uploadProgress)}%</Text>
+                    </View>
+                )}
+
+                {/* Draft Media Tray */}
+                {draftMedia.length > 0 && (
+                    <View style={styles.draftTrayContainer}>
+                        <View style={styles.draftTrayHeader}>
+                            <Text style={styles.draftTrayTitle}>
+                                {draftMedia.length} file đã chọn
+                            </Text>
+                            <Pressable onPress={clearDraftMedia} hitSlop={8}>
+                                <Ionicons name="trash-outline" size={20} color={colors.textOnAccent} />
+                            </Pressable>
+                        </View>
+
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.draftTrayScrollContent}
+                        >
+                            {draftMedia.map((item) => (
+                                <View key={item.id} style={styles.draftThumbWrap}>
+                                    {item.mimeType?.startsWith("image/") && (
+                                        <Image source={{ uri: item.uri }} style={styles.draftThumbImage} />
+                                    )}
+                                    {item.mimeType?.startsWith("audio/") && (
+                                        <View style={[styles.draftThumbImage, { backgroundColor: colors.surfaceSoft, justifyContent: "center", alignItems: "center" }]}>
+                                            <Ionicons name="musical-note" size={24} color={colors.text} />
+                                        </View>
+                                    )}
+                                    <Pressable
+                                        style={styles.draftThumbRemove}
+                                        onPress={() => removeDraftMedia(item.id)}
+                                        hitSlop={8}
+                                    >
+                                        <Ionicons name="close" size={14} color={colors.textOnAccent} />
+                                    </Pressable>
+                                </View>
+                            ))}
+
+                            <Pressable
+                                style={styles.draftAddMore}
+                                onPress={handlePickImage}
+                                disabled={uploading}
+                            >
+                                <Ionicons name="add" size={24} color={colors.text} />
+                                <Text style={styles.draftAddMoreText}>Thêm</Text>
+                            </Pressable>
+                        </ScrollView>
+                    </View>
+                )}
+
+                {/* Voice Recorder Component */}
+                <VoiceRecorder
+                    visible={showVoiceRecorder}
+                    onHide={() => setShowVoiceRecorder(false)}
+                    conversationId={groupId}
+                    messageText={messageText}
+                    onMessageSent={(messages) => {
+                        if (actionsRef.current?.addMessages) {
+                            actionsRef.current.addMessages(messages);
+                        }
+                        scrollToLatestMessage(true);
+                    }}
+                    onUploadProgress={(progress) => {
+                        setUploadProgress(progress);
+                        if (progress > 0) {
+                            setUploading(true);
+                        } else {
+                            setUploading(false);
                         }
                     }}
                 />
-            )}
-            {shouldShowSmartReplies && smartReplies.length > 0 && (
-                <View style={styles.aiSmartReplyBar}>
-                    <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.aiSmartReplyContent}
+
+                {/* Media Menu */}
+                {showMediaMenu && !showVoiceRecorder && (
+                    <View style={styles.mediaMenuContainer}>
+                        <Text style={styles.mediaMenuTitle}>Ghim</Text>
+                        <Pressable
+                            style={styles.mediaMenuItem}
+                            onPress={handlePickImage}
+                        >
+                            <Ionicons name="image" size={24} color={colors.mediaImageIcon} />
+                            <Text style={styles.mediaMenuItemText}>Thư Viện</Text>
+                        </Pressable>
+                        <Pressable
+                            style={styles.mediaMenuItem}
+                            onPress={handlePickVideo}
+                        >
+                            <Ionicons name="videocam" size={24} color={colors.mediaVideoIcon} />
+                            <Text style={styles.mediaMenuItemText}>Video</Text>
+                        </Pressable>
+                        <Pressable
+                            style={styles.mediaMenuItem}
+                            onPress={handlePickAudioFile}
+                        >
+                            <Ionicons name="musical-note" size={24} color={colors.mediaAudioIcon} />
+                            <Text style={styles.mediaMenuItemText}>Audio</Text>
+                        </Pressable>
+                        <Pressable
+                            style={styles.mediaMenuItem}
+                            onPress={handlePickDocument}
+                        >
+                            <Ionicons name="document" size={24} color={colors.mediaDocumentIcon} />
+                            <Text style={styles.mediaMenuItemText}>Tài Liệu</Text>
+                        </Pressable>
+                        <Pressable
+                            style={styles.mediaMenuItem}
+                            onPress={() => {
+                                setShowMediaMenu(false);
+                                setShowContactPicker(true);
+                            }}
+                        >
+                            <Ionicons name="person-circle-outline" size={24} color={colors.accent} />
+                            <Text style={styles.mediaMenuItemText}>Chia sẻ liên hệ</Text>
+                        </Pressable>
+                    </View>
+                )}
+
+                {/* Message Composer */}
+                {chatState.replyingTo && (
+                    <ReplyPreview
+                        message={chatState.replyingTo}
+                        onCancel={() => {
+                            if (chatActions.setReplyingTo) {
+                                chatActions.setReplyingTo(null);
+                            }
+                        }}
+                    />
+                )}
+                {shouldShowSmartReplies && smartReplies.length > 0 && (
+                    <View style={styles.aiSmartReplyBar}>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.aiSmartReplyContent}
+                        >
+                            {smartReplies.map((reply) => (
+                                <Pressable key={reply} style={styles.aiSmartReplyChip} onPress={() => setMessageText(reply)}>
+                                    <Text style={styles.aiSmartReplyText}>{reply}</Text>
+                                </Pressable>
+                            ))}
+                        </ScrollView>
+                        <Pressable style={styles.aiSmartReplyClose} onPress={() => setSmartReplyHiddenFor(latestMessageKey)}>
+                            <Ionicons name="close" size={16} color={colors.textMuted} />
+                        </Pressable>
+                    </View>
+                )}
+                {previousDraft !== null && (
+                    <View style={styles.aiUndoBar}>
+                        <Text style={styles.aiUndoText}>AI đã chỉnh sửa bản nháp</Text>
+                        <Pressable onPress={() => { setMessageText(previousDraft); setPreviousDraft(null); }}>
+                            <Text style={styles.aiUndoAction}>Hoàn tác</Text>
+                        </Pressable>
+                    </View>
+                )}
+                <View style={styles.messageComposer}>
+                    <Pressable
+                        style={styles.composerIconButton}
+                        onPress={() => setShowMediaMenu(!showMediaMenu)}
+                        disabled={uploading}
                     >
-                        {smartReplies.map((reply) => (
-                            <Pressable key={reply} style={styles.aiSmartReplyChip} onPress={() => setMessageText(reply)}>
-                                <Text style={styles.aiSmartReplyText}>{reply}</Text>
-                            </Pressable>
-                        ))}
-                    </ScrollView>
-                    <Pressable style={styles.aiSmartReplyClose} onPress={() => setSmartReplyHiddenFor(latestMessageKey)}>
-                        <Ionicons name="close" size={16} color={colors.textMuted} />
-                    </Pressable>
-                </View>
-            )}
-            {previousDraft !== null && (
-                <View style={styles.aiUndoBar}>
-                    <Text style={styles.aiUndoText}>AI đã chỉnh sửa bản nháp</Text>
-                    <Pressable onPress={() => { setMessageText(previousDraft); setPreviousDraft(null); }}>
-                        <Text style={styles.aiUndoAction}>Hoàn tác</Text>
-                    </Pressable>
-                </View>
-            )}
-            <View style={styles.messageComposer}>
-                <Pressable
-                    style={styles.composerIconButton}
-                    onPress={() => setShowMediaMenu(!showMediaMenu)}
-                    disabled={uploading}
-                >
-                    <Ionicons
-                        name="attach-outline"
-                        size={24}
-                        color={uploading ? colors.textMuted : colors.text}
-                    />
-                </Pressable>
-                <View style={styles.composerInputWrap}>
-                    <TextInput
-                        placeholder="Tin nhắn"
-                        placeholderTextColor={colors.textMuted}
-                        style={styles.composerInput}
-                        value={messageText}
-                        onChangeText={handleInputChange}
-                        multiline
-                        maxLength={1000}
-                        editable={!isSending && !uploading}
-                    />
-                    <Pressable style={styles.composerEmojiButton}>
                         <Ionicons
-                            name="happy-outline"
-                            size={22}
-                            color={colors.textMuted}
+                            name="attach-outline"
+                            size={24}
+                            color={uploading ? colors.textMuted : colors.text}
                         />
                     </Pressable>
-                    <Pressable style={styles.composerEmojiButton} onPress={showToneMenu} disabled={!!toneLoading || !messageText.trim()}>
-                        {toneLoading ? (
-                            <ActivityIndicator size="small" color={colors.accentStrong} />
-                        ) : (
-                            <Ionicons name="sparkles" size={20} color={messageText.trim() ? colors.accentStrong : colors.textMuted} />
-                        )}
-                    </Pressable>
-                </View>
-                <Pressable
-                    style={[
-                        styles.composerActionButton,
-                        hasSendableContent ? styles.composerSendButton : styles.composerMicButton,
-                        (!hasSendableContent && uploading) && styles.composerActionButtonDisabled,
-                        (hasSendableContent && (isSending || uploading)) && styles.composerActionButtonDisabled,
-                    ]}
-                    onPress={hasSendableContent ? handleSendMessage : handlePickAudio}
-                    disabled={
-                        (hasSendableContent && isSending) ||
-                        (!hasSendableContent && uploading) ||
-                        (hasSendableContent && uploading)
-                    }
-                >
-                    {hasSendableContent ? (
-                        isSending || uploading ? (
+                    <View style={styles.composerInputWrap}>
+                        <TextInput
+                            placeholder="Tin nhắn"
+                            placeholderTextColor={colors.textMuted}
+                            style={styles.composerInput}
+                            value={messageText}
+                            onChangeText={handleInputChange}
+                            multiline
+                            maxLength={1000}
+                            editable={!isSending && !uploading}
+                        />
+                        <Pressable style={styles.composerEmojiButton}>
+                            <Ionicons
+                                name="happy-outline"
+                                size={22}
+                                color={colors.textMuted}
+                            />
+                        </Pressable>
+                        <Pressable style={styles.composerEmojiButton} onPress={showToneMenu} disabled={!!toneLoading || !messageText.trim()}>
+                            {toneLoading ? (
+                                <ActivityIndicator size="small" color={colors.accentStrong} />
+                            ) : (
+                                <Ionicons name="sparkles" size={20} color={messageText.trim() ? colors.accentStrong : colors.textMuted} />
+                            )}
+                        </Pressable>
+                    </View>
+                    <Pressable
+                        style={[
+                            styles.composerActionButton,
+                            hasSendableContent ? styles.composerSendButton : styles.composerMicButton,
+                            (!hasSendableContent && uploading) && styles.composerActionButtonDisabled,
+                            (hasSendableContent && (isSending || uploading)) && styles.composerActionButtonDisabled,
+                        ]}
+                        onPress={hasSendableContent ? handleSendMessage : handlePickAudio}
+                        disabled={
+                            (hasSendableContent && isSending) ||
+                            (!hasSendableContent && uploading) ||
+                            (hasSendableContent && uploading)
+                        }
+                    >
+                        {hasSendableContent ? (
+                            isSending || uploading ? (
+                                <ActivityIndicator size="small" color={colors.textOnAccent} />
+                            ) : (
+                                <Ionicons name="send" size={22} color={colors.textOnAccent} />
+                            )
+                        ) : uploading ? (
                             <ActivityIndicator size="small" color={colors.textOnAccent} />
                         ) : (
-                            <Ionicons name="send" size={22} color={colors.textOnAccent} />
-                        )
-                    ) : uploading ? (
-                        <ActivityIndicator size="small" color={colors.textOnAccent} />
-                    ) : (
-                        <Ionicons name="mic" size={22} color={colors.textOnAccent} />
-                    )}
-                </Pressable>
-            </View>
-
-            <Modal visible={showAiQuickMenu} animationType="fade" transparent onRequestClose={() => setShowAiQuickMenu(false)}>
-                <Pressable style={styles.aiMenuOverlay} onPress={() => setShowAiQuickMenu(false)}>
-                    <Pressable style={styles.aiMenuCard} onPress={(event) => event.stopPropagation()}>
-                        <View style={styles.aiMenuHeader}>
-                            <View style={styles.aiPanelTitleRow}>
-                                <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
-                                <Text style={styles.aiPanelTitle}>Trợ lý AI</Text>
-                            </View>
-                            <Pressable onPress={() => setShowAiQuickMenu(false)}>
-                                <Ionicons name="close" size={22} color={colors.textMuted} />
-                            </Pressable>
-                        </View>
-                        <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); openAiPanel("summary"); }}>
-                            <Ionicons name="document-text-outline" size={20} color={colors.accentStrong} />
-                            <Text style={styles.aiMenuItemText}>Tóm tắt cuộc trò chuyện</Text>
-                        </Pressable>
-                        <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); setAiPanelMode("search"); setShowAiPanel(true); }}>
-                            <Ionicons name="search-outline" size={20} color={colors.accentStrong} />
-                            <Text style={styles.aiMenuItemText}>Tìm kiếm bằng AI</Text>
-                        </Pressable>
-                        <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); openAiPanel("tasks"); }}>
-                            <Ionicons name="checkbox-outline" size={20} color={colors.accentStrong} />
-                            <Text style={styles.aiMenuItemText}>Trích xuất công việc</Text>
-                        </Pressable>
-                    </Pressable>
-                </Pressable>
-            </Modal>
-
-            <Modal visible={showTonePicker} animationType="fade" transparent onRequestClose={() => setShowTonePicker(false)}>
-                <Pressable style={styles.aiMenuOverlay} onPress={() => setShowTonePicker(false)}>
-                    <Pressable style={styles.aiMenuCard} onPress={(event) => event.stopPropagation()}>
-                        <View style={styles.aiMenuHeader}>
-                            <View style={styles.aiPanelTitleRow}>
-                                <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
-                                <Text style={styles.aiPanelTitle}>Chọn giọng văn</Text>
-                            </View>
-                            <Pressable onPress={() => setShowTonePicker(false)}>
-                                <Ionicons name="close" size={22} color={colors.textMuted} />
-                            </Pressable>
-                        </View>
-                        {([
-                            ["formal", "Lịch sự"],
-                            ["casual", "Thân thiện"],
-                            ["funny", "Hài hước"],
-                            ["professional", "Chuyên nghiệp"],
-                        ] as Array<[AiTone, string]>).map(([tone, label]) => (
-                            <Pressable key={tone} style={styles.aiMenuItem} onPress={() => { setShowTonePicker(false); handleToneAdjust(tone); }}>
-                                <Ionicons name="create-outline" size={20} color={colors.accentStrong} />
-                                <Text style={styles.aiMenuItemText}>{label}</Text>
-                            </Pressable>
-                        ))}
-                    </Pressable>
-                </Pressable>
-            </Modal>
-
-            <Modal visible={showAiPanel} animationType="slide" transparent onRequestClose={() => setShowAiPanel(false)}>
-                <View style={styles.aiPanelOverlay}>
-                    <View style={styles.aiPanel}>
-                        <View style={styles.aiPanelHeader}>
-                            <View style={styles.aiPanelTitleRow}>
-                                <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
-                                <Text style={styles.aiPanelTitle}>Trợ lý AI</Text>
-                            </View>
-                            <Pressable onPress={() => setShowAiPanel(false)}>
-                                <Ionicons name="close" size={24} color={colors.text} />
-                            </Pressable>
-                        </View>
-
-                        <View style={styles.aiPanelTabs}>
-                            {(["summary", "search", "tasks"] as AiPanelMode[]).map((mode) => (
-                                <Pressable
-                                    key={mode}
-                                    style={[styles.aiPanelTab, aiPanelMode === mode && styles.aiPanelTabActive]}
-                                    onPress={() => {
-                                        setAiPanelMode(mode);
-                                        if (mode !== "search") openAiPanel(mode);
-                                    }}
-                                >
-                                    <Text style={[styles.aiPanelTabText, aiPanelMode === mode && styles.aiPanelTabTextActive]}>
-                                        {mode === "summary" ? "Tóm tắt" : mode === "search" ? "Tìm AI" : "Công việc"}
-                                    </Text>
-                                </Pressable>
-                            ))}
-                        </View>
-
-                        {aiPanelMode === "search" && (
-                            <View style={styles.aiSearchBox}>
-                                <TextInput
-                                    value={aiSearchQuery}
-                                    onChangeText={setAiSearchQuery}
-                                    placeholder="Hỏi AI trong cuộc trò chuyện..."
-                                    placeholderTextColor={colors.textMuted}
-                                    style={styles.aiSearchInput}
-                                />
-                                <Pressable style={styles.aiSearchButton} onPress={() => openAiPanel("search")} disabled={aiLoading}>
-                                    {aiLoading ? <ActivityIndicator size="small" color={colors.textOnAccent} /> : <Ionicons name="search" size={18} color={colors.textOnAccent} />}
-                                </Pressable>
-                            </View>
+                            <Ionicons name="mic" size={22} color={colors.textOnAccent} />
                         )}
-
-                        {aiLoading && aiPanelMode !== "search" ? (
-                            <View style={styles.aiPanelLoading}>
-                                <ActivityIndicator color={colors.accentStrong} />
-                                <Text style={styles.aiPanelMuted}>AI đang xử lý...</Text>
-                            </View>
-                        ) : (
-                            <ScrollView contentContainerStyle={styles.aiPanelBody}>
-                                {aiPanelMode === "summary" && (
-                                    (aiSummary?.summary || []).length > 0
-                                        ? aiSummary?.summary.map((item, index) => (
-                                            <View key={`${item}-${index}`} style={styles.aiResultCard}>
-                                                <Text style={styles.aiPanelText}>- {item}</Text>
-                                            </View>
-                                        ))
-                                        : <Text style={styles.aiPanelMuted}>Chưa có tóm tắt.</Text>
-                                )}
-                                {aiPanelMode === "search" && (
-                                    aiLoading
-                                        ? <ActivityIndicator color={colors.accentStrong} />
-                                        : <Text style={aiSearchResult ? styles.aiPanelText : styles.aiPanelMuted}>
-                                            {aiSearchResult?.answer || "Nhập câu hỏi để tìm bằng AI."}
-                                        </Text>
-                                )}
-                                {aiPanelMode === "tasks" && (
-                                    (aiTasks?.tasks || []).length > 0
-                                        ? aiTasks?.tasks.map((task, index) => (
-                                            <View key={`${task.description}-${index}`} style={styles.aiResultCard}>
-                                                <Text style={styles.aiPanelText}>{task.description}</Text>
-                                                <Text style={styles.aiPanelMuted}>{[task.assignee, task.deadline, task.status].filter(Boolean).join(" - ")}</Text>
-                                            </View>
-                                        ))
-                                        : <Text style={styles.aiPanelMuted}>Chưa tìm thấy công việc nào.</Text>
-                                )}
-                            </ScrollView>
-                        )}
-                    </View>
+                    </Pressable>
                 </View>
-            </Modal>
-            <Modal
-                transparent
-                visible={!!actionMenuMessage}
-                animationType="fade"
-                onRequestClose={closeActionMenu}
-            >
-                <Pressable style={styles.contextOverlay} onPress={closeActionMenu}>
-                    <View style={styles.contextMenu}>
-                        <View style={styles.contextHeader}>
-                            <Text style={styles.contextTitle} numberOfLines={1}>
-                                {actionMenuMessage?.text?.trim() || "[Media]"}
-                            </Text>
-                        </View>
 
-                        {actionMenuButtons
-                            .filter((button) => button.style !== "cancel")
-                            .map((button) => (
-                                <Pressable
-                                    key={button.text}
-                                    style={styles.contextItem}
-                                    onPress={() => {
-                                        closeActionMenu();
-                                        button.onPress();
-                                    }}
-                                >
-                                    <Ionicons
-                                        name={getActionIconName(button.text)}
-                                        size={20}
-                                        color={button.style === "destructive" ? colors.danger : colors.accent}
-                                    />
-                                    <Text
-                                        style={[
-                                            styles.contextItemText,
-                                            button.style === "destructive" && { color: colors.danger },
-                                        ]}
-                                    >
-                                        {button.text}
-                                    </Text>
+                <Modal visible={showAiQuickMenu} animationType="fade" transparent onRequestClose={() => setShowAiQuickMenu(false)}>
+                    <Pressable style={styles.aiMenuOverlay} onPress={() => setShowAiQuickMenu(false)}>
+                        <Pressable style={styles.aiMenuCard} onPress={(event) => event.stopPropagation()}>
+                            <View style={styles.aiMenuHeader}>
+                                <View style={styles.aiPanelTitleRow}>
+                                    <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
+                                    <Text style={styles.aiPanelTitle}>Trợ lý AI</Text>
+                                </View>
+                                <Pressable onPress={() => setShowAiQuickMenu(false)}>
+                                    <Ionicons name="close" size={22} color={colors.textMuted} />
+                                </Pressable>
+                            </View>
+                            <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); openAiPanel("summary"); }}>
+                                <Ionicons name="document-text-outline" size={20} color={colors.accentStrong} />
+                                <Text style={styles.aiMenuItemText}>Tóm tắt cuộc trò chuyện</Text>
+                            </Pressable>
+                            <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); setAiPanelMode("search"); setShowAiPanel(true); }}>
+                                <Ionicons name="search-outline" size={20} color={colors.accentStrong} />
+                                <Text style={styles.aiMenuItemText}>Tìm kiếm bằng AI</Text>
+                            </Pressable>
+                            <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); openAiPanel("tasks"); }}>
+                                <Ionicons name="checkbox-outline" size={20} color={colors.accentStrong} />
+                                <Text style={styles.aiMenuItemText}>Trích xuất công việc</Text>
+                            </Pressable>
+                        </Pressable>
+                    </Pressable>
+                </Modal>
+
+                <Modal visible={showTonePicker} animationType="fade" transparent onRequestClose={() => setShowTonePicker(false)}>
+                    <Pressable style={styles.aiMenuOverlay} onPress={() => setShowTonePicker(false)}>
+                        <Pressable style={styles.aiMenuCard} onPress={(event) => event.stopPropagation()}>
+                            <View style={styles.aiMenuHeader}>
+                                <View style={styles.aiPanelTitleRow}>
+                                    <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
+                                    <Text style={styles.aiPanelTitle}>Chọn giọng văn</Text>
+                                </View>
+                                <Pressable onPress={() => setShowTonePicker(false)}>
+                                    <Ionicons name="close" size={22} color={colors.textMuted} />
+                                </Pressable>
+                            </View>
+                            {([
+                                ["formal", "Lịch sự"],
+                                ["casual", "Thân thiện"],
+                                ["funny", "Hài hước"],
+                                ["professional", "Chuyên nghiệp"],
+                            ] as Array<[AiTone, string]>).map(([tone, label]) => (
+                                <Pressable key={tone} style={styles.aiMenuItem} onPress={() => { setShowTonePicker(false); handleToneAdjust(tone); }}>
+                                    <Ionicons name="create-outline" size={20} color={colors.accentStrong} />
+                                    <Text style={styles.aiMenuItemText}>{label}</Text>
                                 </Pressable>
                             ))}
-
-                        <Pressable style={[styles.contextItem, styles.contextCancel]} onPress={closeActionMenu}>
-                            <Text style={[styles.contextItemText, { color: colors.textMuted, textAlign: "center" }]}>Hủy</Text>
                         </Pressable>
-                    </View>
-                </Pressable>
-            </Modal>
+                    </Pressable>
+                </Modal>
 
-            {/* Forward Dialog Modal */}
-            <ForwardDialog
-                visible={showForwardDialog}
-                currentConversationId={chatState.conversation?._id || chatState.conversation?.id || groupId || ""}
-                currentUserId={currentUserId}
-                messageIds={forwardMessageIds}
-                excludeTargetIds={groupId ? [groupId] : []}
-                onDismiss={() => {
-                    setShowForwardDialog(false);
-                    setForwardMessageIds([]);
-                }}
-                onForwardSuccess={(result) => {
-                    Alert.alert(
-                        "Thành công",
-                        `Đã chuyển tiếp tới ${result.sentToCount} cuộc trò chuyện`
-                    );
-                }}
-            />
+                <Modal visible={showAiPanel} animationType="slide" transparent onRequestClose={() => setShowAiPanel(false)}>
+                    <View style={styles.aiPanelOverlay}>
+                        <View style={styles.aiPanel}>
+                            <View style={styles.aiPanelHeader}>
+                                <View style={styles.aiPanelTitleRow}>
+                                    <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
+                                    <Text style={styles.aiPanelTitle}>Trợ lý AI</Text>
+                                </View>
+                                <Pressable onPress={() => setShowAiPanel(false)}>
+                                    <Ionicons name="close" size={24} color={colors.text} />
+                                </Pressable>
+                            </View>
 
-            <ContactPickerSheet
-                visible={showContactPicker}
-                currentUserId={currentUserId}
-                sentUserIds={profileCardSentUserIds}
-                sendingUserId={profileCardSendingUserId}
-                onDismiss={() => setShowContactPicker(false)}
-                onSend={handleSendProfileCard}
-            />
+                            <View style={styles.aiPanelTabs}>
+                                {(["summary", "search", "tasks"] as AiPanelMode[]).map((mode) => (
+                                    <Pressable
+                                        key={mode}
+                                        style={[styles.aiPanelTab, aiPanelMode === mode && styles.aiPanelTabActive]}
+                                        onPress={() => {
+                                            setAiPanelMode(mode);
+                                            if (mode !== "search") openAiPanel(mode);
+                                        }}
+                                    >
+                                        <Text style={[styles.aiPanelTabText, aiPanelMode === mode && styles.aiPanelTabTextActive]}>
+                                            {mode === "summary" ? "Tóm tắt" : mode === "search" ? "Tìm AI" : "Công việc"}
+                                        </Text>
+                                    </Pressable>
+                                ))}
+                            </View>
 
-            <CreatePollModal
-                visible={showCreatePollModal}
-                isSubmitting={isCreatingPoll}
-                onDismiss={() => setShowCreatePollModal(false)}
-                onSubmit={handleCreatePoll}
-            />
-
-            {allViewerImages.length > 0 && (
-                <Modal
-                    visible={allViewerImages.length > 0}
-                    transparent={true}
-                    statusBarTranslucent={true}
-                    onRequestClose={closeImageViewer}
-                >
-                    <View style={styles.imageViewerContainer}>
-                        <Pressable
-                            style={styles.imageViewerClose}
-                            onPress={closeImageViewer}
-                        >
-                            <Ionicons name="close" size={28} color={colors.textOnAccent} />
-                        </Pressable>
-
-                        <FlatList
-                            ref={imageViewerScrollRef as any}
-                            horizontal
-                            pagingEnabled
-                            scrollEventThrottle={16}
-                            showsHorizontalScrollIndicator={false}
-                            data={allViewerImages}
-                            keyExtractor={(item) => item.key}
-                            renderItem={({ item }) => (
-                                <View style={styles.imageViewerImageWrap}>
-                                    <Image
-                                        source={{ uri: item.uri }}
-                                        style={styles.imageViewerImage}
-                                        resizeMode="contain"
+                            {aiPanelMode === "search" && (
+                                <View style={styles.aiSearchBox}>
+                                    <TextInput
+                                        value={aiSearchQuery}
+                                        onChangeText={setAiSearchQuery}
+                                        placeholder="Hỏi AI trong cuộc trò chuyện..."
+                                        placeholderTextColor={colors.textMuted}
+                                        style={styles.aiSearchInput}
                                     />
+                                    <Pressable style={styles.aiSearchButton} onPress={() => openAiPanel("search")} disabled={aiLoading}>
+                                        {aiLoading ? <ActivityIndicator size="small" color={colors.textOnAccent} /> : <Ionicons name="search" size={18} color={colors.textOnAccent} />}
+                                    </Pressable>
                                 </View>
                             )}
-                            onMomentumScrollEnd={(event) => {
-                                const contentOffsetX = event.nativeEvent.contentOffset.x;
-                                const screenWidth = Dimensions.get("window").width;
-                                const currentIndex = Math.round(contentOffsetX / screenWidth);
-                                setSelectedImageIndex(currentIndex);
-                            }}
-                        />
 
-                        <View style={styles.imageViewerCounter}>
-                            <Text style={styles.imageViewerCounterText}>
-                                {selectedImageIndex + 1} / {allViewerImages.length}
-                            </Text>
+                            {aiLoading && aiPanelMode !== "search" ? (
+                                <View style={styles.aiPanelLoading}>
+                                    <ActivityIndicator color={colors.accentStrong} />
+                                    <Text style={styles.aiPanelMuted}>AI đang xử lý...</Text>
+                                </View>
+                            ) : (
+                                <ScrollView contentContainerStyle={styles.aiPanelBody}>
+                                    {aiPanelMode === "summary" && (
+                                        (aiSummary?.summary || []).length > 0
+                                            ? aiSummary?.summary.map((item, index) => (
+                                                <View key={`${item}-${index}`} style={styles.aiResultCard}>
+                                                    <Text style={styles.aiPanelText}>- {item}</Text>
+                                                </View>
+                                            ))
+                                            : <Text style={styles.aiPanelMuted}>Chưa có tóm tắt.</Text>
+                                    )}
+                                    {aiPanelMode === "search" && (
+                                        aiLoading
+                                            ? <ActivityIndicator color={colors.accentStrong} />
+                                            : <Text style={aiSearchResult ? styles.aiPanelText : styles.aiPanelMuted}>
+                                                {aiSearchResult?.answer || "Nhập câu hỏi để tìm bằng AI."}
+                                            </Text>
+                                    )}
+                                    {aiPanelMode === "tasks" && (
+                                        (aiTasks?.tasks || []).length > 0
+                                            ? aiTasks?.tasks.map((task, index) => (
+                                                <View key={`${task.description}-${index}`} style={styles.aiResultCard}>
+                                                    <Text style={styles.aiPanelText}>{task.description}</Text>
+                                                    <Text style={styles.aiPanelMuted}>{[task.assignee, task.deadline, task.status].filter(Boolean).join(" - ")}</Text>
+                                                </View>
+                                            ))
+                                            : <Text style={styles.aiPanelMuted}>Chưa tìm thấy công việc nào.</Text>
+                                    )}
+                                </ScrollView>
+                            )}
                         </View>
                     </View>
                 </Modal>
-            )}
+                <Modal
+                    transparent
+                    visible={!!actionMenuMessage}
+                    animationType="fade"
+                    onRequestClose={closeActionMenu}
+                >
+                    <Pressable style={styles.contextOverlay} onPress={closeActionMenu}>
+                        <View style={styles.contextMenu}>
+                            <View style={styles.contextHeader}>
+                                <Text style={styles.contextTitle} numberOfLines={1}>
+                                    {actionMenuMessage?.text?.trim() || "[Media]"}
+                                </Text>
+                            </View>
 
-            {/* Edit Message Dialog Modal */}
-            <Modal
-                visible={showEditDialog}
-                transparent
-                animationType="fade"
-                onRequestClose={() => {
-                    setShowEditDialog(false);
-                    setSelectedMessageId(null);
-                    setEditText("");
-                }}
-            >
-                <Pressable
-                    style={styles.modalOverlay}
-                    onPress={() => {
+                            {actionMenuButtons
+                                .filter((button) => button.style !== "cancel")
+                                .map((button) => (
+                                    <Pressable
+                                        key={button.text}
+                                        style={styles.contextItem}
+                                        onPress={() => {
+                                            closeActionMenu();
+                                            button.onPress();
+                                        }}
+                                    >
+                                        <Ionicons
+                                            name={getActionIconName(button.text)}
+                                            size={20}
+                                            color={button.style === "destructive" ? colors.danger : colors.accent}
+                                        />
+                                        <Text
+                                            style={[
+                                                styles.contextItemText,
+                                                button.style === "destructive" && { color: colors.danger },
+                                            ]}
+                                        >
+                                            {button.text}
+                                        </Text>
+                                    </Pressable>
+                                ))}
+
+                            <Pressable style={[styles.contextItem, styles.contextCancel]} onPress={closeActionMenu}>
+                                <Text style={[styles.contextItemText, { color: colors.textMuted, textAlign: "center" }]}>Hủy</Text>
+                            </Pressable>
+                        </View>
+                    </Pressable>
+                </Modal>
+
+                {/* Forward Dialog Modal */}
+                <ForwardDialog
+                    visible={showForwardDialog}
+                    currentConversationId={chatState.conversation?._id || chatState.conversation?.id || groupId || ""}
+                    currentUserId={currentUserId}
+                    messageIds={forwardMessageIds}
+                    excludeTargetIds={groupId ? [groupId] : []}
+                    onDismiss={() => {
+                        setShowForwardDialog(false);
+                        setForwardMessageIds([]);
+                    }}
+                    onForwardSuccess={(result) => {
+                        Alert.alert(
+                            "Thành công",
+                            `Đã chuyển tiếp tới ${result.sentToCount} cuộc trò chuyện`
+                        );
+                    }}
+                />
+
+                <ContactPickerSheet
+                    visible={showContactPicker}
+                    currentUserId={currentUserId}
+                    sentUserIds={profileCardSentUserIds}
+                    sendingUserId={profileCardSendingUserId}
+                    onDismiss={() => setShowContactPicker(false)}
+                    onSend={handleSendProfileCard}
+                />
+
+                <CreatePollModal
+                    visible={showCreatePollModal}
+                    isSubmitting={isCreatingPoll}
+                    onDismiss={() => setShowCreatePollModal(false)}
+                    onSubmit={handleCreatePoll}
+                />
+
+                {allViewerImages.length > 0 && (
+                    <Modal
+                        visible={allViewerImages.length > 0}
+                        transparent={true}
+                        statusBarTranslucent={true}
+                        onRequestClose={closeImageViewer}
+                    >
+                        <View style={styles.imageViewerContainer}>
+                            <Pressable
+                                style={styles.imageViewerClose}
+                                onPress={closeImageViewer}
+                            >
+                                <Ionicons name="close" size={28} color={colors.textOnAccent} />
+                            </Pressable>
+
+                            <FlatList
+                                ref={imageViewerScrollRef as any}
+                                horizontal
+                                pagingEnabled
+                                scrollEventThrottle={16}
+                                showsHorizontalScrollIndicator={false}
+                                data={allViewerImages}
+                                keyExtractor={(item) => item.key}
+                                renderItem={({ item }) => (
+                                    <View style={styles.imageViewerImageWrap}>
+                                        <Image
+                                            source={{ uri: item.uri }}
+                                            style={styles.imageViewerImage}
+                                            resizeMode="contain"
+                                        />
+                                    </View>
+                                )}
+                                onMomentumScrollEnd={(event) => {
+                                    const contentOffsetX = event.nativeEvent.contentOffset.x;
+                                    const screenWidth = Dimensions.get("window").width;
+                                    const currentIndex = Math.round(contentOffsetX / screenWidth);
+                                    setSelectedImageIndex(currentIndex);
+                                }}
+                            />
+
+                            <View style={styles.imageViewerCounter}>
+                                <Text style={styles.imageViewerCounterText}>
+                                    {selectedImageIndex + 1} / {allViewerImages.length}
+                                </Text>
+                            </View>
+                        </View>
+                    </Modal>
+                )}
+
+                {/* Edit Message Dialog Modal */}
+                <Modal
+                    visible={showEditDialog}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => {
                         setShowEditDialog(false);
                         setSelectedMessageId(null);
                         setEditText("");
                     }}
                 >
-                    <Pressable style={styles.modalContent} onPress={() => { }}>
-                        <View style={styles.editDialogContent}>
-                            <Text style={styles.editDialogTitle}>Sửa tin nhắn</Text>
-                            <TextInput
-                                style={styles.editDialogInput}
-                                placeholder="Nhập nội dung mới..."
-                                placeholderTextColor={colors.textMuted}
-                                value={editText}
-                                onChangeText={setEditText}
-                                multiline
-                                maxLength={1000}
-                            />
+                    <Pressable
+                        style={styles.modalOverlay}
+                        onPress={() => {
+                            setShowEditDialog(false);
+                            setSelectedMessageId(null);
+                            setEditText("");
+                        }}
+                    >
+                        <Pressable style={styles.modalContent} onPress={() => { }}>
+                            <View style={styles.editDialogContent}>
+                                <Text style={styles.editDialogTitle}>Sửa tin nhắn</Text>
+                                <TextInput
+                                    style={styles.editDialogInput}
+                                    placeholder="Nhập nội dung mới..."
+                                    placeholderTextColor={colors.textMuted}
+                                    value={editText}
+                                    onChangeText={setEditText}
+                                    multiline
+                                    maxLength={1000}
+                                />
 
-                            <View style={styles.editDialogButtons}>
-                                <Pressable
-                                    style={[styles.editDialogButton, styles.editDialogCancelButton]}
-                                    onPress={() => {
-                                        setShowEditDialog(false);
-                                        setSelectedMessageId(null);
-                                        setEditText("");
-                                    }}
-                                >
-                                    <Text style={styles.editDialogButtonText}>Hủy</Text>
-                                </Pressable>
+                                <View style={styles.editDialogButtons}>
+                                    <Pressable
+                                        style={[styles.editDialogButton, styles.editDialogCancelButton]}
+                                        onPress={() => {
+                                            setShowEditDialog(false);
+                                            setSelectedMessageId(null);
+                                            setEditText("");
+                                        }}
+                                    >
+                                        <Text style={styles.editDialogButtonText}>Hủy</Text>
+                                    </Pressable>
 
-                                <Pressable
-                                    style={[styles.editDialogButton, styles.editDialogSaveButton]}
-                                    onPress={handleSaveEdit}
-                                >
-                                    <Text style={styles.editDialogButtonText}>Lưu</Text>
-                                </Pressable>
+                                    <Pressable
+                                        style={[styles.editDialogButton, styles.editDialogSaveButton]}
+                                        onPress={handleSaveEdit}
+                                    >
+                                        <Text style={styles.editDialogButtonText}>Lưu</Text>
+                                    </Pressable>
+                                </View>
                             </View>
-                        </View>
+                        </Pressable>
                     </Pressable>
-                </Pressable>
-            </Modal>
-        </KeyboardAvoidingView>
-    );
-};
+                </Modal>
+            </KeyboardAvoidingView>
+        );
+    };
 
 interface DraftMediaAsset {
     id: string;

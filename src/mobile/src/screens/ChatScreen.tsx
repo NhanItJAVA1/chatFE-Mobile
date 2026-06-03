@@ -18,7 +18,6 @@ import {
   Modal,
   Dimensions,
   ImageBackground,
-  StatusBar,
 } from "react-native";
 import { Audio } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
@@ -2074,7 +2073,7 @@ export const ChatScreen = ({
         />
       );
     },
-    [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages, translatedMessages, translatingMessageId,handleOpenProfileCardUser],
+    [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages, translatedMessages, translatingMessageId, handleOpenProfileCardUser],
   );
 
   const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
@@ -2110,7 +2109,7 @@ export const ChatScreen = ({
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={Platform.select({
         ios: 60,
         android: 76 + (StatusBar.currentHeight || 0),
