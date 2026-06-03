@@ -6,7 +6,7 @@ import { DeviceEventEmitter } from "react-native";
 import type { AuthResponse, User } from "@/types";
 
 const readAccessToken = (payload: any): string => {
-    return payload?.accessToken || payload?.token || "";
+    return payload?.accessToken || payload?.access_token || payload?.token || "";
 };
 
 const readUserProfile = (payload: any): User | null => {

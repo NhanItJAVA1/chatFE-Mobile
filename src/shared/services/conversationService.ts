@@ -63,6 +63,11 @@ export interface MessagePage {
     hasMore: boolean;
 }
 
+export interface MuteConversationOptions {
+    muteUntil?: string;
+    duration?: number;
+}
+
 interface PaginationResponse {
     data: MessagePage;
 }
@@ -354,12 +359,16 @@ export class ConversationService {
      */
     static async muteConversation(
         conversationId: string,
-        mute: boolean
+        muteOrOptions: boolean | MuteConversationOptions = true
     ): Promise<any> {
         try {
-            const response = mute
-                ? await api.post(`/conversations/${conversationId}/mute`, {})
-                : await api.delete(`/conversations/${conversationId}/mute`);
+            if (muteOrOptions === false) {
+                const response = await api.delete(`/conversations/${conversationId}/mute`);
+                return response.data || response;
+            }
+
+            const payload = muteOrOptions === true ? {} : muteOrOptions;
+            const response = await api.post(`/conversations/${conversationId}/mute`, payload);
             return response.data || response;
         } catch (error: any) {
 
@@ -367,6 +376,11 @@ export class ConversationService {
         }
     }
 
+    static async unmuteConversation(conversationId: string): Promise<any> {
+        try {
+            const response = await api.delete(`/conversations/${conversationId}/mute`);
+            return response.data || response;
+        } catch (error: any) {
     /**
      * Pin a conversation
      */

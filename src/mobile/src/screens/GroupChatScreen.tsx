@@ -26,8 +26,17 @@ import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { useAuth } from "../../../shared/hooks";
 import { useCall } from "../../../shared/context";
 import { GroupChatService } from "../../../shared/services/groupChatService";
+import { ConversationService, type MuteConversationOptions } from "../../../shared/services/conversationService";
 import { SocketService } from "../../../shared/services";
 import chatMediaService from "../../../shared/services/chatMediaService";
+import {
+    aiService,
+    type AiExtractTasksResponse,
+    type AiSmartSearchResponse,
+    type AiSummarizeResponse,
+    type AiTone,
+} from "../../../shared/services/aiService";
+import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage } from "../components";
 import profileCardService from "../../../shared/services/profileCardService";
 import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage, PollCard, CreatePollModal, ProfileCardMessage, ContactPickerSheet } from "../components";
 import { JUMBO_EMOJI_ASSETS } from "../components/AnimatedEmojiMessage";
@@ -70,6 +79,57 @@ const detectDraftMediaKind = (mimeType?: string, type?: string): "image" | "vide
 };
 
 const GALLERY_GROUP_WINDOW_MS = 5000;
+type AiPanelMode = "summary" | "search" | "tasks";
+type MuteOptionKey = "1h" | "4h" | "8am" | "forever";
+
+const MUTE_OPTIONS: Array<{ key: MuteOptionKey; label: string }> = [
+    { key: "1h", label: "Trong 1 giờ" },
+    { key: "4h", label: "Trong 4 giờ" },
+    { key: "8am", label: "Cho đến 8:00 AM" },
+    { key: "forever", label: "Cho đến khi được mở lại" },
+];
+
+const FOREVER_MUTE_UNTIL = "9999-12-31T00:00:00.000Z";
+
+const getNextEightAmIso = (): string => {
+    const now = new Date();
+    const nextEight = new Date(now);
+    nextEight.setHours(8, 0, 0, 0);
+
+    if (nextEight.getTime() <= now.getTime()) {
+        nextEight.setDate(nextEight.getDate() + 1);
+    }
+
+    return nextEight.toISOString();
+};
+
+const buildMutePayload = (option: MuteOptionKey): { payload: MuteConversationOptions; localMuteUntil: string } => {
+    if (option === "1h") {
+        const duration = 60 * 60 * 1000;
+        return { payload: { duration }, localMuteUntil: new Date(Date.now() + duration).toISOString() };
+    }
+
+    if (option === "4h") {
+        const duration = 4 * 60 * 60 * 1000;
+        return { payload: { duration }, localMuteUntil: new Date(Date.now() + duration).toISOString() };
+    }
+
+    if (option === "8am") {
+        const muteUntil = getNextEightAmIso();
+        return { payload: { muteUntil }, localMuteUntil: muteUntil };
+    }
+
+    return { payload: {}, localMuteUntil: FOREVER_MUTE_UNTIL };
+};
+
+const isMuteUntilActive = (muteUntil?: string | null): boolean => {
+    if (!muteUntil) {
+        return false;
+    }
+
+    const mutedUntilMs = new Date(muteUntil).getTime();
+    return !Number.isNaN(mutedUntilMs) && mutedUntilMs > Date.now();
+};
 
 const getMessageCreatedAtMs = (message: any): number => {
     const timestamp = new Date(message?.createdAt || "").getTime();
@@ -243,6 +303,21 @@ export const GroupChatScreen: React.FC<{
     const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
     const [selectedImageIndex, setSelectedImageIndex] = useState(0);
     const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
+    const [showAiQuickMenu, setShowAiQuickMenu] = useState(false);
+    const [showTonePicker, setShowTonePicker] = useState(false);
+    const [showAiPanel, setShowAiPanel] = useState(false);
+    const [aiPanelMode, setAiPanelMode] = useState<AiPanelMode>("summary");
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiSummary, setAiSummary] = useState<AiSummarizeResponse | null>(null);
+    const [aiSearchQuery, setAiSearchQuery] = useState("");
+    const [aiSearchResult, setAiSearchResult] = useState<AiSmartSearchResponse | null>(null);
+    const [aiTasks, setAiTasks] = useState<AiExtractTasksResponse | null>(null);
+    const [toneLoading, setToneLoading] = useState<AiTone | null>(null);
+    const [previousDraft, setPreviousDraft] = useState<string | null>(null);
+    const [showMuteDialog, setShowMuteDialog] = useState(false);
+    const [selectedMuteOption, setSelectedMuteOption] = useState<MuteOptionKey>("1h");
+    const [muteLoading, setMuteLoading] = useState(false);
+    const [localMuteUntil, setLocalMuteUntil] = useState<string | null>(null);
     const [showCreatePollModal, setShowCreatePollModal] = useState(false);
     const [isCreatingPoll, setIsCreatingPoll] = useState(false);
 
@@ -251,6 +326,16 @@ export const GroupChatScreen: React.FC<{
     const imageViewerScrollRef = useRef<FlatList>(null);
     const actionsRef = useRef(chatActions);
     const kickedOutRef = useRef(false);
+    const currentMemberMuteUntil = useMemo(() => {
+        const currentMember = groupState.members?.find((member: any) => {
+            const memberUserId = member?.userId || member?._id || member?.id || "";
+            return String(memberUserId) === String(currentUserId);
+        });
+
+        return (currentMember as any)?.muteUntil || null;
+    }, [currentUserId, groupState.members]);
+    const groupMuteUntil = localMuteUntil || currentMemberMuteUntil;
+    const isGroupMuted = isMuteUntilActive(groupMuteUntil);
     const onBackPressRef = useRef(onBackPress);
 
     const scrollToLatestMessage = useCallback((animated = true) => {
@@ -947,6 +1032,103 @@ export const GroupChatScreen: React.FC<{
             chatActions.handleTyping();
         }
     }, [chatActions]);
+
+    const openAiPanel = useCallback(async (mode: AiPanelMode) => {
+        if (!groupId) return;
+
+        setAiPanelMode(mode);
+        setShowAiPanel(true);
+        setAiLoading(true);
+
+        try {
+            if (mode === "summary") {
+                setAiSummary(await aiService.summarize(groupId, 100));
+            } else if (mode === "tasks") {
+                setAiTasks(await aiService.extractTasks(groupId, 100));
+            } else if (aiSearchQuery.trim()) {
+                setAiSearchResult(await aiService.smartSearch(aiSearchQuery.trim(), groupId));
+            }
+        } catch (err: any) {
+            Alert.alert("AI", err?.message || "Không thể gọi AI lúc này.");
+        } finally {
+            setAiLoading(false);
+        }
+    }, [aiSearchQuery, groupId]);
+
+    const handleToneAdjust = useCallback(async (tone: AiTone) => {
+        const text = messageText.trim();
+        if (!text) {
+            Alert.alert("AI", "Nhập tin nhắn trước khi chỉnh giọng văn.");
+            return;
+        }
+
+        try {
+            setToneLoading(tone);
+            setPreviousDraft(messageText);
+            const result = await aiService.toneAdjust(text, tone);
+            setMessageText(result.adjusted);
+        } catch (err: any) {
+            Alert.alert("AI", err?.message || "Không thể chỉnh giọng văn.");
+        } finally {
+            setToneLoading(null);
+        }
+    }, [messageText]);
+
+    const showToneMenu = useCallback(() => {
+        setShowTonePicker(true);
+    }, []);
+
+    const showAiMenu = useCallback(() => {
+        setShowAiQuickMenu(true);
+    }, []);
+
+    const handleConfirmMute = useCallback(async () => {
+        if (!groupId) {
+            Alert.alert("Thông báo", "Chưa có nhóm để tắt thông báo.");
+            return;
+        }
+
+        const { payload, localMuteUntil: nextMuteUntil } = buildMutePayload(selectedMuteOption);
+
+        try {
+            setMuteLoading(true);
+            await ConversationService.muteConversation(String(groupId), payload);
+            setLocalMuteUntil(nextMuteUntil);
+            setShowMuteDialog(false);
+            Alert.alert("Thông báo", "Đã tắt thông báo nhóm này.");
+        } catch (err: any) {
+            Alert.alert("Thông báo", err?.message || "Không thể tắt thông báo lúc này.");
+        } finally {
+            setMuteLoading(false);
+        }
+    }, [groupId, selectedMuteOption]);
+
+    const handleUnmuteConversation = useCallback(async () => {
+        if (!groupId) {
+            Alert.alert("Thông báo", "Chưa có nhóm để bật thông báo.");
+            return;
+        }
+
+        try {
+            setMuteLoading(true);
+            await ConversationService.unmuteConversation(String(groupId));
+            setLocalMuteUntil(null);
+            Alert.alert("Thông báo", "Đã bật lại thông báo nhóm này.");
+        } catch (err: any) {
+            Alert.alert("Thông báo", err?.message || "Không thể bật thông báo lúc này.");
+        } finally {
+            setMuteLoading(false);
+        }
+    }, [groupId]);
+
+    const handleMuteButtonPress = useCallback(() => {
+        if (isGroupMuted) {
+            handleUnmuteConversation();
+            return;
+        }
+
+        setShowMuteDialog(true);
+    }, [handleUnmuteConversation, isGroupMuted]);
 
     const handleToggleReaction = useCallback(async (messageId: string, emoji: string, selected: boolean) => {
         try {
@@ -1724,6 +1906,27 @@ export const GroupChatScreen: React.FC<{
                 <View style={styles.headerIconGroup}>
                     <Pressable
                         style={styles.headerIconButton}
+                        onPress={showAiMenu}
+                        hitSlop={8}
+                    >
+                        <Ionicons name="sparkles" size={22} color={colors.accentStrong} />
+                    </Pressable>
+                    <Pressable
+                        style={styles.headerIconButton}
+                        onPress={handleMuteButtonPress}
+                        disabled={muteLoading}
+                        hitSlop={8}
+                    >
+                        {muteLoading ? (
+                            <ActivityIndicator size="small" color={colors.text} />
+                        ) : (
+                            <Ionicons
+                                name={isGroupMuted ? "notifications-off-outline" : "notifications-outline"}
+                                size={24}
+                                color={isGroupMuted ? colors.accentStrong : colors.text}
+                            />
+                        )}
+                    </Pressable>
                         onPress={handleStartGroupCall}
                         disabled={callState.status !== "idle"}
                         hitSlop={8}
@@ -1771,6 +1974,51 @@ export const GroupChatScreen: React.FC<{
                     </Pressable>
                 </View>
             </View>
+
+            <Modal visible={showMuteDialog} transparent animationType="fade" onRequestClose={() => setShowMuteDialog(false)}>
+                <Pressable style={styles.muteDialogOverlay} onPress={() => setShowMuteDialog(false)}>
+                    <Pressable style={styles.muteDialogCard} onPress={(event) => event.stopPropagation()}>
+                        <View style={styles.muteDialogHeader}>
+                            <Text style={styles.muteDialogTitle}>Xác nhận</Text>
+                            <Pressable style={styles.muteDialogCloseButton} onPress={() => setShowMuteDialog(false)}>
+                                <Ionicons name="close" size={28} color={colors.text} />
+                            </Pressable>
+                        </View>
+                        <Text style={styles.muteDialogMessage}>Bạn có chắc muốn tắt thông báo hội thoại này:</Text>
+                        <View style={styles.muteOptionList}>
+                            {MUTE_OPTIONS.map((option) => {
+                                const selected = selectedMuteOption === option.key;
+                                return (
+                                    <Pressable
+                                        key={option.key}
+                                        style={styles.muteOptionRow}
+                                        onPress={() => setSelectedMuteOption(option.key)}
+                                    >
+                                        <Ionicons
+                                            name={selected ? "radio-button-on-outline" : "radio-button-off-outline"}
+                                            size={22}
+                                            color={selected ? colors.accentStrong : colors.textMuted}
+                                        />
+                                        <Text style={styles.muteOptionText}>{option.label}</Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+                        <View style={styles.muteDialogActions}>
+                            <Pressable style={styles.muteCancelButton} onPress={() => setShowMuteDialog(false)} disabled={muteLoading}>
+                                <Text style={styles.muteCancelText}>Hủy</Text>
+                            </Pressable>
+                            <Pressable style={styles.muteConfirmButton} onPress={handleConfirmMute} disabled={muteLoading}>
+                                {muteLoading ? (
+                                    <ActivityIndicator size="small" color={colors.textOnAccent} />
+                                ) : (
+                                    <Text style={styles.muteConfirmText}>Đồng ý</Text>
+                                )}
+                            </Pressable>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
 
             {/* Loading state */}
             {chatState.isLoading && chatState.messages.length === 0 && (
@@ -2013,6 +2261,14 @@ export const GroupChatScreen: React.FC<{
                     }}
                 />
             )}
+            {previousDraft !== null && (
+                <View style={styles.aiUndoBar}>
+                    <Text style={styles.aiUndoText}>AI đã chỉnh sửa bản nháp</Text>
+                    <Pressable onPress={() => { setMessageText(previousDraft); setPreviousDraft(null); }}>
+                        <Text style={styles.aiUndoAction}>Hoàn tác</Text>
+                    </Pressable>
+                </View>
+            )}
             <View style={styles.messageComposer}>
                 <Pressable
                     style={styles.composerIconButton}
@@ -2043,6 +2299,13 @@ export const GroupChatScreen: React.FC<{
                             color={colors.textMuted}
                         />
                     </Pressable>
+                    <Pressable style={styles.composerEmojiButton} onPress={showToneMenu} disabled={!!toneLoading || !messageText.trim()}>
+                        {toneLoading ? (
+                            <ActivityIndicator size="small" color={colors.accentStrong} />
+                        ) : (
+                            <Ionicons name="sparkles" size={20} color={messageText.trim() ? colors.accentStrong : colors.textMuted} />
+                        )}
+                    </Pressable>
                 </View>
                 <Pressable
                     style={[
@@ -2072,6 +2335,143 @@ export const GroupChatScreen: React.FC<{
                 </Pressable>
             </View>
 
+            <Modal visible={showAiQuickMenu} animationType="fade" transparent onRequestClose={() => setShowAiQuickMenu(false)}>
+                <Pressable style={styles.aiMenuOverlay} onPress={() => setShowAiQuickMenu(false)}>
+                    <Pressable style={styles.aiMenuCard} onPress={(event) => event.stopPropagation()}>
+                        <View style={styles.aiMenuHeader}>
+                            <View style={styles.aiPanelTitleRow}>
+                                <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
+                                <Text style={styles.aiPanelTitle}>Trợ lý AI</Text>
+                            </View>
+                            <Pressable onPress={() => setShowAiQuickMenu(false)}>
+                                <Ionicons name="close" size={22} color={colors.textMuted} />
+                            </Pressable>
+                        </View>
+                        <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); openAiPanel("summary"); }}>
+                            <Ionicons name="document-text-outline" size={20} color={colors.accentStrong} />
+                            <Text style={styles.aiMenuItemText}>Tóm tắt cuộc trò chuyện</Text>
+                        </Pressable>
+                        <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); setAiPanelMode("search"); setShowAiPanel(true); }}>
+                            <Ionicons name="search-outline" size={20} color={colors.accentStrong} />
+                            <Text style={styles.aiMenuItemText}>Tìm kiếm bằng AI</Text>
+                        </Pressable>
+                        <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); openAiPanel("tasks"); }}>
+                            <Ionicons name="checkbox-outline" size={20} color={colors.accentStrong} />
+                            <Text style={styles.aiMenuItemText}>Trích xuất công việc</Text>
+                        </Pressable>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            <Modal visible={showTonePicker} animationType="fade" transparent onRequestClose={() => setShowTonePicker(false)}>
+                <Pressable style={styles.aiMenuOverlay} onPress={() => setShowTonePicker(false)}>
+                    <Pressable style={styles.aiMenuCard} onPress={(event) => event.stopPropagation()}>
+                        <View style={styles.aiMenuHeader}>
+                            <View style={styles.aiPanelTitleRow}>
+                                <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
+                                <Text style={styles.aiPanelTitle}>Chọn giọng văn</Text>
+                            </View>
+                            <Pressable onPress={() => setShowTonePicker(false)}>
+                                <Ionicons name="close" size={22} color={colors.textMuted} />
+                            </Pressable>
+                        </View>
+                        {([
+                            ["formal", "Lịch sự"],
+                            ["casual", "Thân thiện"],
+                            ["funny", "Hài hước"],
+                            ["professional", "Chuyên nghiệp"],
+                        ] as Array<[AiTone, string]>).map(([tone, label]) => (
+                            <Pressable key={tone} style={styles.aiMenuItem} onPress={() => { setShowTonePicker(false); handleToneAdjust(tone); }}>
+                                <Ionicons name="create-outline" size={20} color={colors.accentStrong} />
+                                <Text style={styles.aiMenuItemText}>{label}</Text>
+                            </Pressable>
+                        ))}
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            <Modal visible={showAiPanel} animationType="slide" transparent onRequestClose={() => setShowAiPanel(false)}>
+                <View style={styles.aiPanelOverlay}>
+                    <View style={styles.aiPanel}>
+                        <View style={styles.aiPanelHeader}>
+                            <View style={styles.aiPanelTitleRow}>
+                                <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
+                                <Text style={styles.aiPanelTitle}>Trợ lý AI</Text>
+                            </View>
+                            <Pressable onPress={() => setShowAiPanel(false)}>
+                                <Ionicons name="close" size={24} color={colors.text} />
+                            </Pressable>
+                        </View>
+
+                        <View style={styles.aiPanelTabs}>
+                            {(["summary", "search", "tasks"] as AiPanelMode[]).map((mode) => (
+                                <Pressable
+                                    key={mode}
+                                    style={[styles.aiPanelTab, aiPanelMode === mode && styles.aiPanelTabActive]}
+                                    onPress={() => {
+                                        setAiPanelMode(mode);
+                                        if (mode !== "search") openAiPanel(mode);
+                                    }}
+                                >
+                                    <Text style={[styles.aiPanelTabText, aiPanelMode === mode && styles.aiPanelTabTextActive]}>
+                                        {mode === "summary" ? "Tóm tắt" : mode === "search" ? "Tìm AI" : "Công việc"}
+                                    </Text>
+                                </Pressable>
+                            ))}
+                        </View>
+
+                        {aiPanelMode === "search" && (
+                            <View style={styles.aiSearchBox}>
+                                <TextInput
+                                    value={aiSearchQuery}
+                                    onChangeText={setAiSearchQuery}
+                                    placeholder="Hỏi AI trong cuộc trò chuyện..."
+                                    placeholderTextColor={colors.textMuted}
+                                    style={styles.aiSearchInput}
+                                />
+                                <Pressable style={styles.aiSearchButton} onPress={() => openAiPanel("search")} disabled={aiLoading}>
+                                    {aiLoading ? <ActivityIndicator size="small" color={colors.textOnAccent} /> : <Ionicons name="search" size={18} color={colors.textOnAccent} />}
+                                </Pressable>
+                            </View>
+                        )}
+
+                        {aiLoading && aiPanelMode !== "search" ? (
+                            <View style={styles.aiPanelLoading}>
+                                <ActivityIndicator color={colors.accentStrong} />
+                                <Text style={styles.aiPanelMuted}>AI đang xử lý...</Text>
+                            </View>
+                        ) : (
+                            <ScrollView contentContainerStyle={styles.aiPanelBody}>
+                                {aiPanelMode === "summary" && (
+                                    (aiSummary?.summary || []).length > 0
+                                        ? aiSummary?.summary.map((item, index) => (
+                                            <View key={`${item}-${index}`} style={styles.aiResultCard}>
+                                                <Text style={styles.aiPanelText}>- {item}</Text>
+                                            </View>
+                                        ))
+                                        : <Text style={styles.aiPanelMuted}>Chưa có tóm tắt.</Text>
+                                )}
+                                {aiPanelMode === "search" && (
+                                    aiLoading
+                                        ? <ActivityIndicator color={colors.accentStrong} />
+                                        : <Text style={aiSearchResult ? styles.aiPanelText : styles.aiPanelMuted}>
+                                            {aiSearchResult?.answer || "Nhập câu hỏi để tìm bằng AI."}
+                                        </Text>
+                                )}
+                                {aiPanelMode === "tasks" && (
+                                    (aiTasks?.tasks || []).length > 0
+                                        ? aiTasks?.tasks.map((task, index) => (
+                                            <View key={`${task.description}-${index}`} style={styles.aiResultCard}>
+                                                <Text style={styles.aiPanelText}>{task.description}</Text>
+                                                <Text style={styles.aiPanelMuted}>{[task.assignee, task.deadline, task.status].filter(Boolean).join(" - ")}</Text>
+                                            </View>
+                                        ))
+                                        : <Text style={styles.aiPanelMuted}>Chưa tìm thấy công việc nào.</Text>
+                                )}
+                            </ScrollView>
+                        )}
+                    </View>
+                </View>
             <Modal
                 transparent
                 visible={!!actionMenuMessage}
@@ -2669,6 +3069,25 @@ const styles = StyleSheet.create({
     composerEmojiButton: {
         paddingHorizontal: 8,
     },
+    aiUndoBar: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        backgroundColor: colors.surface,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+    },
+    aiUndoText: {
+        color: colors.textMuted,
+        fontSize: 12,
+    },
+    aiUndoAction: {
+        color: colors.accentStrong,
+        fontSize: 12,
+        fontWeight: "700",
+    },
     composerActionButton: {
         width: 44,
         height: 44,
@@ -2812,6 +3231,246 @@ const styles = StyleSheet.create({
         width: "80%",
         maxWidth: 360,
     },
+    aiPanelOverlay: {
+        flex: 1,
+        justifyContent: "flex-end",
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+    },
+    aiMenuOverlay: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 20,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+    },
+    aiMenuCard: {
+        width: "100%",
+        maxWidth: 380,
+        gap: 8,
+        padding: 16,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.background,
+    },
+    aiMenuHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 4,
+    },
+    aiMenuItem: {
+        minHeight: 48,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+    },
+    aiMenuItemText: {
+        flex: 1,
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "700",
+    },
+    muteDialogOverlay: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 20,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+    },
+    muteDialogCard: {
+        width: "100%",
+        maxWidth: 420,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.background,
+    },
+    muteDialogHeader: {
+        minHeight: 56,
+        paddingHorizontal: 16,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    muteDialogTitle: {
+        color: colors.text,
+        fontSize: 18,
+        fontWeight: "800",
+    },
+    muteDialogCloseButton: {
+        width: 36,
+        height: 36,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    muteDialogMessage: {
+        paddingHorizontal: 16,
+        paddingTop: 18,
+        paddingBottom: 10,
+        color: colors.text,
+        fontSize: 14,
+        lineHeight: 20,
+    },
+    muteOptionList: {
+        paddingHorizontal: 16,
+        gap: 12,
+    },
+    muteOptionRow: {
+        minHeight: 24,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    muteOptionText: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "600",
+    },
+    muteDialogActions: {
+        flexDirection: "row",
+        justifyContent: "flex-end",
+        gap: 14,
+        padding: 16,
+        paddingTop: 24,
+    },
+    muteCancelButton: {
+        minWidth: 64,
+        minHeight: 40,
+        paddingHorizontal: 16,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 4,
+        backgroundColor: colors.surface,
+    },
+    muteCancelText: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "800",
+    },
+    muteConfirmButton: {
+        minWidth: 86,
+        minHeight: 40,
+        paddingHorizontal: 18,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 4,
+        backgroundColor: colors.accentStrong,
+    },
+    muteConfirmText: {
+        color: colors.textOnAccent,
+        fontSize: 15,
+        fontWeight: "800",
+    },
+    aiPanel: {
+        maxHeight: "78%",
+        backgroundColor: colors.background,
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        borderWidth: 1,
+        borderColor: colors.border,
+        padding: 16,
+    },
+    aiPanelHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 12,
+    },
+    aiPanelTitleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    aiPanelTitle: {
+        color: colors.text,
+        fontSize: 18,
+        fontWeight: "800",
+    },
+    aiPanelTabs: {
+        flexDirection: "row",
+        gap: 8,
+        marginBottom: 12,
+    },
+    aiPanelTab: {
+        flex: 1,
+        alignItems: "center",
+        paddingVertical: 9,
+        borderRadius: 12,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    aiPanelTabActive: {
+        borderColor: colors.accentStrong,
+        backgroundColor: "rgba(63,140,255,0.2)",
+    },
+    aiPanelTabText: {
+        color: colors.textMuted,
+        fontSize: 12,
+        fontWeight: "700",
+    },
+    aiPanelTabTextActive: {
+        color: colors.text,
+    },
+    aiSearchBox: {
+        flexDirection: "row",
+        gap: 8,
+        alignItems: "center",
+        marginBottom: 12,
+    },
+    aiSearchInput: {
+        flex: 1,
+        minHeight: 42,
+        borderRadius: 14,
+        paddingHorizontal: 12,
+        color: colors.text,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    aiSearchButton: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.accentStrong,
+    },
+    aiPanelBody: {
+        gap: 10,
+        paddingBottom: 12,
+    },
+    aiPanelLoading: {
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: 32,
+        gap: 10,
+    },
+    aiPanelText: {
+        color: colors.text,
+        fontSize: 14,
+        lineHeight: 20,
+    },
+    aiPanelMuted: {
+        color: colors.textMuted,
+        fontSize: 13,
+        lineHeight: 18,
+    },
+    aiResultCard: {
+        padding: 12,
+        gap: 6,
+        borderRadius: 12,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
     contextOverlay: {
         flex: 1,
         backgroundColor: "rgba(0,0,0,0.55)",

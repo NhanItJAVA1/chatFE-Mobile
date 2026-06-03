@@ -311,6 +311,8 @@ const MainShell = () => {
 
         return (
             <HomeScreen
+                friendshipState={friendshipResult.state}
+                friendshipActions={friendshipResult.actions}
                 onFriendPress={(friend) => {
                     openPrivateChat(navigation, friend);
                 }}

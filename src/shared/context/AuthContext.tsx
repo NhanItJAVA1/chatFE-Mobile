@@ -95,7 +95,28 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         try {
             setError(null);
             setLoading(true);
-            return await authService.register(userData);
+            const response = await authService.register(userData);
+            const accessToken =
+                response?.accessToken ||
+                response?.access_token ||
+                response?.token;
+
+            if (!accessToken || response?.pendingVerification) {
+                return response;
+            }
+
+            setToken(accessToken);
+
+            const profile = await authService.getProfile(accessToken);
+
+            if (!profile.avatarUrl && profile.avatar) {
+                profile.avatarUrl = profile.avatar;
+            }
+
+            await authService.saveUser(profile);
+            setUser(profile);
+
+            return response;
         } catch (err: any) {
             const errorMessage = err.message || "Registration failed";
             setError(errorMessage);

@@ -37,6 +37,8 @@ import { colors } from "../theme";
 import type { Friend } from "@/types";
 
 interface HomeScreenProps {
+    friendshipState: UseFriendshipState;
+    friendshipActions: UseFriendshipActions;
     onFriendPress?: (friend: any) => void;
     onGroupPress?: (conversation: Conversation) => void;
     onCreateGroupPress?: () => void;
@@ -140,6 +142,8 @@ const savePersistedConversationList = async (items: Conversation[]): Promise<voi
 };
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
+    friendshipState: state,
+    friendshipActions: actions,
     onFriendPress,
     onGroupPress,
     onCreateGroupPress,
@@ -148,7 +152,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     onGroupCreatedAck,
 }) => {
     const { user, token } = useAuth();
-    const { state, actions } = useFriendship();
     const [query, setQuery] = useState("");
     const [isSearchMode, setIsSearchMode] = useState(false);
     const [activeSearchTab, setActiveSearchTab] = useState<SearchTabKey>("Chats");

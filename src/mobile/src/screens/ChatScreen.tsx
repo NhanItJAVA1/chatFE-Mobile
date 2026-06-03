@@ -43,12 +43,73 @@ import { buildMessageActionSheetOptions, type MessageActionButton } from "../../
 import MediaMessage from "../components/MediaMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import chatMediaService from "../../../shared/services/chatMediaService";
+import {
+  aiService,
+  type AiExtractTasksResponse,
+  type AiSmartSearchResponse,
+  type AiSummarizeResponse,
+  type AiTone,
+  type AiTranslateResponse,
+} from "../../../shared/services/aiService";
+import { ConversationService, type MuteConversationOptions } from "../../../shared/services/conversationService";
+import { unfriend } from "../../../shared/services/friendService";
 import { checkFriendshipStatus, sendFriendRequest, unfriend } from "../../../shared/services/friendService";
 import { FriendSocketService, type FriendshipNotification } from "../../../shared/services/friendSocket";
 import { BlockService } from "../../../shared/services/blockService";
 import profileCardService from "../../../shared/services/profileCardService";
 import type { ChatScreenProps, MessageMedia } from "@/types";
 import type { MessagePayload } from "../../../shared/services/socketService";
+
+type MuteOptionKey = "1h" | "4h" | "8am" | "forever";
+
+const MUTE_OPTIONS: Array<{ key: MuteOptionKey; label: string }> = [
+  { key: "1h", label: "Trong 1 giờ" },
+  { key: "4h", label: "Trong 4 giờ" },
+  { key: "8am", label: "Cho đến 8:00 AM" },
+  { key: "forever", label: "Cho đến khi được mở lại" },
+];
+
+const FOREVER_MUTE_UNTIL = "9999-12-31T00:00:00.000Z";
+
+const getNextEightAmIso = (): string => {
+  const now = new Date();
+  const nextEight = new Date(now);
+  nextEight.setHours(8, 0, 0, 0);
+
+  if (nextEight.getTime() <= now.getTime()) {
+    nextEight.setDate(nextEight.getDate() + 1);
+  }
+
+  return nextEight.toISOString();
+};
+
+const buildMutePayload = (option: MuteOptionKey): { payload: MuteConversationOptions; localMuteUntil: string } => {
+  if (option === "1h") {
+    const duration = 60 * 60 * 1000;
+    return { payload: { duration }, localMuteUntil: new Date(Date.now() + duration).toISOString() };
+  }
+
+  if (option === "4h") {
+    const duration = 4 * 60 * 60 * 1000;
+    return { payload: { duration }, localMuteUntil: new Date(Date.now() + duration).toISOString() };
+  }
+
+  if (option === "8am") {
+    const muteUntil = getNextEightAmIso();
+    return { payload: { muteUntil }, localMuteUntil: muteUntil };
+  }
+
+  return { payload: {}, localMuteUntil: FOREVER_MUTE_UNTIL };
+};
+
+const isMuteUntilActive = (muteUntil?: string | null): boolean => {
+  if (!muteUntil) {
+    return false;
+  }
+
+  const mutedUntilMs = new Date(muteUntil).getTime();
+  return !Number.isNaN(mutedUntilMs) && mutedUntilMs > Date.now();
+};
 
 /**
  * Message Bubble Component
@@ -64,7 +125,9 @@ const MessageBubble: React.FC<{
   onProfileCardPress?: (user: any) => void;
   isHighlighted?: boolean;
   messageMap?: Record<string, MessagePayload | undefined>;
-}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, onToggleReaction, onClearMyReactions, onProfileCardPress, isHighlighted, messageMap = {} }) => {
+  translation?: AiTranslateResponse;
+  isTranslating?: boolean;
+}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, isHighlighted, messageMap, onToggleReaction, onClearMyReactions, onProfileCardPress = {}, translation, isTranslating }) => {
   const [showReactionPicker, setShowReactionPicker] = React.useState(false);
   const formatTime = (date: string) => {
     const d = new Date(date);
@@ -284,6 +347,17 @@ const MessageBubble: React.FC<{
               </Text>
             )}
           </View>
+          {isTranslating ? (
+            <View style={styles.aiTranslationBox}>
+              <ActivityIndicator size="small" color={colors.accentStrong} />
+              <Text style={styles.aiTranslationLabel}>Dang dich...</Text>
+            </View>
+          ) : translation ? (
+            <View style={styles.aiTranslationBox}>
+              <Text style={styles.aiTranslationLabel}>Da dich tu {translation.sourceLang}</Text>
+              <Text style={styles.aiTranslationText}>{translation.translated}</Text>
+            </View>
+          ) : null}
           {reactionGroups.length > 0 && (
             <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
               <Pressable
@@ -343,6 +417,7 @@ type DraftMediaAsset = {
   height: number | undefined;
 };
 
+type AiPanelMode = "summary" | "search" | "tasks";
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"];
 
 const getMessageKey = (message: MessagePayload): string => {
@@ -561,6 +636,25 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
   const [allViewerImages, setAllViewerImages] = React.useState<Array<{ uri: string; key: string }>>([]);
   const [showAvatarMenu, setShowAvatarMenu] = React.useState(false);
   const [unfriending, setUnfriending] = React.useState(false);
+  const [showAiQuickMenu, setShowAiQuickMenu] = React.useState(false);
+  const [showTonePicker, setShowTonePicker] = React.useState(false);
+  const [showAiPanel, setShowAiPanel] = React.useState(false);
+  const [aiPanelMode, setAiPanelMode] = React.useState<AiPanelMode>("summary");
+  const [aiLoading, setAiLoading] = React.useState(false);
+  const [aiSummary, setAiSummary] = React.useState<AiSummarizeResponse | null>(null);
+  const [aiSearchQuery, setAiSearchQuery] = React.useState("");
+  const [aiSearchResult, setAiSearchResult] = React.useState<AiSmartSearchResponse | null>(null);
+  const [aiTasks, setAiTasks] = React.useState<AiExtractTasksResponse | null>(null);
+  const [smartReplies, setSmartReplies] = React.useState<string[]>([]);
+  const [smartReplyHiddenFor, setSmartReplyHiddenFor] = React.useState<string | null>(null);
+  const [toneLoading, setToneLoading] = React.useState<AiTone | null>(null);
+  const [previousDraft, setPreviousDraft] = React.useState<string | null>(null);
+  const [translatedMessages, setTranslatedMessages] = React.useState<Record<string, AiTranslateResponse>>({});
+  const [translatingMessageId, setTranslatingMessageId] = React.useState<string | null>(null);
+  const [showMuteDialog, setShowMuteDialog] = React.useState(false);
+  const [selectedMuteOption, setSelectedMuteOption] = React.useState<MuteOptionKey>("1h");
+  const [muteLoading, setMuteLoading] = React.useState(false);
+  const [localMuteUntil, setLocalMuteUntil] = React.useState<string | null>(null);
   const [friendActionLoading, setFriendActionLoading] = React.useState(false);
   const [isFriend, setIsFriend] = React.useState(false);
   const [friendshipStatus, setFriendshipStatus] = React.useState<string>("none");
@@ -718,6 +812,22 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
   }, [friendId, chatUser?.name, onBackPress]);
 
   const { conversation, messages, isLoading, isLoadingMore, isSending, error, typingUsers, hasMoreMessages } = state;
+  const conversationId = conversation?._id || conversation?.id || chatUser?.conversationId || "";
+  const conversationMuteUntil =
+    localMuteUntil ||
+    (conversation as any)?.muteUntil ||
+    (conversation as any)?.member?.muteUntil ||
+    (chatUser as any)?.muteUntil ||
+    null;
+  const isConversationMuted = isMuteUntilActive(conversationMuteUntil);
+  const latestMessage = messages[0];
+  const latestMessageKey = latestMessage ? getMessageKey(latestMessage) : "";
+  const shouldShowSmartReplies =
+    !!conversationId &&
+    !messageText.trim() &&
+    !!latestMessage?.text &&
+    latestMessage.senderId !== currentUserId &&
+    smartReplyHiddenFor !== latestMessageKey;
   const isBlockedChatError = String(error || "").toLowerCase().includes("blocked") || isBlockedByMe;
 
   React.useEffect(() => {
@@ -787,6 +897,34 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
       }
     }); return map;
   }, [messages]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadSmartReplies = async () => {
+      if (!shouldShowSmartReplies) {
+        setSmartReplies([]);
+        return;
+      }
+
+      try {
+        const result = await aiService.smartReply(conversationId);
+        if (isActive) {
+          setSmartReplies(result.replies || []);
+        }
+      } catch (err) {
+        if (isActive) {
+          setSmartReplies([]);
+        }
+      }
+    };
+
+    loadSmartReplies();
+
+    return () => {
+      isActive = false;
+    };
+  }, [conversationId, latestMessageKey, shouldShowSmartReplies]);
 
   // Auto-mark messages as seen when new messages arrive
   // Auto mark as seen handled by handleViewableItemsChanged callback
@@ -1402,6 +1540,139 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
     }
   }, []);
 
+  const openAiPanel = useCallback(
+    async (mode: AiPanelMode) => {
+      if (!conversationId) {
+        Alert.alert("AI", "Chưa có cuộc trò chuyện để phân tích.");
+        return;
+      }
+
+      setAiPanelMode(mode);
+      setShowAiPanel(true);
+      setAiLoading(true);
+
+      try {
+        if (mode === "summary") {
+          const result = await aiService.summarize(conversationId, 80);
+          setAiSummary(result);
+        } else if (mode === "tasks") {
+          const result = await aiService.extractTasks(conversationId, 80);
+          setAiTasks(result);
+        } else if (mode === "search" && aiSearchQuery.trim()) {
+          const result = await aiService.smartSearch(aiSearchQuery.trim(), conversationId);
+          setAiSearchResult(result);
+        }
+      } catch (err: any) {
+        Alert.alert("AI", err?.message || "Không thể gọi AI lúc này.");
+      } finally {
+        setAiLoading(false);
+      }
+    },
+    [aiSearchQuery, conversationId]
+  );
+
+  const handleSmartSearch = useCallback(async () => {
+    if (!aiSearchQuery.trim()) {
+      Alert.alert("Tìm kiếm AI", "Nhập câu hỏi cần tìm trong cuộc trò chuyện.");
+      return;
+    }
+
+    await openAiPanel("search");
+  }, [aiSearchQuery, openAiPanel]);
+
+  const handleToneAdjust = useCallback(
+    async (tone: AiTone) => {
+      const text = messageText.trim();
+      if (!text) {
+        Alert.alert("AI", "Nhập tin nhắn trước khi chỉnh giọng văn.");
+        return;
+      }
+
+      try {
+        setToneLoading(tone);
+        setPreviousDraft(messageText);
+        const result = await aiService.toneAdjust(text, tone);
+        setMessageText(result.adjusted);
+      } catch (err: any) {
+        Alert.alert("AI", err?.message || "Không thể chỉnh giọng văn.");
+      } finally {
+        setToneLoading(null);
+      }
+    },
+    [messageText]
+  );
+
+  const showToneMenu = useCallback(() => {
+    setShowTonePicker(true);
+  }, []);
+
+  const showAiMenu = useCallback(() => {
+    setShowAiQuickMenu(true);
+  }, []);
+
+  const handleTranslateMessage = useCallback(async (message: MessagePayload) => {
+    const messageId = message._id || message.id;
+    if (!messageId || !message.text?.trim()) return;
+
+    try {
+      setTranslatingMessageId(messageId);
+      const result = await aiService.translate(message.text, "Vietnamese");
+      setTranslatedMessages((prev) => ({ ...prev, [messageId]: result }));
+    } catch (err: any) {
+      Alert.alert("Dịch bằng AI", err?.message || "Không thể dịch tin nhắn.");
+    } finally {
+      setTranslatingMessageId(null);
+    }
+  }, []);
+
+  const handleConfirmMute = useCallback(async () => {
+    if (!conversationId) {
+      Alert.alert("Thông báo", "Chưa có hội thoại để tắt thông báo.");
+      return;
+    }
+
+    const { payload, localMuteUntil: nextMuteUntil } = buildMutePayload(selectedMuteOption);
+
+    try {
+      setMuteLoading(true);
+      await ConversationService.muteConversation(conversationId, payload);
+      setLocalMuteUntil(nextMuteUntil);
+      setShowMuteDialog(false);
+      Alert.alert("Thông báo", "Đã tắt thông báo hội thoại này.");
+    } catch (err: any) {
+      Alert.alert("Thông báo", err?.message || "Không thể tắt thông báo lúc này.");
+    } finally {
+      setMuteLoading(false);
+    }
+  }, [conversationId, selectedMuteOption]);
+
+  const handleUnmuteConversation = useCallback(async () => {
+    if (!conversationId) {
+      Alert.alert("Thông báo", "Chưa có hội thoại để bật thông báo.");
+      return;
+    }
+
+    try {
+      setMuteLoading(true);
+      await ConversationService.unmuteConversation(conversationId);
+      setLocalMuteUntil(null);
+      Alert.alert("Thông báo", "Đã bật lại thông báo hội thoại này.");
+    } catch (err: any) {
+      Alert.alert("Thông báo", err?.message || "Không thể bật thông báo lúc này.");
+    } finally {
+      setMuteLoading(false);
+    }
+  }, [conversationId]);
+
+  const handleMuteButtonPress = useCallback(() => {
+    if (isConversationMuted) {
+      handleUnmuteConversation();
+      return;
+    }
+
+    setShowMuteDialog(true);
+  }, [handleUnmuteConversation, isConversationMuted]);
+
   /**
    * Handle message visibility (mark as seen)
    */
@@ -1647,10 +1918,13 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
               actionsRef.current.setReplyingTo(message);
             }
           },
+          onTranslate: message.text?.trim()
+            ? () => handleTranslateMessage(message)
+            : undefined,
         }),
       );
     },
-    [currentUser?.id],
+    [currentUser?.id, handleTranslateMessage],
   );
 
   /**
@@ -1723,6 +1997,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
             }}
             isHighlighted={!!msgId && msgId === highlightedMessageId}
             messageMap={messageMap}
+            translation={msgId ? translatedMessages[msgId] : undefined}
+            isTranslating={!!msgId && translatingMessageId === msgId}
           />
         );
       }
@@ -1744,7 +2020,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
         />
       );
     },
-    [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages, handleOpenProfileCardUser],
+    [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages, translatedMessages, translatingMessageId,handleOpenProfileCardUser],
   );
 
   const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
@@ -1794,6 +2070,19 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
           </Text>
           <Text style={styles.chatHeaderSubtitle}>{typingUsers.size > 0 ? "đang gõ..." : "trực tuyến"}</Text>
         </View>
+        <Pressable style={styles.aiHeaderButton} onPress={showAiMenu}>
+          <Ionicons name="sparkles" size={22} color={colors.textOnAccent} />
+        </Pressable>
+        <Pressable style={styles.muteHeaderButton} onPress={handleMuteButtonPress} disabled={muteLoading}>
+          {muteLoading ? (
+            <ActivityIndicator size="small" color={colors.text} />
+          ) : (
+            <Ionicons
+              name={isConversationMuted ? "notifications-off-outline" : "notifications-outline"}
+              size={22}
+              color={isConversationMuted ? colors.accentStrong : colors.text}
+            />
+          )}
         <Pressable
           style={[styles.headerIconButton, isSelfChat && styles.headerIconButtonDisabled]}
           onPress={handleStartAudioCall}
@@ -1812,6 +2101,51 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
           )}
         </Pressable>
       </View>
+
+      <Modal visible={showMuteDialog} transparent animationType="fade" onRequestClose={() => setShowMuteDialog(false)}>
+        <Pressable style={styles.muteDialogOverlay} onPress={() => setShowMuteDialog(false)}>
+          <Pressable style={styles.muteDialogCard} onPress={(event) => event.stopPropagation()}>
+            <View style={styles.muteDialogHeader}>
+              <Text style={styles.muteDialogTitle}>Xác nhận</Text>
+              <Pressable style={styles.muteDialogCloseButton} onPress={() => setShowMuteDialog(false)}>
+                <Ionicons name="close" size={28} color={colors.text} />
+              </Pressable>
+            </View>
+            <Text style={styles.muteDialogMessage}>Bạn có chắc muốn tắt thông báo hội thoại này:</Text>
+            <View style={styles.muteOptionList}>
+              {MUTE_OPTIONS.map((option) => {
+                const selected = selectedMuteOption === option.key;
+                return (
+                  <Pressable
+                    key={option.key}
+                    style={styles.muteOptionRow}
+                    onPress={() => setSelectedMuteOption(option.key)}
+                  >
+                    <Ionicons
+                      name={selected ? "radio-button-on-outline" : "radio-button-off-outline"}
+                      size={22}
+                      color={selected ? colors.accentStrong : colors.textMuted}
+                    />
+                    <Text style={styles.muteOptionText}>{option.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.muteDialogActions}>
+              <Pressable style={styles.muteCancelButton} onPress={() => setShowMuteDialog(false)} disabled={muteLoading}>
+                <Text style={styles.muteCancelText}>Hủy</Text>
+              </Pressable>
+              <Pressable style={styles.muteConfirmButton} onPress={handleConfirmMute} disabled={muteLoading}>
+                {muteLoading ? (
+                  <ActivityIndicator size="small" color={colors.textOnAccent} />
+                ) : (
+                  <Text style={styles.muteConfirmText}>Đồng ý</Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Loading initial messages - overlay only if truly loading */}
       {isLoading && messages.length === 0 && (
@@ -1949,6 +2283,31 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
           }}
         />
       )}
+      {shouldShowSmartReplies && smartReplies.length > 0 && (
+        <View style={styles.aiSmartReplyBar}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.aiSmartReplyContent}>
+            {smartReplies.map((reply) => (
+              <Pressable key={reply} style={styles.aiSmartReplyChip} onPress={() => setMessageText(reply)}>
+                <Text style={styles.aiSmartReplyText}>{reply}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <Pressable style={styles.aiSmartReplyClose} onPress={() => setSmartReplyHiddenFor(latestMessageKey)}>
+            <Ionicons name="close" size={16} color={colors.textMuted} />
+          </Pressable>
+        </View>
+      )}
+      {previousDraft !== null && (
+        <View style={styles.aiUndoBar}>
+          <Text style={styles.aiUndoText}>AI đã chỉnh sửa bản nháp</Text>
+          <Pressable
+            onPress={() => {
+              setMessageText(previousDraft);
+              setPreviousDraft(null);
+            }}
+          >
+            <Text style={styles.aiUndoAction}>Hoàn tác</Text>
+          </Pressable>
       {isBlockedChatError && (
         <View style={styles.blockBanner}>
           <Ionicons name="ban-outline" size={18} color={colors.danger} />
@@ -1978,6 +2337,13 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
           />
           <Pressable style={styles.composerEmojiButton}>
             <Ionicons name="happy-outline" size={22} color={colors.textMuted} />
+          </Pressable>
+          <Pressable style={styles.composerEmojiButton} onPress={showToneMenu} disabled={!!toneLoading || !messageText.trim()}>
+            {toneLoading ? (
+              <ActivityIndicator size="small" color={colors.accentStrong} />
+            ) : (
+              <Ionicons name="sparkles" size={20} color={messageText.trim() ? colors.accentStrong : colors.textMuted} />
+            )}
           </Pressable>
         </View>
         <Pressable
@@ -2009,6 +2375,179 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, on
           )}
         </Pressable>
       </View>
+
+      <Modal visible={showAiQuickMenu} animationType="fade" transparent onRequestClose={() => setShowAiQuickMenu(false)}>
+        <Pressable style={styles.aiMenuOverlay} onPress={() => setShowAiQuickMenu(false)}>
+          <Pressable style={styles.aiMenuCard} onPress={(event) => event.stopPropagation()}>
+            <View style={styles.aiMenuHeader}>
+              <View style={styles.aiPanelTitleRow}>
+                <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
+                <Text style={styles.aiPanelTitle}>Trợ lý AI</Text>
+              </View>
+              <Pressable onPress={() => setShowAiQuickMenu(false)}>
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </Pressable>
+            </View>
+            <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); openAiPanel("summary"); }}>
+              <Ionicons name="document-text-outline" size={20} color={colors.accentStrong} />
+              <Text style={styles.aiMenuItemText}>Tóm tắt cuộc trò chuyện</Text>
+            </Pressable>
+            <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); setAiPanelMode("search"); setShowAiPanel(true); }}>
+              <Ionicons name="search-outline" size={20} color={colors.accentStrong} />
+              <Text style={styles.aiMenuItemText}>Tìm kiếm bằng AI</Text>
+            </Pressable>
+            <Pressable style={styles.aiMenuItem} onPress={() => { setShowAiQuickMenu(false); openAiPanel("tasks"); }}>
+              <Ionicons name="checkbox-outline" size={20} color={colors.accentStrong} />
+              <Text style={styles.aiMenuItemText}>Trích xuất công việc</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={showTonePicker} animationType="fade" transparent onRequestClose={() => setShowTonePicker(false)}>
+        <Pressable style={styles.aiMenuOverlay} onPress={() => setShowTonePicker(false)}>
+          <Pressable style={styles.aiMenuCard} onPress={(event) => event.stopPropagation()}>
+            <View style={styles.aiMenuHeader}>
+              <View style={styles.aiPanelTitleRow}>
+                <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
+                <Text style={styles.aiPanelTitle}>Chọn giọng văn</Text>
+              </View>
+              <Pressable onPress={() => setShowTonePicker(false)}>
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </Pressable>
+            </View>
+            {([
+              ["formal", "Lịch sự"],
+              ["casual", "Thân thiện"],
+              ["funny", "Hài hước"],
+              ["professional", "Chuyên nghiệp"],
+            ] as Array<[AiTone, string]>).map(([tone, label]) => (
+              <Pressable key={tone} style={styles.aiMenuItem} onPress={() => { setShowTonePicker(false); handleToneAdjust(tone); }}>
+                <Ionicons name="create-outline" size={20} color={colors.accentStrong} />
+                <Text style={styles.aiMenuItemText}>{label}</Text>
+              </Pressable>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={showAiPanel} animationType="slide" transparent onRequestClose={() => setShowAiPanel(false)}>
+        <View style={styles.aiPanelOverlay}>
+          <View style={styles.aiPanel}>
+            <View style={styles.aiPanelHeader}>
+              <View style={styles.aiPanelTitleRow}>
+                <Ionicons name="sparkles" size={20} color={colors.accentStrong} />
+                <Text style={styles.aiPanelTitle}>Trợ lý AI</Text>
+              </View>
+              <Pressable onPress={() => setShowAiPanel(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </Pressable>
+            </View>
+
+            <View style={styles.aiPanelTabs}>
+              {(["summary", "search", "tasks"] as AiPanelMode[]).map((mode) => (
+                <Pressable
+                  key={mode}
+                  style={[styles.aiPanelTab, aiPanelMode === mode && styles.aiPanelTabActive]}
+                  onPress={() => {
+                    setAiPanelMode(mode);
+                    if (mode !== "search") {
+                      openAiPanel(mode);
+                    }
+                  }}
+                >
+                  <Text style={[styles.aiPanelTabText, aiPanelMode === mode && styles.aiPanelTabTextActive]}>
+                    {mode === "summary" ? "Tóm tắt" : mode === "search" ? "Tìm AI" : "Công việc"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {aiPanelMode === "search" && (
+              <View style={styles.aiSearchBox}>
+                <TextInput
+                  value={aiSearchQuery}
+                  onChangeText={setAiSearchQuery}
+                  placeholder="Hỏi AI trong cuộc trò chuyện..."
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.aiSearchInput}
+                />
+                <Pressable style={styles.aiSearchButton} onPress={handleSmartSearch} disabled={aiLoading}>
+                  {aiLoading ? (
+                    <ActivityIndicator size="small" color={colors.textOnAccent} />
+                  ) : (
+                    <Ionicons name="search" size={18} color={colors.textOnAccent} />
+                  )}
+                </Pressable>
+              </View>
+            )}
+
+            {aiLoading && aiPanelMode !== "search" ? (
+              <View style={styles.aiPanelLoading}>
+                <ActivityIndicator color={colors.accentStrong} />
+                <Text style={styles.aiPanelMuted}>AI đang xử lý...</Text>
+              </View>
+            ) : (
+              <ScrollView contentContainerStyle={styles.aiPanelBody}>
+                {aiPanelMode === "summary" && (
+                  <>
+                    {(aiSummary?.summary || []).length > 0 ? (
+                      aiSummary?.summary.map((item, index) => (
+                        <View key={`${item}-${index}`} style={styles.aiBulletRow}>
+                          <Text style={styles.aiBullet}>-</Text>
+                          <Text style={styles.aiPanelText}>{item}</Text>
+                        </View>
+                      ))
+                    ) : (
+                      <Text style={styles.aiPanelMuted}>Chưa có tóm tắt.</Text>
+                    )}
+                  </>
+                )}
+
+                {aiPanelMode === "search" && (
+                  <>
+                    {aiLoading ? (
+                      <View style={styles.aiPanelLoading}>
+                        <ActivityIndicator color={colors.accentStrong} />
+                        <Text style={styles.aiPanelMuted}>Đang tìm...</Text>
+                      </View>
+                    ) : aiSearchResult ? (
+                      <>
+                        <Text style={styles.aiPanelText}>{aiSearchResult.answer}</Text>
+                        <Text style={styles.aiSectionLabel}>Nguồn</Text>
+                        {aiSearchResult.references?.map((ref) => (
+                          <View key={ref.messageId} style={styles.aiReferenceCard}>
+                            <Text style={styles.aiReferenceText}>{ref.text}</Text>
+                          </View>
+                        ))}
+                      </>
+                    ) : (
+                      <Text style={styles.aiPanelMuted}>Nhập câu hỏi để tìm bằng AI.</Text>
+                    )}
+                  </>
+                )}
+
+                {aiPanelMode === "tasks" && (
+                  <>
+                    {(aiTasks?.tasks || []).length > 0 ? (
+                      aiTasks?.tasks.map((task, index) => (
+                        <View key={`${task.description}-${index}`} style={styles.aiTaskCard}>
+                          <Text style={styles.aiPanelText}>{task.description}</Text>
+                          <Text style={styles.aiPanelMuted}>
+                            {[task.assignee, task.deadline, task.status].filter(Boolean).join(" - ")}
+                          </Text>
+                        </View>
+                      ))
+                    ) : (
+                      <Text style={styles.aiPanelMuted}>Chưa tìm thấy công việc nào.</Text>
+                    )}
+                  </>
+                )}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Voice Recorder Overlay */}
       {showVoiceRecorder && (
@@ -2472,6 +3011,24 @@ const styles = StyleSheet.create({
   headerAvatarWrap: {
     width: 52,
   },
+  aiHeaderButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.accentStrong,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  muteHeaderButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.surfaceTransparent,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   avatarImage: {
     borderRadius: 26,
     backgroundColor: colors.border,
@@ -2525,6 +3082,24 @@ const styles = StyleSheet.create({
   },
   incomingText: {
     color: colors.text,
+  },
+  aiTranslationBox: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.overlayWhite18,
+    gap: 4,
+  },
+  aiTranslationLabel: {
+    color: colors.overlayWhite75,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  aiTranslationText: {
+    color: colors.textOnAccent,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "500",
   },
   bubbleMetaRow: {
     flexDirection: "row",
@@ -2795,6 +3370,60 @@ const styles = StyleSheet.create({
   },
   composerEmojiButton: {
     paddingHorizontal: 8,
+  },
+  aiSmartReplyBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surfaceTransparent,
+  },
+  aiSmartReplyContent: {
+    gap: 8,
+    paddingRight: 8,
+  },
+  aiSmartReplyChip: {
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(63,140,255,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(63,140,255,0.32)",
+  },
+  aiSmartReplyText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  aiSmartReplyClose: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+  },
+  aiUndoBar: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  aiUndoText: {
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  aiUndoAction: {
+    color: colors.accentStrong,
+    fontWeight: "700",
+    fontSize: 12,
   },
   composerActionButton: {
     width: 44,
@@ -3154,6 +3783,278 @@ const styles = StyleSheet.create({
   },
   editDialogButtonPressed: {
     opacity: 0.7,
+  },
+  aiPanelOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: colors.overlayDark50,
+  },
+  aiMenuOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+    backgroundColor: colors.overlayDark50,
+  },
+  aiMenuCard: {
+    width: "100%",
+    maxWidth: 380,
+    gap: 8,
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  aiMenuHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  aiMenuItem: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  aiMenuItemText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  muteDialogOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+    backgroundColor: colors.overlayDark50,
+  },
+  muteDialogCard: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  muteDialogHeader: {
+    minHeight: 56,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  muteDialogTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  muteDialogCloseButton: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  muteDialogMessage: {
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 10,
+    color: colors.text,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  muteOptionList: {
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  muteOptionRow: {
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  muteOptionText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  muteDialogActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 14,
+    padding: 16,
+    paddingTop: 24,
+  },
+  muteCancelButton: {
+    minWidth: 64,
+    minHeight: 40,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 4,
+    backgroundColor: colors.surface,
+  },
+  muteCancelText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  muteConfirmButton: {
+    minWidth: 86,
+    minHeight: 40,
+    paddingHorizontal: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 4,
+    backgroundColor: colors.accentStrong,
+  },
+  muteConfirmText: {
+    color: colors.textOnAccent,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  aiPanel: {
+    maxHeight: "78%",
+    backgroundColor: colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 24,
+  },
+  aiPanelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  aiPanelTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  aiPanelTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  aiPanelTabs: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  aiPanelTab: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  aiPanelTabActive: {
+    backgroundColor: "rgba(63,140,255,0.2)",
+    borderColor: colors.accentStrong,
+  },
+  aiPanelTabText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  aiPanelTabTextActive: {
+    color: colors.text,
+  },
+  aiSearchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 12,
+  },
+  aiSearchInput: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    color: colors.text,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  aiSearchButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.accentStrong,
+  },
+  aiPanelBody: {
+    gap: 10,
+    paddingBottom: 12,
+  },
+  aiPanelLoading: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 32,
+    gap: 10,
+  },
+  aiPanelText: {
+    color: colors.text,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  aiPanelMuted: {
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  aiBulletRow: {
+    flexDirection: "row",
+    gap: 8,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+  },
+  aiBullet: {
+    color: colors.accentStrong,
+    fontWeight: "800",
+  },
+  aiSectionLabel: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 8,
+  },
+  aiReferenceCard: {
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  aiReferenceText: {
+    color: colors.textSoft,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  aiTaskCard: {
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 6,
   },
 
   // Image Viewer Modal Styles
