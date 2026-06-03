@@ -49,10 +49,7 @@ export async function saveMessagesToCache(
 
         // Use AsyncStorage directly for guaranteed persistence
         await AsyncStorage.setItem(dataKey, data);
-        await AsyncStorage.setItem(tsKey, now.toString());
-
-        console.log('[cacheUtils] ✓ Saved', messages.length, 'messages to AsyncStorage for', conversationId);
-        return true;
+        await AsyncStorage.setItem(tsKey, now.toString());        return true;
     } catch (error) {
         console.error('[cacheUtils] Failed to save messages to cache:', error);
         return false;
@@ -76,16 +73,11 @@ export async function loadMessagesFromCache(
         // Use AsyncStorage directly
         const cached = await AsyncStorage.getItem(dataKey);
 
-        if (!cached) {
-            console.log('[cacheUtils] ℹ No cached messages found for', conversationId);
-            return [];
+        if (!cached) {            return [];
         }
 
         const parsed = JSON.parse(cached);
-        const messages = parsed.messages as MessagePayload[];
-
-        console.log('[cacheUtils] ✓ Loaded', messages.length, 'cached messages for', conversationId);
-        return messages;
+        const messages = parsed.messages as MessagePayload[];        return messages;
     } catch (error) {
         console.error('[cacheUtils] Failed to load messages from cache:', error);
         return [];
@@ -101,10 +93,7 @@ export async function clearMessagesCache(conversationId: string): Promise<boolea
         const tsKey = CACHE_TIMESTAMP_KEY(conversationId);
 
         await AsyncStorage.removeItem(dataKey);
-        await AsyncStorage.removeItem(tsKey);
-
-        console.log('[cacheUtils] ✓ Cleared cache for', conversationId);
-        return true;
+        await AsyncStorage.removeItem(tsKey);        return true;
     } catch (error) {
         console.error('[cacheUtils] Failed to clear cache:', error);
         return false;
@@ -182,9 +171,6 @@ export function mergeMessages(
     }
 
     const merged = Array.from(mergedById.values());
-
-    console.log('[cacheUtils] Merged messages: API=', apiMessages.length, 'Cached=', cachedMessages.length, 'Total=', merged.length);
-
     return merged;
 
 }

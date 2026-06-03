@@ -12,6 +12,8 @@ export interface CallSocketPayload {
     callerId?: string;
     userId?: string;
     type?: CallType;
+    conversationType?: "PRIVATE" | "GROUP";
+    isGroup?: boolean;
     status?: string;
     roomName?: string;
     livekitProvider?: "self-hosted" | "cloud";

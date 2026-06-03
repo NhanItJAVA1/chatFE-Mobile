@@ -182,6 +182,10 @@ export const GroupSettingsScreen: React.FC<{
         allowSendLink: groupState.group?.settings?.allowSendLink ?? true,
         requireApproval: groupState.group?.settings?.requireApproval ?? false,
         allowMemberInvite: groupState.group?.settings?.allowMemberInvite ?? true,
+        utilityPermissions: {
+            ...(groupState.group?.settings as any)?.utilityPermissions,
+            poll: (groupState.group?.settings as any)?.utilityPermissions?.poll || "all",
+        },
     });
     const [processingGroupUpdate, setProcessingGroupUpdate] = useState(false);
     const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -193,6 +197,13 @@ export const GroupSettingsScreen: React.FC<{
     useEffect(() => {
         loadGroupData();
     }, [groupId]);
+
+    useEffect(() => {
+        groupActions.setupGroupListeners();
+        return () => {
+            groupActions.cleanupGroupListeners();
+        };
+    }, [groupActions]);
 
     useEffect(() => {
         if (groupState.group) {
@@ -245,6 +256,10 @@ export const GroupSettingsScreen: React.FC<{
                 allowSendLink: groupState.group.settings?.allowSendLink ?? true,
                 requireApproval: groupState.group.settings?.requireApproval ?? false,
                 allowMemberInvite: groupState.group.settings?.allowMemberInvite ?? true,
+                utilityPermissions: {
+                    ...(groupState.group.settings as any)?.utilityPermissions,
+                    poll: (groupState.group.settings as any)?.utilityPermissions?.poll || "all",
+                },
             });
         }
     }, [groupState.group]);
@@ -527,9 +542,6 @@ export const GroupSettingsScreen: React.FC<{
             const fileSize = pickedAsset.fileSize || 5242880; // 5MB default
             const mimeType = pickedAsset.mimeType || "image/jpeg";
             const fileName = `group_${groupId}_${Date.now()}.jpg`;
-
-            console.log("[GroupSettings] Uploading avatar:", { fileName, fileSize, mimeType });
-
             // Step 1: Request presigned URL
             const urlResponse = await requestPresignedUrl({
                 fileType: "IMAGE",
@@ -538,9 +550,6 @@ export const GroupSettingsScreen: React.FC<{
                 originalName: fileName,
                 expiresIn: 3600,
             });
-
-            console.log("[GroupSettings] Got presigned URL, uploading file...");
-
             // Step 2: Upload to S3
             const response = await fetch(imageUri);
             const blob = await response.blob();
@@ -557,17 +566,11 @@ export const GroupSettingsScreen: React.FC<{
             if (!uploadResponse.ok) {
                 throw new Error(`Upload failed: ${uploadResponse.statusText}`);
             }
-
-            console.log("[GroupSettings] File uploaded, confirming...");
-
             // Step 3: Confirm upload
             await confirmUpload({
                 fileId: urlResponse.fileId,
                 uploadedUrl: urlResponse.presignedUrl,
             });
-
-            console.log("[GroupSettings] Upload confirmed, updating group...");
-
             // Step 4: Update group with new avatar URL
             const avatarUrl = `${urlResponse.presignedUrl.split("?")[0]}`;
             await groupActions.updateGroup(groupId, { avatarUrl });
@@ -982,7 +985,13 @@ export const GroupSettingsScreen: React.FC<{
                                 </Pressable>
                             </View>
 
-                            <ScrollView style={styles.settingsForm} keyboardShouldPersistTaps="handled">
+                            <ScrollView
+                                style={styles.settingsForm}
+                                contentContainerStyle={styles.settingsFormContent}
+                                keyboardShouldPersistTaps="handled"
+                                nestedScrollEnabled
+                                showsVerticalScrollIndicator
+                            >
                                 {/* Allow Send Link */}
                                 <View style={styles.settingRow}>
                                     <View style={styles.settingLabel}>
@@ -1053,6 +1062,64 @@ export const GroupSettingsScreen: React.FC<{
                                             ]}
                                         />
                                     </Pressable>
+                                </View>
+
+                                {/* Poll Creation Permission */}
+                                <View style={styles.settingColumn}>
+                                    <View style={styles.settingLabel}>
+                                        <Text style={styles.settingLabelText}>Ai được tạo bình chọn</Text>
+                                        <Text style={styles.settingDescription}>Chọn quyền sử dụng tiện ích poll trong nhóm</Text>
+                                    </View>
+                                    <View style={styles.segmentedControl}>
+                                        <Pressable
+                                            style={[
+                                                styles.segmentButton,
+                                                settingForm.utilityPermissions.poll === "all" && styles.segmentButtonActive,
+                                            ]}
+                                            onPress={() =>
+                                                setSettingForm((prev) => ({
+                                                    ...prev,
+                                                    utilityPermissions: {
+                                                        ...prev.utilityPermissions,
+                                                        poll: "all",
+                                                    },
+                                                }))
+                                            }
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.segmentButtonText,
+                                                    settingForm.utilityPermissions.poll === "all" && styles.segmentButtonTextActive,
+                                                ]}
+                                            >
+                                                Mọi thành viên
+                                            </Text>
+                                        </Pressable>
+                                        <Pressable
+                                            style={[
+                                                styles.segmentButton,
+                                                settingForm.utilityPermissions.poll === "admins" && styles.segmentButtonActive,
+                                            ]}
+                                            onPress={() =>
+                                                setSettingForm((prev) => ({
+                                                    ...prev,
+                                                    utilityPermissions: {
+                                                        ...prev.utilityPermissions,
+                                                        poll: "admins",
+                                                    },
+                                                }))
+                                            }
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.segmentButtonText,
+                                                    settingForm.utilityPermissions.poll === "admins" && styles.segmentButtonTextActive,
+                                                ]}
+                                            >
+                                                Chủ nhóm/phó nhóm
+                                            </Text>
+                                        </Pressable>
+                                    </View>
                                 </View>
                             </ScrollView>
 
@@ -1526,7 +1593,7 @@ const styles = StyleSheet.create({
         zIndex: 1000,
     },
     editModalOverlay: {
-        flex: 1,
+        ...StyleSheet.absoluteFillObject,
         backgroundColor: "rgba(0, 0, 0, 0.5)",
     },
     editModalContent: {
@@ -1535,7 +1602,8 @@ const styles = StyleSheet.create({
         borderTopRightRadius: 16,
         paddingHorizontal: 16,
         paddingVertical: 20,
-        maxHeight: "80%",
+        maxHeight: "72%",
+        minHeight: 360,
     },
     editModalHeader: {
         flexDirection: "row",
@@ -1612,13 +1680,23 @@ const styles = StyleSheet.create({
         color: colors.text,
     },
     settingsForm: {
-        maxHeight: 400,
+        flexGrow: 0,
+        maxHeight: 360,
         marginBottom: 16,
+    },
+    settingsFormContent: {
+        paddingBottom: 18,
     },
     settingRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    settingColumn: {
+        gap: 12,
         paddingVertical: 14,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
@@ -1653,6 +1731,34 @@ const styles = StyleSheet.create({
     toggleSwitchActive: {
         backgroundColor: colors.accent,
         alignSelf: "flex-end",
+    },
+    segmentedControl: {
+        flexDirection: "row",
+        gap: 8,
+    },
+    segmentButton: {
+        flex: 1,
+        minHeight: 40,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 10,
+        backgroundColor: colors.background,
+    },
+    segmentButtonActive: {
+        borderColor: colors.accent,
+        backgroundColor: colors.accent,
+    },
+    segmentButtonText: {
+        fontSize: 13,
+        fontWeight: "700",
+        color: colors.text,
+        textAlign: "center",
+    },
+    segmentButtonTextActive: {
+        color: colors.textOnAccent,
     },
 
     // Edit Info Button

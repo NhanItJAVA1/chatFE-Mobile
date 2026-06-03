@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from "../runtime/config";
 import { authStorage } from "../runtime/storage";
+import { DeviceEventEmitter } from "react-native";
 import type { ApiCallOptions } from "@/types";
 
 const buildUrl = (endpoint: string): string => {
@@ -14,11 +15,6 @@ const getAuthToken = async (): Promise<string | null> => {
     if (token) {
         token = String(token).trim();
     }
-    // Commented out debug log to reduce console spam
-    // console.log(
-    //     "[API] Token retrieved:",
-    //     token ? "✅ exists (" + token.substring(0, 20) + "...)" : "❌ missing"
-    // );
     return token;
 };
 
@@ -34,15 +30,12 @@ const setTokens = async (accessToken: string, refreshToken?: string): Promise<vo
     await authStorage.setItem("token", accessToken);
     if (refreshToken) {
         await authStorage.setItem("refreshToken", refreshToken);
-    }
-    console.log("[API] Tokens updated and saved");
-};
+    }};
 
 const clearTokens = async (): Promise<void> => {
     await authStorage.removeItem("token");
     await authStorage.removeItem("refreshToken");
-    await authStorage.removeItem("user");
-    console.log("[API] Tokens cleared (logout)");
+    await authStorage.removeItem("user");    DeviceEventEmitter.emit("forceLogout");
 };
 
 const refreshAccessToken = async (): Promise<boolean> => {
@@ -54,9 +47,6 @@ const refreshAccessToken = async (): Promise<boolean> => {
             await clearTokens();
             return false;
         }
-
-        console.log("[API] Attempting to refresh access token...");
-
         // Call refresh endpoint WITHOUT auth header to avoid infinite loop
         const baseUrl = getApiBaseUrl();
         const response = await fetch(buildUrl("/auth/refresh"), {
@@ -73,9 +63,7 @@ const refreshAccessToken = async (): Promise<boolean> => {
             const newRefreshToken = result.data?.refreshToken || result.refreshToken;
 
             if (newAccessToken) {
-                await setTokens(newAccessToken, newRefreshToken);
-                console.log("[API] ✅ Access token refreshed successfully");
-                return true;
+                await setTokens(newAccessToken, newRefreshToken);                return true;
             } else {
                 console.error("[API] No token in refresh response:", result);
                 return false;
@@ -98,34 +86,32 @@ export const apiCall = async (
     options: ApiCallOptions = {}
 ): Promise<any> => {
     const url = buildUrl(endpoint);
-    let token = await getAuthToken();
+    const { suppressErrorLog, skipAuth, skipRefresh, headers: optionHeaders, ...fetchOptions } = options as ApiCallOptions & {
+        suppressErrorLog?: boolean;
+        skipAuth?: boolean;
+        skipRefresh?: boolean;
+        headers?: Record<string, string>;
+    };
+    let token = skipAuth ? null : await getAuthToken();
 
     try {
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            ...(options.headers || {}),
+            ...(optionHeaders || {}),
         };
-
-        // Commented out debug log to reduce console spam
-        // console.log(`[API] ${options.method || "GET"} ${endpoint}`, {
-        //     hasToken: !!token,
-        //     authHeader: headers.Authorization ? "set" : "missing",
-        // });
 
         let response = await fetch(url, {
             headers,
-            ...options,
+            ...fetchOptions,
         });
 
         // Handle 401 - try to refresh token and retry
-        if (response.status === 401) {
+        if (response.status === 401 && !skipRefresh) {
             console.warn(`[API] Got 401 on ${options.method || "GET"} ${endpoint}`);
 
             // If already refreshing, queue this request
-            if (isRefreshing) {
-                console.log("[API] Token refresh in progress, queuing request...");
-                return new Promise((resolve, reject) => {
+            if (isRefreshing) {                return new Promise((resolve, reject) => {
                     refreshQueue.push(async () => {
                         try {
                             const result = await apiCall(endpoint, options);
@@ -139,30 +125,23 @@ export const apiCall = async (
 
             // Start refresh process
             isRefreshing = true;
-            console.log("[API] Starting token refresh...");
-
             const refreshed = await refreshAccessToken();
 
             // Process queued requests
             isRefreshing = false;
             const queue = refreshQueue;
-            refreshQueue = [];
-            console.log(`[API] Processing ${queue.length} queued requests`);
-            queue.forEach((callback) => callback());
+            refreshQueue = [];            queue.forEach((callback) => callback());
 
-            if (refreshed) {
-                // Retry with new token
-                console.log("[API] Retrying request with new token...");
-                token = await getAuthToken();
+            if (refreshed) {                token = skipAuth ? null : await getAuthToken();
                 const newHeaders: Record<string, string> = {
                     "Content-Type": "application/json",
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                    ...(options.headers || {}),
+                    ...(optionHeaders || {}),
                 };
 
                 response = await fetch(url, {
                     headers: newHeaders,
-                    ...options,
+                    ...fetchOptions,
                 });
             } else {
                 console.error("[API] Token refresh failed, user needs to login again");
@@ -172,11 +151,12 @@ export const apiCall = async (
 
         if (!response.ok) {
             let errorDetails = "";
+            let parsedError: any = null;
             try {
                 const bodyText = await response.text();
                 try {
-                    const errorBody = JSON.parse(bodyText);
-                    errorDetails = JSON.stringify(errorBody, null, 2);
+                    parsedError = JSON.parse(bodyText);
+                    errorDetails = JSON.stringify(parsedError, null, 2);
                 } catch {
                     errorDetails = bodyText;
                 }
@@ -184,9 +164,16 @@ export const apiCall = async (
                 errorDetails = "Unable to read response body";
             }
             const errorMsg = `API error: ${response.status} ${response.statusText}`;
-            console.error(`[API] ${errorMsg} on ${options.method || "GET"} ${endpoint}`);
-            console.error(`[API] Response body:`, errorDetails);
-            throw new Error(errorMsg);
+            if (!suppressErrorLog) {
+                console.error(`[API] ${errorMsg} on ${options.method || "GET"} ${endpoint}`);
+                console.error(`[API] Response body:`, errorDetails);
+            }
+            const apiError: any = new Error(parsedError?.msg || parsedError?.message || errorMsg);
+            apiError.status = response.status;
+            apiError.code = parsedError?.code;
+            apiError.details = parsedError?.details;
+            apiError.responseBody = parsedError;
+            throw apiError;
         }
 
         if (response.status === 204) {
@@ -195,7 +182,9 @@ export const apiCall = async (
 
         return await response.json();
     } catch (error: any) {
-        console.error(`[API] Call failed for ${options.method || "GET"} ${endpoint}:`, error.message);
+        if (!suppressErrorLog) {
+            console.error(`[API] Call failed for ${options.method || "GET"} ${endpoint}:`, error.message);
+        }
         throw error;
     }
 };
@@ -251,4 +240,5 @@ export const tokenManager = {
     clearTokens,
     getAccessToken: getAuthToken,
     getRefreshToken,
+    refreshAccessToken,
 };

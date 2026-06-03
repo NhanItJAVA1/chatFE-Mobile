@@ -22,6 +22,7 @@ import { Audio } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useChatMessage } from "../../../shared/hooks/useChat";
+import { useDraft } from "../../../shared/hooks/useDraft";
 import { useAuth } from "../../../shared/hooks";
 import { useCall } from "../../../shared/context";
 import {
@@ -33,14 +34,19 @@ import {
   HighlightableMessage,
   AnimatedEmojiMessage,
   JUMBO_EMOJI_ASSETS,
+  ProfileCardMessage,
+  ContactPickerSheet,
+  ShareProfileCardSheet,
 } from "../components";
 import { colors, assets } from "../theme";
-import { buildMessageActionSheetOptions } from "../../../shared/utils";
+import { buildMessageActionSheetOptions, type MessageActionButton } from "../../../shared/utils";
 import MediaMessage from "../components/MediaMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import chatMediaService from "../../../shared/services/chatMediaService";
-import { unfriend } from "../../../shared/services/friendService";
+import { checkFriendshipStatus, sendFriendRequest, unfriend } from "../../../shared/services/friendService";
 import { FriendSocketService, type FriendshipNotification } from "../../../shared/services/friendSocket";
+import { BlockService } from "../../../shared/services/blockService";
+import profileCardService from "../../../shared/services/profileCardService";
 import type { ChatScreenProps, MessageMedia } from "@/types";
 import type { MessagePayload } from "../../../shared/services/socketService";
 
@@ -50,11 +56,16 @@ import type { MessagePayload } from "../../../shared/services/socketService";
 const MessageBubble: React.FC<{
   message: MessagePayload;
   isOwn: boolean;
+  currentUserId?: string;
   onLongPress?: () => void;
   onPressQuoted?: (quotedMessageId: string) => void;
+  onToggleReaction?: (emoji: string, selected: boolean) => void;
+  onClearMyReactions?: () => void;
+  onProfileCardPress?: (user: any) => void;
   isHighlighted?: boolean;
   messageMap?: Record<string, MessagePayload | undefined>;
-}> = ({ message, isOwn, onLongPress, onPressQuoted, isHighlighted, messageMap = {} }) => {
+}> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, onToggleReaction, onClearMyReactions, onProfileCardPress, isHighlighted, messageMap = {} }) => {
+  const [showReactionPicker, setShowReactionPicker] = React.useState(false);
   const formatTime = (date: string) => {
     const d = new Date(date);
     return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
@@ -62,6 +73,10 @@ const MessageBubble: React.FC<{
 
   const getStatusIcon = (status: string) => {
     switch (status) {
+      case "sending":
+        return "Đang gửi";
+      case "failed":
+        return "Lỗi";
       case "sent":
         return "✓";
       case "delivered":
@@ -79,14 +94,74 @@ const MessageBubble: React.FC<{
 
   // Check if message has media
   const hasMedia = message.media && message.media.length > 0;
+  const isProfileCard = String(message.type || message.messageType || "").toLowerCase() === "profile_card";
+  const isForwarded = Boolean(
+    (message as any).isForwarded ||
+    (message as any).forwarded ||
+    (message as any).forwardedFrom ||
+    (message as any).forwardedFromMessageId ||
+    (message as any).originalMessageId ||
+    (message as any).sourceMessageId
+  );
+  const reactionGroups = Object.values(
+    (message.reactions || []).reduce<Record<string, { emoji: string; count: number; selected: boolean }>>((acc, reaction: any) => {
+      const emoji = reaction?.emoji;
+      if (!emoji) return acc;
+      if (!acc[emoji]) {
+        acc[emoji] = { emoji, count: 0, selected: false };
+      }
+      acc[emoji].count += 1;
+      if (currentUserId && reaction.userId === currentUserId) {
+        acc[emoji].selected = true;
+      }
+      return acc;
+    }, {})
+  );
+  const reactionSummary = {
+    emojis: reactionGroups.map((reaction) => reaction.emoji),
+    total: reactionGroups.reduce((sum, reaction) => sum + reaction.count, 0),
+    selected: reactionGroups.some((reaction) => reaction.selected),
+  };
+  const myLastReaction = [...(message.reactions || [])]
+    .reverse()
+    .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
+  const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
+  const hasDefaultReaction = !!myLastReaction;
+  const renderReactionPicker = () => (
+    <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+      {QUICK_REACTIONS.map((emoji) => {
+        const selected = (message.reactions || []).some(
+          (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId,
+        );
+        return (
+          <Pressable
+            key={emoji}
+            style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+            onPress={() => {
+              setShowReactionPicker(false);
+              onToggleReaction?.(emoji, false);
+            }}
+          >
+            <Text style={styles.quickReactionText}>{emoji}</Text>
+          </Pressable>
+        );
+      })}
+      {hasDefaultReaction && (
+        <Pressable
+          style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
+          onPress={() => {
+            setShowReactionPicker(false);
+            onClearMyReactions?.();
+          }}
+        >
+          <Ionicons name="close" size={17} color={colors.danger} />
+        </Pressable>
+      )}
+    </View>
+  );
 
   React.useEffect(() => {
-    if (hasMedia) {
-      console.log("[MessageBubble] Rendering message with media:", {
-        mediaCount: message.media.length,
-        mediaTypes: message.media.map((m: any) => m.mediaType),
-      });
-    }
+    if (hasMedia) { }
   }, [hasMedia, message.media]);
 
   return (
@@ -100,9 +175,26 @@ const MessageBubble: React.FC<{
         isHighlighted && styles.messageHighlighted,
       ]}
     >
+      {isProfileCard && (
+        <ProfileCardMessage
+          user={message.profileCard}
+          userId={message.profileCardUserId}
+          isOwn={isOwn}
+          onMessagePress={onProfileCardPress}
+          onViewProfilePress={onProfileCardPress}
+        />
+      )}
+
       {/* Media display */}
-      {hasMedia && (
-        <View style={styles.mediaContainer}>
+      {!isProfileCard && hasMedia && (
+        <View style={[styles.mediaContainer, !message.text && styles.mediaReactionWrap]}>
+          {!message.text && isForwarded && (
+            <View style={styles.forwardedLabelRow}>
+              <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
+              <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
+            </View>
+          )}
+          {!message.text && showReactionPicker && renderReactionPicker()}
           {message.media.map((m: any, idx: number) => (
             <MediaMessage
               key={idx}
@@ -111,22 +203,51 @@ const MessageBubble: React.FC<{
               layoutMode={message.text ? "compact" : "standalone"}
             />
           ))}
+          {!message.text && reactionGroups.length > 0 && (
+            <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+              <Pressable
+                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+              >
+                <Text style={styles.reactionText}>
+                  {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+          {!message.text && (
+            <Pressable
+              style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+              hitSlop={8}
+              onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+              onLongPress={() => setShowReactionPicker((value) => !value)}
+              delayLongPress={220}
+            >
+              {hasDefaultReaction ? (
+                <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                  {defaultReactionEmoji}
+                </Text>
+              ) : (
+                <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+              )}
+            </Pressable>
+          )}
         </View>
       )}
 
       {/* Text bubble */}
-      {message.text && (
+      {!isProfileCard && message.text && (
         <View style={[styles.bubble, isOwn ? styles.outgoingBubble : styles.incomingBubble]}>
+          {isForwarded && (
+            <View style={styles.forwardedLabelRow}>
+              <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
+              <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
+            </View>
+          )}
+          {showReactionPicker && renderReactionPicker()}
           {/* Quoted message block if this is a reply */}
           {(() => {
             const hasQuoted = resolvedQuotedMessage || message.quotedMessageId;
-            if (hasQuoted) {
-              // console.log("[MessageBubble] Message has quoted content:", {
-              //   hasResolvedQuotedMessage: !!resolvedQuotedMessage,
-              //   hasQuotedMessageId: !!message.quotedMessageId,
-              //   quotedMessageData: resolvedQuotedMessage,
-              // });
-            }
             return resolvedQuotedMessage ? (
               <QuotedMessageBlock
                 quotedMessage={resolvedQuotedMessage}
@@ -153,11 +274,43 @@ const MessageBubble: React.FC<{
           <View style={styles.bubbleMetaRow}>
             <Text style={[styles.bubbleTime]}>{formatTime(message.createdAt)}</Text>
             {isOwn && (
-              <Text style={[styles.bubbleTime, message.status === "seen" && styles.seenStatus]}>
+              <Text style={[
+                styles.bubbleTime,
+                message.status === "seen" && styles.seenStatus,
+                message.status === "sending" && styles.sendingStatus,
+                message.status === "failed" && styles.failedStatus,
+              ]}>
                 {getStatusIcon(message.status)}
               </Text>
             )}
           </View>
+          {reactionGroups.length > 0 && (
+            <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
+              <Pressable
+                style={[styles.reactionPill, reactionSummary.selected && styles.reactionPillSelected]}
+                onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+              >
+                <Text style={styles.reactionText}>
+                  {reactionSummary.emojis.join(" ")} {reactionSummary.total}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+          <Pressable
+            style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
+            hitSlop={8}
+            onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
+            onLongPress={() => setShowReactionPicker((value) => !value)}
+            delayLongPress={220}
+          >
+            {hasDefaultReaction ? (
+              <Text style={[styles.quickHeartButtonText, styles.quickHeartButtonTextSelected]}>
+                {defaultReactionEmoji}
+              </Text>
+            ) : (
+              <Ionicons name="happy-outline" size={15} color={colors.textMuted} />
+            )}
+          </Pressable>
         </View>
       )}
     </HighlightableMessage>
@@ -189,6 +342,8 @@ type DraftMediaAsset = {
   width: number | undefined;
   height: number | undefined;
 };
+
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"];
 
 const getMessageKey = (message: MessagePayload): string => {
   return message._id || message.id || message.createdAt;
@@ -286,6 +441,10 @@ const ImageGalleryBubble: React.FC<{
 
   const getStatusIcon = (status: string) => {
     switch (status) {
+      case "sending":
+        return "Đang gửi";
+      case "failed":
+        return "Lỗi";
       case "sent":
         return "✓";
       case "delivered":
@@ -340,7 +499,12 @@ const ImageGalleryBubble: React.FC<{
         <View style={styles.bubbleMetaRow}>
           <Text style={styles.bubbleTime}>{formatTime(lastMessage.createdAt)}</Text>
           {isOwn && (
-            <Text style={[styles.bubbleTime, lastMessage.status === "seen" && styles.seenStatus]}>
+            <Text style={[
+              styles.bubbleTime,
+              lastMessage.status === "seen" && styles.seenStatus,
+              lastMessage.status === "sending" && styles.sendingStatus,
+              lastMessage.status === "failed" && styles.failedStatus,
+            ]}>
               {getStatusIcon(lastMessage.status)}
             </Text>
           )}
@@ -368,15 +532,18 @@ const TypingIndicator: React.FC<{ typingUsers: Set<string> }> = ({ typingUsers }
 /**
  * Chat Screen Component
  */
-export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) => {
+export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, onConversationReady }: ChatScreenProps) => {
   const authContext = useAuth();
   const callContext = useCall();
   const currentUser = authContext.user;
   const token = authContext.token;
-  const [messageText, setMessageText] = React.useState("");
   const [showMediaMenu, setShowMediaMenu] = React.useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = React.useState(false);
   const [showForwardDialog, setShowForwardDialog] = React.useState(false);
+  const [showContactPicker, setShowContactPicker] = React.useState(false);
+  const [showShareProfileSheet, setShowShareProfileSheet] = React.useState(false);
+  const [profileCardSendingUserId, setProfileCardSendingUserId] = React.useState<string | null>(null);
+  const [profileCardSentUserIds, setProfileCardSentUserIds] = React.useState<Set<string>>(new Set());
   const [forwardMessageIds, setForwardMessageIds] = React.useState<string[]>([]);
   const [draftMedia, setDraftMedia] = React.useState<DraftMediaAsset[]>([]);
   const [uploading, setUploading] = React.useState(false);
@@ -385,6 +552,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   const [isCancelingAudio, setIsCancelingAudio] = React.useState(false);
   const [recordingSeconds, setRecordingSeconds] = React.useState(0);
   const [selectedMessageId, setSelectedMessageId] = React.useState<string | null>(null);
+  const [actionMenuMessage, setActionMenuMessage] = React.useState<MessagePayload | null>(null);
+  const [actionMenuButtons, setActionMenuButtons] = React.useState<MessageActionButton[]>([]);
   const [showEditDialog, setShowEditDialog] = React.useState(false);
   const [editText, setEditText] = React.useState("");
   const [viewingGalleryMessages, setViewingGalleryMessages] = React.useState<MessagePayload[] | null>(null);
@@ -392,6 +561,11 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   const [allViewerImages, setAllViewerImages] = React.useState<Array<{ uri: string; key: string }>>([]);
   const [showAvatarMenu, setShowAvatarMenu] = React.useState(false);
   const [unfriending, setUnfriending] = React.useState(false);
+  const [friendActionLoading, setFriendActionLoading] = React.useState(false);
+  const [isFriend, setIsFriend] = React.useState(false);
+  const [friendshipStatus, setFriendshipStatus] = React.useState<string>("none");
+  const [isBlockedByMe, setIsBlockedByMe] = React.useState(false);
+  const [blockLoading, setBlockLoading] = React.useState(false);
   const imageViewerScrollRef = useRef<FlatList>(null);
   const actionsRef = useRef<any>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -400,19 +574,86 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   const recordingStartPromiseRef = useRef<Promise<void> | null>(null);
 
   const friendId = chatUser?.id;
+  const isSelfChat = chatUser?.isSelfChat || chatUser?.relationship === "self";
   const currentUserId = currentUser?.id || (currentUser as any)?._id || "";
 
-  // DEBUG: Track when chatUser changes
-  useEffect(() => {
-    console.log("[ChatScreen] ===== chatUser CHANGED =====");
-    console.log("[ChatScreen] New chatUser:", {
-      id: chatUser?.id,
-      displayName: (chatUser as any)?.displayName || chatUser?.name,
-    });
-    console.log("[ChatScreen] Token available:", token ? `${token.substring(0, 20)}...` : "MISSING");
-  }, [chatUser?.id, token]);
-
   const { state, actions, flatListRef, highlightedMessageId } = useChatMessage(friendId || "", token || "");
+  const conversationId = state.conversation?._id || state.conversation?.id || chatUser?.conversationId || "";
+  const { draftText: messageText, setDraftText: setMessageText, clearDraft } = useDraft(conversationId);
+
+  useEffect(() => {
+    if (conversationId && state.conversation) {
+      onConversationReady?.(conversationId);
+    }
+  }, [conversationId, onConversationReady, state.conversation]);
+
+  useEffect(() => {
+    if (!friendId || !token || isSelfChat) {
+      setIsBlockedByMe(false);
+      return;
+    }
+
+    let mounted = true;
+    BlockService.checkBlockStatus(friendId)
+      .then((status) => {
+        if (mounted) setIsBlockedByMe(status.isBlocked);
+      })
+      .catch(() => { });
+
+    BlockService.connect(token);
+    BlockService.onUnblocked((data: any) => {
+      const unblockedBy = String(data?.data?.unblockedBy || data?.unblockedBy || "");
+      if (unblockedBy === friendId) {
+        setIsBlockedByMe(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      BlockService.offBlockEvents();
+    };
+  }, [friendId, token, isSelfChat]);
+
+  useEffect(() => {
+    if (!friendId || isSelfChat) {
+      setIsFriend(false);
+      setFriendshipStatus("none");
+      return;
+    }
+
+    if (isBlockedByMe) {
+      setIsFriend(false);
+      setFriendshipStatus("none");
+      return;
+    }
+
+    let mounted = true;
+    const initialRelationship = String(chatUser?.relationship || "").toLowerCase();
+    if (initialRelationship === "friend" || initialRelationship === "friends") {
+      setIsFriend(true);
+      setFriendshipStatus("accepted");
+    }
+
+    checkFriendshipStatus(friendId)
+      .then((status) => {
+        if (!mounted) return;
+        const nextStatus = String(status.status || "none").toLowerCase();
+        setFriendshipStatus(nextStatus);
+        setIsFriend(Boolean(status.isFriend || nextStatus === "accepted"));
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        console.warn("[ChatScreen] Failed to check friendship status:", error?.message || error);
+        if (isBlockedByMe) {
+          setIsFriend(false);
+          setFriendshipStatus("none");
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [friendId, isSelfChat, chatUser?.relationship, isBlockedByMe]);
 
   // Keep actions ref in sync
   React.useEffect(() => {
@@ -420,9 +661,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   }, [actions]);
 
   // Debug: Log modal visibility changes
-  React.useEffect(() => {
-    console.log("[ChatScreen] showMediaMenu changed:", showMediaMenu);
-  }, [showMediaMenu]);
+  React.useEffect(() => { }, [showMediaMenu]);
 
   React.useEffect(() => {
     return () => {
@@ -478,9 +717,60 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
     };
   }, [friendId, chatUser?.name, onBackPress]);
 
-  const { conversation, messages, isLoading, isSending, error, typingUsers, hasMoreMessages } = state;
-  const conversationId = conversation?._id || conversation?.id || chatUser?.conversationId || "";
-  const isSelfChat = chatUser?.isSelfChat || chatUser?.relationship === "self";
+  const { conversation, messages, isLoading, isLoadingMore, isSending, error, typingUsers, hasMoreMessages } = state;
+  const isBlockedChatError = String(error || "").toLowerCase().includes("blocked") || isBlockedByMe;
+
+  React.useEffect(() => {
+    if (!isSelfChat && String(error || "").toLowerCase().includes("blocked")) {
+      setIsBlockedByMe(true);
+    }
+  }, [error, isSelfChat]);
+
+  const searchTargetHandledRef = useRef<string | null>(null);
+
+  const normalizeSearchMessage = useCallback((raw: any): MessagePayload | null => {
+    if (!raw) return null;
+    const id = raw._id || raw.id || raw.messageId;
+    if (!id || !conversationId) return null;
+
+    return {
+      ...raw,
+      _id: String(id),
+      id: String(id),
+      conversationId: raw.conversationId || conversationId,
+      senderId: raw.senderId || "",
+      senderName: raw.senderName || "Người dùng",
+      senderAvatar: raw.senderAvatar || "",
+      text: raw.text || "",
+      media: raw.media || [],
+      status: raw.status || "sent",
+      createdAt: raw.createdAt || new Date().toISOString(),
+      updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
+    } as MessagePayload;
+  }, [conversationId]);
+
+  useEffect(() => {
+    const targetId = String(chatUser?.searchTargetMessageId || "");
+    if (!targetId || isLoading || !conversationId || searchTargetHandledRef.current === targetId) return;
+
+    searchTargetHandledRef.current = targetId;
+    const extraMessages = [
+      normalizeSearchMessage(chatUser?.searchTargetMessage),
+      ...(Array.isArray(chatUser?.searchContextMessages) ? chatUser.searchContextMessages.map(normalizeSearchMessage) : []),
+    ].filter(Boolean) as MessagePayload[];
+
+    if (extraMessages.length > 0) {
+      actions.addMessages(extraMessages);
+    }
+
+    setTimeout(() => {
+      actions.scrollToMessage(targetId).then((success) => {
+        if (!success) {
+          Alert.alert("Thông báo", "Không tìm thấy tin nhắn trong cuộc trò chuyện");
+        }
+      });
+    }, 250);
+  }, [chatUser?.searchTargetMessageId, chatUser?.searchTargetMessage, chatUser?.searchContextMessages, isLoading, conversationId, actions, normalizeSearchMessage]);
 
   const renderableMessages = useMemo(
     () => groupMessagesForGallery(messages, currentUser?.id || currentUserId),
@@ -495,9 +785,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       if (msgId) {
         map[msgId] = msg;
       }
-    });
-    console.log("[ChatScreen] messageMap created with", Object.keys(map).length, "messages");
-    return map;
+    }); return map;
   }, [messages]);
 
   // Auto-mark messages as seen when new messages arrive
@@ -658,50 +946,31 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
    */
   const handlePickImage = useCallback(async () => {
     try {
-      console.log("[ChatScreen] handlePickImage called");
-      // Don't dismiss modal yet - let picker load first
-      // setShowMediaMenu(false);
-
-      // Request permission
-      console.log("[ChatScreen] Requesting media library permission...");
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      console.log("[ChatScreen] Permission result:", permissionResult);
-
       if (!permissionResult.granted) {
-        console.log("[ChatScreen] Permission denied");
         Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
         return;
-      }
-
-      console.log("[ChatScreen] Launching image library...");
-      try {
+      } try {
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ["images"],
           allowsMultipleSelection: true,
           selectionLimit: 0,
         } as any);
-
-        console.log("[ChatScreen] Image library result:", JSON.stringify(result, null, 2));
-
         if (result.canceled) {
-          console.log("[ChatScreen] User canceled image selection");
           return;
         }
 
         if (!result.assets || result.assets.length === 0) {
-          console.log("[ChatScreen] No assets selected");
           Alert.alert("Error", "No image selected");
           return;
         }
 
         const validAssets = result.assets.filter((asset) => asset?.uri && (asset?.type || asset?.mimeType));
         if (validAssets.length === 0) {
-          console.log("[ChatScreen] No valid image assets selected");
           Alert.alert("Error", "Invalid image file");
           return;
         }
         appendDraftMedia(validAssets);
-        console.log("[ChatScreen] Added images to draft tray:", validAssets.length);
       } catch (pickerError: any) {
         console.error("[ChatScreen] Image picker error:", pickerError);
         console.error("[ChatScreen] Error stack:", pickerError.stack);
@@ -722,42 +991,24 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
    */
   const handlePickVideo = useCallback(async () => {
     try {
-      console.log("[ChatScreen] handlePickVideo called");
-      // Don't dismiss modal yet - let picker load first
-      // setShowMediaMenu(false);
-
-      // Request permission
-      console.log("[ChatScreen] Requesting media library permission...");
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      console.log("[ChatScreen] Permission result:", permissionResult);
-
       if (!permissionResult.granted) {
-        console.log("[ChatScreen] Permission denied");
         Alert.alert("Permission required", "We need access to your photo library. Please enable it in settings.");
         return;
-      }
-
-      console.log("[ChatScreen] Launching video library...");
-      try {
+      } try {
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ["videos"],
         } as any);
-
-        console.log("[ChatScreen] Video library result:", JSON.stringify(result, null, 2));
-
         if (result.canceled) {
-          console.log("[ChatScreen] User canceled video selection");
           return;
         }
 
         if (!result.assets || result.assets.length === 0) {
-          console.log("[ChatScreen] No assets selected");
           Alert.alert("Error", "No video selected");
           return;
         }
 
         if (!result.assets[0].uri || !result.assets[0].type) {
-          console.log("[ChatScreen] Invalid asset data:", result.assets[0]);
           Alert.alert("Error", "Invalid video file");
           return;
         }
@@ -769,9 +1020,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         const uri = asset.uri;
         const name = asset.fileName || uri.split("/").pop() || "video.mp4";
         const type = asset.mimeType || asset.type || "video/mp4";
-
-        console.log("[ChatScreen] Selected video:", { uri, name, type, duration: asset.duration });
-
         const file = {
           uri,
           name,
@@ -781,10 +1029,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           duration: asset.duration,
           width: asset.width,
           height: asset.height,
-        };
-
-        console.log("[ChatScreen] Sending video...");
-        const sentMessages = await chatMediaService.sendVideo(
+        }; const sentMessages = await chatMediaService.sendVideo(
           conversation?._id || conversation?.id || "",
           file,
           messageText || undefined,
@@ -797,7 +1042,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
 
         setMessageText("");
         setUploadProgress(0);
-        console.log("[ChatScreen] Video sent successfully");
       } catch (pickerError: any) {
         console.error("[ChatScreen] Video picker error:", pickerError);
         Alert.alert("Error", `Video picker error: ${pickerError.message}`);
@@ -830,28 +1074,17 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         Alert.alert("Error", "Conversation is not ready yet");
         return;
       }
-
-      console.log("[ChatScreen] handlePickAudioFile called");
-
       const result = await DocumentPicker.getDocumentAsync({
         type: ["audio/*"],
       });
-
-      console.log("[ChatScreen] DocumentPicker result:", {
-        canceled: result.canceled,
-        assetsCount: result.assets?.length,
-      });
-
       // Only close menu if user actually picked something
       setShowMediaMenu(false);
 
       if (result.canceled) {
-        console.log("[ChatScreen] User canceled audio file picker");
         return;
       }
 
       if (!result.assets || result.assets.length === 0) {
-        console.log("[ChatScreen] No audio assets selected");
         return;
       }
 
@@ -862,17 +1095,11 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         type: asset.mimeType || "audio/mpeg",
         mimeType: asset.mimeType || "audio/mpeg",
         size: asset.size || 0,
-      };
-
-      console.log("[ChatScreen] Audio file selected:", audioFile);
-      setUploading(true);
+      }; setUploading(true);
       setUploadProgress(0);
 
       try {
         const sentMessages = await chatMediaService.sendAudio(conversation?._id || conversation?.id || "", audioFile);
-
-        console.log("[ChatScreen] Audio sent from file picker:", sentMessages);
-
         // Add messages to local state to show realtime
         if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
           actionsRef.current.addMessages(sentMessages);
@@ -1062,9 +1289,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         Alert.alert("Error", "Conversation is not ready yet");
         return;
       }
-
-      console.log("[ChatScreen] handlePickDocument called");
-
       const result = await DocumentPicker.getDocumentAsync({
         type: [
           "application/pdf",
@@ -1079,22 +1303,14 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           "application/x-rar-compressed",
         ],
       });
-
-      console.log("[ChatScreen] DocumentPicker result for document:", {
-        canceled: result.canceled,
-        assetsCount: result.assets?.length,
-      });
-
       // Only close menu if operation is complete or canceled
       setShowMediaMenu(false);
 
       if (result.canceled) {
-        console.log("[ChatScreen] User canceled document file picker");
         return;
       }
 
       if (!result.assets || result.assets.length === 0) {
-        console.log("[ChatScreen] No document assets selected");
         return;
       }
 
@@ -1105,10 +1321,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         type: asset.mimeType || "application/octet-stream",
         mimeType: asset.mimeType || "application/octet-stream",
         size: asset.size || 0,
-      };
-
-      console.log("[ChatScreen] Document file selected:", documentFile);
-      setUploading(true);
+      }; setUploading(true);
       setUploadProgress(0);
 
       try {
@@ -1116,9 +1329,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           conversation?._id || conversation?.id || "",
           documentFile,
         );
-
-        console.log("[ChatScreen] Document sent:", sentMessages);
-
         // Add messages to local state to show realtime
         if (sentMessages.length > 0 && actionsRef.current?.addMessages) {
           actionsRef.current.addMessages(sentMessages);
@@ -1153,33 +1363,34 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         const quotedMessageId = state.replyingTo._id || state.replyingTo.id;
         if (quotedMessageId && actionsRef.current.sendQuotedMessage) {
           await actionsRef.current.sendQuotedMessage(quotedMessageId, trimmedText || "", draftMedia);
-          setMessageText("");
+          await clearDraft();
           return;
         }
       }
 
       await sendDraftMedia(trimmedText || undefined);
-      setMessageText("");
+      await clearDraft();
       return;
     }
 
     if (trimmedText) {
-      setMessageText("");
-
       // If replying to a message, send as quoted message
+      let sendPromise: Promise<void>;
       if (state.replyingTo) {
         const quotedMessageId = state.replyingTo._id || state.replyingTo.id;
         if (quotedMessageId && actionsRef.current.sendQuotedMessage) {
-          await actionsRef.current.sendQuotedMessage(quotedMessageId, trimmedText);
+          sendPromise = actionsRef.current.sendQuotedMessage(quotedMessageId, trimmedText);
         } else {
           // Fallback to regular send if sendQuotedMessage is not available
-          await actionsRef.current.sendMessage(trimmedText);
+          sendPromise = actionsRef.current.sendMessage(trimmedText);
         }
       } else {
-        await actionsRef.current.sendMessage(trimmedText);
+        sendPromise = actionsRef.current.sendMessage(trimmedText);
       }
+      await clearDraft();
+      await sendPromise;
     }
-  }, [draftMedia.length, hasSendableContent, messageText, sendDraftMedia, state.replyingTo]);
+  }, [clearDraft, draftMedia.length, hasSendableContent, messageText, sendDraftMedia, state.replyingTo]);
 
   /**
    * Handle text input (typing indicator)
@@ -1229,8 +1440,23 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   /**
    * Load more messages
    */
-  const handleUnfriend = useCallback(async () => {
+  const handleFriendAction = useCallback(async () => {
     if (!chatUser?.id) return;
+
+    if (!isFriend) {
+      try {
+        setFriendActionLoading(true);
+        await sendFriendRequest(chatUser.id);
+        setFriendshipStatus("pending");
+        setShowAvatarMenu(false);
+        Alert.alert("Đã gửi", `Đã gửi lời mời kết bạn tới ${truncateName(userName)}.`);
+      } catch (error: any) {
+        Alert.alert("Lỗi", error?.message || "Không thể gửi lời mời kết bạn");
+      } finally {
+        setFriendActionLoading(false);
+      }
+      return;
+    }
 
     Alert.alert("Hủy kết bạn", `Xác nhận hủy kết bạn với ${truncateName(userName)}?`, [
       { text: "Hủy", onPress: () => { }, style: "cancel" },
@@ -1239,28 +1465,115 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         onPress: async () => {
           try {
             setUnfriending(true);
+            setFriendActionLoading(true);
             setShowAvatarMenu(false);
             await unfriend(chatUser.id!);
-            // Navigate back after unfriend success
-            setTimeout(() => {
-              onBackPress?.();
-            }, 500);
+            setIsFriend(false);
+            setFriendshipStatus("none");
           } catch (error: any) {
             Alert.alert("Lỗi", `Hủy kết bạn thất bại: ${error.message}`);
           } finally {
             setUnfriending(false);
+            setFriendActionLoading(false);
           }
         },
         style: "destructive",
       },
     ]);
-  }, [chatUser?.id, userName, onBackPress]);
+  }, [chatUser?.id, isFriend, userName]);
+
+  const handleToggleBlock = useCallback(() => {
+    if (!chatUser?.id || isSelfChat) return;
+
+    const nextBlocked = !isBlockedByMe;
+    Alert.alert(
+      nextBlocked ? "Chặn người dùng" : "Bỏ chặn người dùng",
+      nextBlocked
+        ? `Bạn sẽ không thể nhắn tin hoặc gửi lời mời kết bạn tới ${truncateName(userName)}.`
+        : `Bỏ chặn ${truncateName(userName)}?`,
+      [
+        { text: "Hủy", style: "cancel" },
+        {
+          text: nextBlocked ? "Chặn" : "Bỏ chặn",
+          style: nextBlocked ? "destructive" : "default",
+          onPress: async () => {
+            try {
+              setBlockLoading(true);
+              if (nextBlocked) {
+                await BlockService.blockUser(chatUser.id!);
+                setIsFriend(false);
+                setFriendshipStatus("none");
+              } else {
+                await BlockService.unblockUser(chatUser.id!);
+              }
+              setIsBlockedByMe(nextBlocked);
+              setShowAvatarMenu(false);
+              if (!nextBlocked) {
+                actionsRef.current?.retryLoadConversation?.().catch((retryError: any) => {
+                  console.warn("[ChatScreen] Failed to reload conversation after unblock:", retryError?.message || retryError);
+                });
+              }
+            } catch (error: any) {
+              Alert.alert("Lỗi", error?.message || "Không thể cập nhật trạng thái chặn");
+            } finally {
+              setBlockLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [chatUser?.id, isBlockedByMe, isSelfChat, userName]);
 
   const handleLoadMore = useCallback(() => {
     if (hasMoreMessages && !isLoading && actionsRef.current) {
       actionsRef.current.loadMoreMessages();
     }
   }, [hasMoreMessages, isLoading]);
+
+  const handleToggleReaction = useCallback(async (messageId: string, emoji: string, selected: boolean) => {
+    try {
+      if (selected) {
+        await actionsRef.current?.removeReaction?.(messageId, emoji);
+      } else {
+        await actionsRef.current?.addReaction?.(messageId, emoji);
+      }
+    } catch (error: any) {
+      Alert.alert("Lỗi", error?.message || "Không thể cập nhật react");
+    }
+  }, []);
+
+  const handleOpenProfileCardUser = useCallback((profileUser: any) => {
+    const targetUserId = profileUser?.id || profileUser?._id || profileUser?.userId;
+    if (!targetUserId) return;
+    onOpenPrivateChat?.({
+      ...profileUser,
+      id: targetUserId,
+      displayName: profileUser.displayName || profileUser.name || "Người dùng",
+      conversationType: "PRIVATE",
+      relationship: String(targetUserId) === String(currentUserId) ? "self" : (profileUser.relationship || "stranger"),
+    });
+  }, [currentUserId, onOpenPrivateChat]);
+
+  const handleSendProfileCard = useCallback(async (targetUser: { id: string; displayName: string }) => {
+    if (!conversationId || !targetUser.id) return;
+    setProfileCardSendingUserId(targetUser.id);
+    try {
+      await profileCardService.sendProfileCard(conversationId, { userId: targetUser.id });
+      setProfileCardSentUserIds((prev) => new Set(prev).add(targetUser.id));
+    } catch (error: any) {
+      const message = error?.status === 403
+        ? "Người này đang ẩn danh thiếp hoặc không cho phép chia sẻ."
+        : error?.message || "Không gửi được danh thiếp";
+      Alert.alert("Lỗi", message);
+    } finally {
+      setProfileCardSendingUserId(null);
+    }
+  }, [conversationId]);
+
+  const closeActionMenu = useCallback(() => {
+    setActionMenuMessage(null);
+    setActionMenuButtons([]);
+  }, []);
 
   /**
    * Handle message long press - show action menu
@@ -1271,9 +1584,8 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       if (!messageId) return;
 
       const isOwn = message.senderId === currentUser?.id;
-      Alert.alert(
-        "Tùy chọn tin nhắn",
-        `${message.text?.substring(0, 50) || "[Media]"}`,
+      setActionMenuMessage(message);
+      setActionMenuButtons(
         buildMessageActionSheetOptions({
           isOwn,
           onDeleteForMe: async () => {
@@ -1386,7 +1698,21 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           <MessageBubble
             message={item.message}
             isOwn={item.message.senderId === currentUserId}
+            currentUserId={currentUserId}
             onLongPress={() => handleMessageLongPress(item.message)}
+            onToggleReaction={(emoji, selected) => {
+              const messageId = item.message._id || item.message.id;
+              if (messageId) {
+                handleToggleReaction(messageId, emoji, selected);
+              }
+            }}
+            onClearMyReactions={() => {
+              const messageId = item.message._id || item.message.id;
+              if (messageId) {
+                handleToggleReaction(messageId, "", true);
+              }
+            }}
+            onProfileCardPress={handleOpenProfileCardUser}
             onPressQuoted={async (quotedId) => {
               if (actions.scrollToMessage) {
                 const success = await actions.scrollToMessage(quotedId);
@@ -1418,13 +1744,23 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         />
       );
     },
-    [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages],
+    [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages, handleOpenProfileCardUser],
   );
+
+  const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
+    if (label.includes("Trả lời")) return "return-up-back-outline";
+    if (label.includes("Ghim")) return "pin";
+    if (label.includes("Sửa")) return "create-outline";
+    if (label.includes("Thu hồi")) return "refresh-outline";
+    if (label.includes("Chuyển tiếp")) return "arrow-redo-outline";
+    if (label.includes("Xóa")) return "trash-outline";
+    return "ellipse-outline";
+  }, []);
 
   /**
    * Error state
    */
-  if (error && !conversation) {
+  if (error && !conversation && !isBlockedChatError) {
     return (
       <View style={styles.screen}>
         <View style={styles.errorContainer}>
@@ -1538,7 +1874,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.5}
             ListHeaderComponent={
-              hasMoreMessages && messages.length > 0 ? (
+              isLoadingMore && hasMoreMessages && messages.length > 0 ? (
                 <View style={styles.loadingMoreContainer}>
                   <ActivityIndicator size="small" color={colors.textMuted} />
                 </View>
@@ -1546,8 +1882,14 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             }
             ListEmptyComponent={
               <View style={styles.emptyMessagesContainer}>
-                <Ionicons name="chatbubble-outline" size={56} color={colors.textMuted} />
-                <Text style={styles.emptyMessagesText}>Hãy gửi lời chào đầu tiên</Text>
+                <Ionicons
+                  name={isBlockedChatError ? "ban-outline" : "chatbubble-outline"}
+                  size={56}
+                  color={colors.textMuted}
+                />
+                <Text style={styles.emptyMessagesText}>
+                  {isBlockedChatError ? "Cuộc trò chuyện đang bị chặn" : "Hãy gửi lời chào đầu tiên"}
+                </Text>
               </View>
             }
             ListFooterComponent={<TypingIndicator typingUsers={typingUsers} />}
@@ -1607,16 +1949,21 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
           }}
         />
       )}
+      {isBlockedChatError && (
+        <View style={styles.blockBanner}>
+          <Ionicons name="ban-outline" size={18} color={colors.danger} />
+          <Text style={styles.blockBannerText}>Bạn đã chặn người dùng này. Bỏ chặn để tiếp tục nhắn tin.</Text>
+        </View>
+      )}
       <View style={styles.messageComposer}>
         <Pressable
           style={styles.composerIconButton}
           onPress={() => {
-            console.log("[ChatScreen] Attach button pressed, showMediaMenu:", showMediaMenu);
             setShowMediaMenu(!showMediaMenu);
           }}
-          disabled={uploading}
+          disabled={uploading || isBlockedChatError}
         >
-          <Ionicons name="attach-outline" size={24} color={uploading ? colors.textMuted : colors.text} />
+          <Ionicons name="attach-outline" size={24} color={uploading || isBlockedChatError ? colors.textMuted : colors.text} />
         </Pressable>
         <View style={styles.composerInputWrap}>
           <TextInput
@@ -1627,7 +1974,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             onChangeText={handleTextChange}
             multiline
             maxLength={1000}
-            editable={!isSending && !uploading}
+            editable={!isSending && !uploading && !isBlockedChatError}
           />
           <Pressable style={styles.composerEmojiButton}>
             <Ionicons name="happy-outline" size={22} color={colors.textMuted} />
@@ -1639,9 +1986,11 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             hasSendableContent ? styles.composerSendButton : styles.composerMicButton,
             !hasSendableContent && (isRecordingAudio || uploading) && styles.composerActionButtonDisabled,
             hasSendableContent && (isSending || uploading) && styles.composerActionButtonDisabled,
+            isBlockedChatError && styles.composerActionButtonDisabled,
           ]}
           onPress={hasSendableContent ? handleSendMessage : handlePickAudio}
           disabled={
+            isBlockedChatError ||
             (hasSendableContent && isSending) ||
             (!hasSendableContent && (isRecordingAudio || uploading)) ||
             (hasSendableContent && uploading)
@@ -1691,6 +2040,54 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         </View>
       )}
 
+      <Modal
+        transparent
+        visible={!!actionMenuMessage}
+        animationType="fade"
+        onRequestClose={closeActionMenu}
+      >
+        <Pressable style={styles.contextOverlay} onPress={closeActionMenu}>
+          <View style={styles.contextMenu}>
+            <View style={styles.contextHeader}>
+              <Text style={styles.contextTitle} numberOfLines={1}>
+                {actionMenuMessage?.text?.trim() || "[Media]"}
+              </Text>
+            </View>
+
+            {actionMenuButtons
+              .filter((button) => button.style !== "cancel")
+              .map((button) => (
+                <Pressable
+                  key={button.text}
+                  style={styles.contextItem}
+                  onPress={() => {
+                    closeActionMenu();
+                    button.onPress();
+                  }}
+                >
+                  <Ionicons
+                    name={getActionIconName(button.text)}
+                    size={20}
+                    color={button.style === "destructive" ? colors.danger : colors.accent}
+                  />
+                  <Text
+                    style={[
+                      styles.contextItemText,
+                      button.style === "destructive" && { color: colors.danger },
+                    ]}
+                  >
+                    {button.text}
+                  </Text>
+                </Pressable>
+              ))}
+
+            <Pressable style={[styles.contextItem, styles.contextCancel]} onPress={closeActionMenu}>
+              <Text style={[styles.contextItemText, { color: colors.textMuted, textAlign: "center" }]}>Hủy</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+
       <ForwardDialog
         visible={showForwardDialog}
         currentConversationId={conversation?._id || conversation?.id || ""}
@@ -1704,6 +2101,30 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         onForwardSuccess={(result) => {
           Alert.alert("Thành công", `Đã chuyển tiếp tới ${result.sentToCount} cuộc trò chuyện`);
         }}
+      />
+
+      <ContactPickerSheet
+        visible={showContactPicker}
+        currentUserId={currentUserId}
+        sentUserIds={profileCardSentUserIds}
+        sendingUserId={profileCardSendingUserId}
+        onDismiss={() => setShowContactPicker(false)}
+        onSend={handleSendProfileCard}
+      />
+
+      <ShareProfileCardSheet
+        visible={showShareProfileSheet}
+        profileUser={{
+          ...chatUser,
+          id: friendId,
+          displayName: userName,
+          avatar: userAvatar,
+          avatarUrl: userAvatar,
+        }}
+        currentConversationId={conversationId}
+        onDismiss={() => setShowShareProfileSheet(false)}
+        onSent={() => Alert.alert("Thành công", "Đã gửi danh thiếp")}
+        onError={(message) => Alert.alert("Lỗi", message)}
       />
 
       {/* Full-Screen Image Viewer */}
@@ -1818,16 +2239,61 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
       <Modal visible={showAvatarMenu} transparent animationType="fade" onRequestClose={() => setShowAvatarMenu(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => setShowAvatarMenu(false)}>
           <View style={styles.avatarMenuContainer}>
-            <Pressable style={[styles.menuItem, styles.menuItemDanger]} onPress={handleUnfriend} disabled={unfriending}>
-              {unfriending ? (
-                <ActivityIndicator color={colors.dangerStrong} />
-              ) : (
-                <>
-                  <Ionicons name="person-remove" size={20} color={colors.dangerStrong} />
-                  <Text style={[styles.menuItemText, styles.menuItemTextDanger]}>Hủy kết bạn</Text>
-                </>
-              )}
-            </Pressable>
+            {!isSelfChat && (
+              <>
+                <Pressable
+                  style={styles.menuItem}
+                  onPress={() => {
+                    setShowAvatarMenu(false);
+                    setShowShareProfileSheet(true);
+                  }}
+                  disabled={!friendId}
+                >
+                  <Ionicons name="share-social-outline" size={20} color={colors.text} />
+                  <Text style={styles.menuItemText}>Chia sẻ hồ sơ</Text>
+                </Pressable>
+                <View style={styles.menuDivider} />
+                <Pressable style={[styles.menuItem, isBlockedByMe && styles.menuItemDanger]} onPress={handleToggleBlock} disabled={blockLoading}>
+                  {blockLoading ? (
+                    <ActivityIndicator color={isBlockedByMe ? colors.dangerStrong : colors.accent} />
+                  ) : (
+                    <>
+                      <Ionicons
+                        name={isBlockedByMe ? "ban" : "ban-outline"}
+                        size={20}
+                        color={isBlockedByMe ? colors.dangerStrong : colors.text}
+                      />
+                      <Text style={[styles.menuItemText, isBlockedByMe && styles.menuItemTextDanger]}>
+                        {isBlockedByMe ? "Bỏ chặn" : "Chặn người dùng"}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+                <View style={styles.menuDivider} />
+              </>
+            )}
+            {!isSelfChat && (
+              <Pressable
+                style={[styles.menuItem, isFriend && styles.menuItemDanger]}
+                onPress={handleFriendAction}
+                disabled={friendActionLoading || friendshipStatus === "pending" || isBlockedChatError}
+              >
+                {friendActionLoading ? (
+                  <ActivityIndicator color={isFriend ? colors.dangerStrong : colors.accent} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name={isFriend ? "person-remove" : friendshipStatus === "pending" ? "time-outline" : "person-add-outline"}
+                      size={20}
+                      color={isFriend ? colors.dangerStrong : colors.text}
+                    />
+                    <Text style={[styles.menuItemText, isFriend && styles.menuItemTextDanger]}>
+                      {isFriend ? "Hủy kết bạn" : friendshipStatus === "pending" ? "Đã gửi lời mời" : "Thêm bạn lại"}
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            )}
           </View>
         </Pressable>
       </Modal>
@@ -1838,14 +2304,12 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
         visible={showMediaMenu}
         animationType="fade"
         onRequestClose={() => {
-          console.log("[ChatScreen] Modal onRequestClose");
           setShowMediaMenu(false);
         }}
       >
         <Pressable
           style={styles.modalOverlay}
           onPress={() => {
-            console.log("[ChatScreen] Modal overlay pressed");
             setShowMediaMenu(false);
           }}
         >
@@ -1855,7 +2319,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             <Pressable
               style={styles.mediaMenuButton}
               onPress={() => {
-                console.log("[ChatScreen] Library button pressed");
                 handlePickImage();
               }}
             >
@@ -1866,7 +2329,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
             <Pressable
               style={styles.mediaMenuButton}
               onPress={() => {
-                console.log("[ChatScreen] Video button pressed");
                 handlePickVideo();
               }}
             >
@@ -1884,6 +2346,17 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
               <Text style={styles.mediaMenuButtonText}>Tài Liệu</Text>
             </Pressable>
 
+            <Pressable
+              style={styles.mediaMenuButton}
+              onPress={() => {
+                setShowMediaMenu(false);
+                setShowContactPicker(true);
+              }}
+            >
+              <Ionicons name="person-circle-outline" size={24} color={colors.accent} />
+              <Text style={styles.mediaMenuButtonText}>Chia sẻ liên hệ</Text>
+            </Pressable>
+
             <Pressable style={styles.mediaMenuCloseButton} onPress={() => setShowMediaMenu(false)}>
               <Text style={styles.mediaMenuCloseText}>Hủy</Text>
             </Pressable>
@@ -1897,7 +2370,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: "transparent",
   },
   centerContainer: {
     flex: 1,
@@ -1949,9 +2422,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    backgroundColor: colors.surfaceTransparent,
+    backgroundColor: colors.headerBgTransparent,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: colors.overlayWhite10,
   },
   backButton: {
     width: 44,
@@ -1959,7 +2432,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: colors.surfaceTransparent,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1970,7 +2443,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     alignItems: "center",
   },
   headerIconButton: {
@@ -1979,7 +2452,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: colors.surfaceTransparent,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2023,9 +2496,13 @@ const styles = StyleSheet.create({
   },
   bubble: {
     maxWidth: "82%",
+    minWidth: 76,
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    paddingBottom: 18,
+    marginBottom: 10,
+    position: "relative",
   },
   galleryBubble: {
     paddingHorizontal: 10,
@@ -2059,6 +2536,120 @@ const styles = StyleSheet.create({
   bubbleTime: {
     color: colors.overlayWhite75,
     fontSize: 11,
+  },
+  reactionRow: {
+    position: "absolute",
+    left: 0,
+    bottom: -12,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    zIndex: 5,
+    elevation: 5,
+  },
+  reactionRowOwn: {
+    justifyContent: "flex-start",
+  },
+  reactionRowOther: {
+    justifyContent: "flex-start",
+  },
+  reactionPill: {
+    minHeight: 22,
+    paddingHorizontal: 8,
+    borderRadius: 11,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reactionPillSelected: {
+    backgroundColor: "rgba(79,140,255,0.28)",
+  },
+  reactionText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  forwardedLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 6,
+  },
+  forwardedLabelText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  forwardedLabelTextOwn: {
+    color: colors.overlayWhite75,
+  },
+  mediaReactionWrap: {
+    marginBottom: 10,
+    minWidth: 76,
+    position: "relative",
+  },
+  quickHeartButton: {
+    position: "absolute",
+    bottom: -10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickHeartButtonOwn: {
+    right: -8,
+  },
+  quickHeartButtonOther: {
+    right: -8,
+  },
+  quickHeartButtonText: {
+    fontSize: 14,
+    opacity: 0.85,
+  },
+  quickHeartButtonTextSelected: {
+    opacity: 1,
+  },
+  quickReactionBar: {
+    position: "absolute",
+    bottom: "100%",
+    flexDirection: "row",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    zIndex: 10,
+    elevation: 10,
+  },
+  quickReactionBarOwn: {
+    right: 0,
+  },
+  quickReactionBarOther: {
+    left: 0,
+  },
+  quickReactionOption: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickReactionOptionSelected: {
+    backgroundColor: "rgba(79,140,255,0.28)",
+  },
+  quickReactionDeleteOption: {
+    backgroundColor: "rgba(239,68,68,0.16)",
+  },
+  quickReactionText: {
+    fontSize: 17,
   },
   galleryGrid: {
     flexDirection: "row",
@@ -2108,6 +2699,15 @@ const styles = StyleSheet.create({
   seenStatus: {
     color: "#4CAF50",
   },
+  sendingStatus: {
+    color: colors.overlayWhite75,
+    fontSize: 10,
+  },
+  failedStatus: {
+    color: colors.dangerSoft,
+    fontSize: 10,
+    fontWeight: "700",
+  },
   messageHighlighted: {
     backgroundColor: "rgba(255, 200, 0, 0.18)",
     borderRadius: 12,
@@ -2145,16 +2745,33 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    backgroundColor: colors.surfaceTransparent,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: colors.overlayWhite10,
+  },
+  blockBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: "rgba(239,68,68,0.12)",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(239,68,68,0.24)",
+  },
+  blockBannerText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "600",
   },
   composerIconButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.inputBgTransparent,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2162,10 +2779,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.surface,
+    backgroundColor: colors.inputBgTransparent,
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
     paddingHorizontal: 16,
   },
   composerInput: {
@@ -2190,9 +2807,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentStrong,
   },
   composerMicButton: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.inputBgTransparent,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.overlayWhite10,
   },
   composerActionButtonDisabled: {
     opacity: 0.55,
@@ -2425,6 +3042,52 @@ const styles = StyleSheet.create({
     color: colors.contrastText,
   },
 
+  contextOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 32,
+  },
+  contextMenu: {
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  contextHeader: {
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  contextTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  contextItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  contextItemText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  contextCancel: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    justifyContent: "center",
+  },
+
   // Edit dialog styles
   editDialogOverlay: {
     flex: 1,
@@ -2562,6 +3225,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.dangerSoft,
+  },
+  menuDivider: {
+    height: 10,
   },
   menuItemText: {
     fontSize: 16,

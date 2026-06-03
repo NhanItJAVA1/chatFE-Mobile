@@ -1,6 +1,8 @@
 import { api } from "./api";
 import { authStorage } from "../runtime/storage";
 import { getApiBaseUrl } from "../runtime/config";
+import { getDeviceHeaders } from "./sessionService";
+import { DeviceEventEmitter } from "react-native";
 import type { AuthResponse, User } from "@/types";
 
 const readAccessToken = (payload: any): string => {
@@ -11,19 +13,57 @@ const readUserProfile = (payload: any): User | null => {
     return payload?.user || payload?.profile || null;
 };
 
+const publicAuthOptions = {
+    skipAuth: true,
+    skipRefresh: true,
+};
+
+export type TokenIntrospection = {
+    active: boolean;
+    payload?: {
+        sub?: string;
+        role?: string;
+        type?: string;
+        jti?: string;
+        tokenVersion?: number;
+        exp?: number;
+        iat?: number;
+        [key: string]: any;
+    };
+};
+
 export const authService = {
     register: async (userData: any): Promise<AuthResponse> => {
         try {
-            const response = await api.post("/auth/register", userData);
+            const response = await api.post("/auth/register", userData, {
+                headers: await getDeviceHeaders(),
+                ...publicAuthOptions,
+            });
             return response;
         } catch (error: any) {
-            throw new Error(error.message || "Registration failed");
+            throw error;
         }
     },
 
     login: async (payload: any): Promise<AuthResponse> => {
         try {
-            let authData = await api.post("/auth/login", payload);
+            const phone = typeof payload?.phone === "string" ? payload.phone.trim() : undefined;
+            const email = typeof payload?.email === "string" ? payload.email.trim() : undefined;
+            const password = payload?.password;
+
+            if ((!phone && !email) || typeof password !== "string" || !password) {
+                throw new Error("Phone/email and password are required");
+            }
+
+            const loginPayload = {
+                ...(phone ? { phone } : {}),
+                ...(email ? { email } : {}),
+                password,
+            };
+            let authData = await api.post("/auth/login", loginPayload, {
+                headers: await getDeviceHeaders(),
+                ...publicAuthOptions,
+            });
 
             if (authData?.data && !authData?.token && !authData?.accessToken) {
                 authData = authData.data;
@@ -31,9 +71,7 @@ export const authService = {
 
             const accessToken = readAccessToken(authData);
 
-            if (accessToken) {
-                console.log("[AUTH] Saving token:", accessToken.substring(0, 20) + "...");
-                await authStorage.setItem("token", accessToken);
+            if (accessToken) {                await authStorage.setItem("token", accessToken);
                 if (authData.refreshToken) {
                     await authStorage.setItem("refreshToken", authData.refreshToken);
                 }
@@ -48,7 +86,58 @@ export const authService = {
 
             return authData;
         } catch (error: any) {
-            throw new Error(error.message || "Login failed");
+            throw error;
+        }
+    },
+
+    getUnverifiedEmail: async (phone: string): Promise<string> => {
+        const response = await api.get("/auth/unverified-email", {
+            params: { phone },
+            ...publicAuthOptions,
+        });
+        const email = response?.data?.email || response?.email;
+        if (!email) {
+            throw new Error("No unverified email found for this phone number");
+        }
+        return email;
+    },
+
+    sendVerification: async (email: string): Promise<any> => {
+        return api.post("/auth/send-verification", { email }, publicAuthOptions);
+    },
+
+    resendVerification: async (email: string): Promise<any> => {
+        return api.post("/auth/resend-verification", { email }, publicAuthOptions);
+    },
+
+    verifyEmail: async (email: string, code: string): Promise<any> => {
+        return api.post("/auth/verify-email", { email, code }, publicAuthOptions);
+    },
+
+    introspect: async (token: string): Promise<TokenIntrospection> => {
+        try {
+            const response = await fetch(`${getApiBaseUrl()}/auth/introspect`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({ token }),
+            });
+
+            if (!response.ok) {
+                return { active: false };
+            }
+
+            const result = await response.json();
+            const data = result?.data || result;
+            return {
+                active: !!data?.active,
+                payload: data?.payload,
+            };
+        } catch (error: any) {
+            console.error("[authService] Introspect error:", error?.message || error);
+            throw new Error("Token introspection failed");
         }
     },
 
@@ -68,11 +157,6 @@ export const authService = {
                     throw new Error(`Profile fetch failed: ${response.status}`);
 
                 const responseData = await response.json();
-                console.log(
-                    "[authService] Profile JSON:",
-                    JSON.stringify(responseData, null, 2)
-                );
-
                 const profile = responseData.data || responseData;
                 return profile;
             }
@@ -87,12 +171,6 @@ export const authService = {
             ) {
                 profile = response.data;
             }
-
-            console.log(
-                "[authService] Profile JSON (api.get):",
-                JSON.stringify(profile, null, 2)
-            );
-
             return profile;
         } catch (error: any) {
             console.error("[authService] Get profile error:", error);
@@ -133,8 +211,29 @@ export const authService = {
     },
 
     forgotPassword: async (payload: any): Promise<any> => {
-        const responseData = await api.post("/auth/forgot-password", payload);
+        const responseData = await api.post("/auth/forgot-password", payload, {
+            ...publicAuthOptions,
+        });
         return responseData;
+    },
+
+    verifyResetOtp: async (email: string, otp: string): Promise<any> => {
+        return api.post("/auth/verify-reset-otp", { email, otp }, publicAuthOptions);
+    },
+
+    resendResetOtp: async (email: string): Promise<any> => {
+        return api.post("/auth/resend-reset-otp", { email }, publicAuthOptions);
+    },
+
+    resetPassword: async (tempToken: string, newPassword: string): Promise<any> => {
+        return api.post("/auth/reset-password", { tempToken, newPassword }, publicAuthOptions);
+    },
+
+    clearLocalSession: async (): Promise<void> => {
+        await authStorage.removeItem("token");
+        await authStorage.removeItem("refreshToken");
+        await authStorage.removeItem("user");
+        DeviceEventEmitter.emit("forceLogout");
     },
 
     updatePassword: async (payload: any): Promise<any> => {
@@ -160,7 +259,9 @@ export const authService = {
                 throw new Error("No refresh token available");
             }
 
-            const response = await api.post("/auth/refresh", { refreshToken });
+            const response = await api.post("/auth/refresh", { refreshToken }, {
+                ...publicAuthOptions,
+            });
             const payload = response?.data || response;
             const newToken = payload?.accessToken || payload?.token;
 

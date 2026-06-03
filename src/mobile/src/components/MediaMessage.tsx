@@ -53,15 +53,6 @@ const MediaMessage: React.FC<MediaMessageProps> = ({ media, isSender, layoutMode
     const horizontalSafePadding = isSender ? 112 : 156;
 
     useEffect(() => {
-        console.log('[MediaMessage] Rendered with media:', {
-            mediaType: media.mediaType,
-            mimetype: media.mimetype,
-            hasUrl: !!media.url,
-            url: media.url?.substring(0, 50) + '...',
-            name: media.name,
-            filename: media.filename,
-        });
-
         // Cleanup audio on unmount or media change
         return () => {
             if (audioIntervalRef.current) {

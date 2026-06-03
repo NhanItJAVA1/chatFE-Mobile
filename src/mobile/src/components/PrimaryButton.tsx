@@ -7,17 +7,18 @@ export const PrimaryButton = ({
     label,
     onPress,
     loading = false,
+    disabled = false,
     variant = "primary",
     style,
 }: PrimaryButtonProps) => (
     <Pressable
         onPress={onPress}
-        disabled={loading}
+        disabled={loading || disabled}
         style={({ pressed }) => [
             styles.button,
             variant === "secondary" && styles.secondaryButton,
-            pressed && styles.pressed,
-            loading && styles.disabled,
+            pressed && !loading && !disabled && styles.pressed,
+            (loading || disabled) && styles.disabled,
             style,
         ]}
     >

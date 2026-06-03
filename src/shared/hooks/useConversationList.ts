@@ -151,8 +151,6 @@ export const useConversationList = (): UseConversationListReturn => {
         const handleConversationCreated = (
             raw: ConversationCreatedPayload
         ): void => {
-            console.log("[useConversationList] conversation:created received:", raw);
-
             const conversation = normalisePayload(raw);
             if (!conversation) return;
 
