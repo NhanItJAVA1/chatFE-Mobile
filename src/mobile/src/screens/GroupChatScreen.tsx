@@ -16,6 +16,7 @@ import {
     Modal,
     Dimensions,
     ImageBackground,
+    StatusBar,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -435,7 +436,7 @@ const groupMessagesForGallery = (messages: any[]): any[] => {
             nextIndex += 1;
         }
 
-        if (consecutiveImages.length >= 3) {
+        if (consecutiveImages.length >= 2) {
             const firstMessage = consecutiveImages[0];
             const captionSource = consecutiveImages.find((message) => message?.text?.trim());
 
@@ -1901,7 +1902,7 @@ export const GroupChatScreen: React.FC<{
             );
             const hasGalleryMedia =
                 hasMedia &&
-                item.media.length >= 3 &&
+                item.media.length >= 2 &&
                 item.media.every((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image");
             const galleryPreviewMedia = hasGalleryMedia ? item.media.slice(0, 3) : [];
             const galleryExtraCount = hasGalleryMedia ? Math.max(0, item.media.length - galleryPreviewMedia.length) : 0;
@@ -2355,8 +2356,12 @@ export const GroupChatScreen: React.FC<{
     return (
         <KeyboardAvoidingView
             style={styles.screen}
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
+            behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
+            keyboardVerticalOffset={Platform.select({
+                ios: 60,
+                android: 76 + (StatusBar.currentHeight || 0),
+                default: 0,
+            })}
         >
             {/* Header */}
             <View style={styles.chatHeaderWrap}>
@@ -3530,6 +3535,9 @@ const styles = StyleSheet.create({
     },
     mediaContainer: {
         gap: 8,
+        overflow: "visible",
+        zIndex: 10,
+        elevation: 10,
     },
     galleryBubble: {
         borderRadius: 16,

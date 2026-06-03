@@ -18,6 +18,7 @@ import {
   Modal,
   Dimensions,
   ImageBackground,
+  StatusBar,
 } from "react-native";
 import { Audio } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
@@ -518,7 +519,7 @@ const groupMessagesForGallery = (messages: MessagePayload[], currentUserId: stri
         nextIndex += 1;
       }
 
-      if (consecutiveImages.length >= 3) {
+      if (consecutiveImages.length >= 2) {
         groupedItems.push({
           kind: "gallery",
           key: `gallery-${getMessageKey(consecutiveImages[0])}`,
@@ -2109,8 +2110,12 @@ export const ChatScreen = ({
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
+      behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
+      keyboardVerticalOffset={Platform.select({
+        ios: 60,
+        android: 76 + (StatusBar.currentHeight || 0),
+        default: 0,
+      })}
     >
       {/* Header */}
       <View style={styles.chatHeaderWrap}>
@@ -3393,6 +3398,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 4,
     gap: 4,
+    overflow: "visible",
+    zIndex: 10,
+    elevation: 10,
   },
   typingContainer: {
     flexDirection: "row",
