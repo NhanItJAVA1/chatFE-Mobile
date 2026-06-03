@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { Avatar, Card, PrimaryButton } from "../components";
 import { colors } from "../theme";
+import userService from "../../../shared/services/userService";
 import type { User } from "@/types";
 import type { UseFriendshipState, UseFriendshipActions } from "../../../shared/hooks/useFriendship";
 
@@ -35,9 +36,11 @@ interface AddFriendScreenProps {
  */
 export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreenProps) => {
     const [searchQuery, setSearchQuery] = useState("");
+    const [sentRequestUsers, setSentRequestUsers] = useState<Record<string, User>>({});
 
     // Store mapping of userId -> full request object for quick lookup during cancel
     const sentRequestMapRef = useRef<Map<string, any>>(new Map());
+    const fetchingSentUserIdsRef = useRef<Set<string>>(new Set());
     // Track the last userId we sent a request to (for matching with incomplete API response)
     const lastSentUserIdRef = useRef<string | null>(null);
 
@@ -51,6 +54,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             request?.receiverId ||
             request?.toUserId ||
             request?.recipientId ||
+            request?.userId ||
             request?.receiver?.id ||
             request?.receiver?._id ||
             request?.receiverInfo?.id ||
@@ -60,19 +64,93 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
     };
 
     const getSentRequestUser = (request: any): User => {
-        const receiver = request?.receiverInfo || request?.receiver || request?.recipient || request?.toUser || {};
+        const receiver = request?.receiverInfo || request?.receiver || request?.recipient || request?.toUser || request?.user || {};
         const id = getRequestReceiverId(request);
+        const enrichedUser = sentRequestUsers[id];
+        if (enrichedUser) {
+            return enrichedUser;
+        }
+
         return {
             id,
             _id: id,
             email: receiver.email || "",
-            displayName: receiver.displayName || receiver.name || receiver.username || request?.receiverName || "Người dùng",
+            displayName:
+                receiver.displayName ||
+                receiver.name ||
+                receiver.username ||
+                request?.receiverName ||
+                request?.displayName ||
+                request?.name ||
+                (id ? `Người dùng ${id.slice(-4)}` : "Người dùng"),
             phoneNumber: receiver.phoneNumber || receiver.phone || request?.receiverPhone || "",
             avatar: receiver.avatar || receiver.avatarUrl || request?.receiverAvatar || "",
             avatarUrl: receiver.avatarUrl || receiver.avatar || request?.receiverAvatar || "",
             status: receiver.status || receiver.presenceStatus || "offline",
         } as User;
     };
+
+    useEffect(() => {
+        const missingUserIds = state.sentRequests
+            .filter((request: any) => String(request?.status || "pending").toLowerCase() === "pending")
+            .map((request: any) => getRequestReceiverId(request))
+            .filter((userId) => {
+                if (!userId || userId === "undefined" || userId === "null") {
+                    return false;
+                }
+
+                if (sentRequestUsers[userId] || fetchingSentUserIdsRef.current.has(userId)) {
+                    return false;
+                }
+
+                const request: any = state.sentRequests.find((item: any) => getRequestReceiverId(item) === userId);
+                const receiver = request?.receiverInfo || request?.receiver || request?.recipient || request?.toUser || request?.user;
+                return !receiver?.displayName && !receiver?.name && !receiver?.username;
+            });
+
+        if (missingUserIds.length === 0) {
+            return;
+        }
+
+        missingUserIds.forEach((userId) => fetchingSentUserIdsRef.current.add(userId));
+
+        let isActive = true;
+        Promise.all(
+            missingUserIds.map(async (userId) => {
+                const profile = await userService.getUserById(userId);
+                return { userId, profile };
+            })
+        )
+            .then((items) => {
+                if (!isActive) return;
+
+                setSentRequestUsers((current) => {
+                    const next = { ...current };
+                    items.forEach(({ userId, profile }) => {
+                        if (!profile) return;
+                        next[userId] = {
+                            id: profile.id || profile._id || userId,
+                            _id: profile._id || profile.id || userId,
+                            email: profile.email || "",
+                            displayName: profile.displayName || profile.name || profile.username || "Người dùng",
+                            phoneNumber: profile.phoneNumber || profile.phone || "",
+                            phone: profile.phone || profile.phoneNumber || "",
+                            avatar: profile.avatar || profile.avatarUrl || "",
+                            avatarUrl: profile.avatarUrl || profile.avatar || "",
+                            status: profile.status || profile.presenceStatus || "offline",
+                        } as User;
+                    });
+                    return next;
+                });
+            })
+            .finally(() => {
+                missingUserIds.forEach((userId) => fetchingSentUserIdsRef.current.delete(userId));
+            });
+
+        return () => {
+            isActive = false;
+        };
+    }, [state.sentRequests, sentRequestUsers]);
 
     const sentRequestItems = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
@@ -111,7 +189,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
                 return haystack.includes(query);
             });
-    }, [searchQuery, state.searchResults, state.sentRequests]);
+    }, [searchQuery, sentRequestUsers, state.searchResults, state.sentRequests]);
 
     // Handle search
     const handleSearch = async () => {
