@@ -19,6 +19,7 @@ import {
     View,
     type ViewStyle,
 } from "react-native";
+import { Audio } from "expo-av";
 import { AudioSession } from "@livekit/react-native";
 import { RTCView } from "@livekit/react-native-webrtc";
 import { LocalVideoTrack, Room, RoomEvent, Track, TrackEvent, type VideoTrack as LiveKitVideoTrack } from "livekit-client";
@@ -26,6 +27,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../hooks/useAuth";
 import { callService, type CallSession, type CallType } from "../services/callService";
 import { callSocket, type CallSocketPayload } from "../services/callSocket";
+
+const ringtoneAsset = require("../sound/a-ringtone.mp3");
 
 type CallStatus = "idle" | "calling" | "incoming" | "active" | "ending";
 type CallConversationType = "PRIVATE" | "GROUP";
@@ -181,6 +184,8 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
     const roomRef = useRef<Room | null>(null);
     const currentCallIdRef = useRef<string | null>(null);
     const incomingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const outgoingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const ringtoneRef = useRef<Audio.Sound | null>(null);
 
     const clearIncomingTimer = useCallback(() => {
         if (incomingTimerRef.current) {
@@ -188,6 +193,41 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             incomingTimerRef.current = null;
         }
     }, []);
+
+    const clearOutgoingTimer = useCallback(() => {
+        if (outgoingTimerRef.current) {
+            clearTimeout(outgoingTimerRef.current);
+            outgoingTimerRef.current = null;
+        }
+    }, []);
+
+    const stopRingtone = useCallback(async () => {
+        const ringtone = ringtoneRef.current;
+        ringtoneRef.current = null;
+
+        if (ringtone) {
+            try {
+                await ringtone.stopAsync();
+                await ringtone.unloadAsync();
+            } catch {
+                // Ringtone may already be stopped or unloaded.
+            }
+        }
+    }, []);
+
+    const startRingtone = useCallback(async () => {
+        await stopRingtone();
+
+        try {
+            const { sound } = await Audio.Sound.createAsync(
+                ringtoneAsset,
+                { shouldPlay: true, isLooping: true, volume: 1 },
+            );
+            ringtoneRef.current = sound;
+        } catch {
+            // Ringtone is non-critical; call UI still appears.
+        }
+    }, [stopRingtone]);
 
     const syncRoomMediaState = useCallback((room: Room | null = roomRef.current) => {
         setVideoTiles(collectVideoTiles(room));
@@ -212,10 +252,12 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
 
     const resetCall = useCallback(async () => {
         clearIncomingTimer();
+        clearOutgoingTimer();
+        await stopRingtone();
         await cleanupRoom();
         currentCallIdRef.current = null;
         dispatch({ type: "RESET" });
-    }, [cleanupRoom, clearIncomingTimer]);
+    }, [cleanupRoom, clearIncomingTimer, clearOutgoingTimer, stopRingtone]);
 
     const showIncomingCall = useCallback(
         (payload: CallSocketPayload) => {
@@ -224,6 +266,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
 
             currentCallIdRef.current = payload.callId;
             dispatch({ type: "INCOMING", payload });
+            void startRingtone();
             clearIncomingTimer();
             incomingTimerRef.current = setTimeout(() => {
                 if (payload.callId === currentCallIdRef.current) {
@@ -231,7 +274,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                 }
             }, 30000);
         },
-        [clearIncomingTimer, currentUserId, resetCall],
+        [clearIncomingTimer, currentUserId, resetCall, startRingtone],
     );
 
     const connectToLiveKit = useCallback(
@@ -259,8 +302,11 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             room.on(RoomEvent.MediaDevicesError, () => {
                 Alert.alert("Lỗi cuộc gọi", "Không thể truy cập microphone/camera.");
             });
+            room.on(RoomEvent.ParticipantConnected, () => {
+                clearOutgoingTimer();
+                syncRoomMediaState(room);
+            });
             [
-                RoomEvent.ParticipantConnected,
                 RoomEvent.ParticipantDisconnected,
                 RoomEvent.TrackSubscribed,
                 RoomEvent.TrackUnsubscribed,
@@ -280,7 +326,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             syncRoomMediaState(room);
             dispatch({ type: "ACTIVE" });
         },
-        [cleanupRoom, resetCall, syncRoomMediaState],
+        [cleanupRoom, clearOutgoingTimer, resetCall, syncRoomMediaState],
     );
 
     const joinAndConnect = useCallback(
@@ -320,6 +366,15 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                 });
                 currentCallIdRef.current = created.call.callId;
                 dispatch({ type: "CALLING", call: created.call, conversationType });
+                if (conversationType === "PRIVATE") {
+                    clearOutgoingTimer();
+                    outgoingTimerRef.current = setTimeout(() => {
+                        const hasRemoteParticipant = roomRef.current?.remoteParticipants.size > 0;
+                        if (currentCallIdRef.current === created.call.callId && !hasRemoteParticipant) {
+                            void callService.endCall(created.call.callId).finally(resetCall);
+                        }
+                    }, 15000);
+                }
                 await joinAndConnect(created.call.callId, type);
             } catch (error) {
                 if (isActiveCallConflict(error)) {
@@ -349,20 +404,21 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                 await resetCall();
             }
         },
-        [joinAndConnect, resetCall, state.status],
+        [clearOutgoingTimer, joinAndConnect, resetCall, state.status],
     );
 
     const acceptCall = useCallback(async () => {
         if (!state.callId) return;
         try {
             clearIncomingTimer();
+            await stopRingtone();
             await joinAndConnect(state.callId, state.type);
         } catch (error) {
             const message = getErrorMessage(error, "Không thể nghe máy");
             Alert.alert("Lỗi cuộc gọi", message);
             await resetCall();
         }
-    }, [clearIncomingTimer, joinAndConnect, resetCall, state.callId, state.type]);
+    }, [clearIncomingTimer, joinAndConnect, resetCall, state.callId, state.type, stopRingtone]);
 
     const rejectCall = useCallback(async () => {
         if (!state.callId) return;

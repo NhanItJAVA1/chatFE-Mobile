@@ -28,7 +28,7 @@ export interface MessagePayload {
     media?: any[];
     reactions?: any[];
     replyTo?: any;
-    status: "sent" | "delivered" | "seen";
+    status: "sending" | "sent" | "delivered" | "seen" | "failed";
     createdAt: string;
     updatedAt: string;
     type?: "text" | "image" | "file" | "link" | "system" | "poll" | "profile_card";
@@ -70,6 +70,11 @@ export interface MessagePayload {
     pinnedAt?: Date;
     pinnedBy?: string;
     pinnedByName?: string;
+
+    // Client-only optimistic messaging fields
+    clientMessageId?: string;
+    optimistic?: boolean;
+    sendError?: string;
 }
 
 export interface TypingData {

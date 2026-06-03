@@ -20,6 +20,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useChatMessage } from "../../../shared/hooks/useChat";
+import { useDraft } from "../../../shared/hooks/useDraft";
 import { useGroupChatMessage } from "../../../shared/hooks/useGroupChatMessage";
 import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { useAuth } from "../../../shared/hooks";
@@ -202,6 +203,7 @@ export const GroupChatScreen: React.FC<{
     const { state: groupState, actions: groupActions } = useGroupChat();
     const { startCall, state: callState } = useCall();
     const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
+    const { draftText: messageText, setDraftText: setMessageText, clearDraft } = useDraft(groupId || "");
 
     useEffect(() => {
         groupActions.setupGroupListeners();
@@ -222,7 +224,6 @@ export const GroupChatScreen: React.FC<{
     }, [groupId]);
 
     // Local state
-    const [messageText, setMessageText] = useState("");
     const [isSending, setIsSending] = useState(false);
     const [showMediaMenu, setShowMediaMenu] = useState(false);
     const [showContactPicker, setShowContactPicker] = useState(false);
@@ -912,23 +913,23 @@ export const GroupChatScreen: React.FC<{
                 if (quotedMessageId && chatActions.sendQuotedMessage) {
                     if (draftMedia.length > 0) {
                         await chatActions.sendQuotedMessage(quotedMessageId, trimmedText || "", draftMedia);
-                        setMessageText("");
+                        await clearDraft();
                     } else if (trimmedText) {
                         await chatActions.sendQuotedMessage(quotedMessageId, trimmedText);
-                        setMessageText("");
+                        await clearDraft();
                     }
                 }
             } else {
                 // Send text message normally
                 if (trimmedText) {
                     await chatActions.sendMessage(trimmedText);
-                    setMessageText("");
+                    await clearDraft();
                 }
 
                 // Send media
                 if (draftMedia.length > 0) {
                     await sendDraftMedia(trimmedText || undefined);
-                    setMessageText("");
+                    await clearDraft();
                 }
             }
 
@@ -938,7 +939,7 @@ export const GroupChatScreen: React.FC<{
         } finally {
             setIsSending(false);
         }
-    }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia, scrollToLatestMessage, chatState.replyingTo]);
+    }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia, scrollToLatestMessage, chatState.replyingTo, clearDraft]);
 
     const handleInputChange = useCallback((text: string) => {
         setMessageText(text);

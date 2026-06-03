@@ -4,11 +4,13 @@ import {
     ActivityIndicator,
     Alert,
     AppState,
+    DeviceEventEmitter,
     Dimensions,
     Image,
     Linking,
     Modal,
     Pressable,
+    RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
@@ -16,11 +18,12 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth, useFriendship } from "../../../shared/hooks";
 import { ConversationService, type Conversation, type ConversationLastMessageSummary } from "../../../shared/services/conversationService";
 import { SocketService } from "../../../shared/services/socketService";
-import { playIncomingMessageSound } from "../../../shared/services/messageSoundService";
 import { PresenceService, type PresenceStatus } from "../../../shared/services/presenceService";
+import { draftService, DRAFT_MESSAGE_CHANGED_EVENT, type DraftMessage } from "../../../shared/services/draftService";
 import searchService, {
     type GlobalSearchLink,
     type GlobalSearchMedia,
@@ -83,6 +86,59 @@ const sortConversations = (a: Conversation, b: Conversation): number => {
     return tb - ta;
 };
 
+let homeConversationListCache: Conversation[] = [];
+let homeConversationListPage = 1;
+let homeConversationListHasMore = true;
+const HOME_CONVERSATION_CACHE_KEY = "home_conversation_list_v1";
+
+const getConversationCacheId = (conversation: Conversation): string => {
+    return String(conversation?.id || conversation?._id || "");
+};
+
+const getConversationComparableSnapshot = (conversation: Conversation) => {
+    const lastMessage = conversation.lastMessage as any;
+    return {
+        id: getConversationCacheId(conversation),
+        updatedAt: conversation.updatedAt,
+        lastMessageAt: conversation.lastMessageAt,
+        unreadCount: conversation.unreadCount || 0,
+        pinned: getIsPinned(conversation),
+        archived: getIsArchived(conversation),
+        lastMessageId: lastMessage?.messageId || lastMessage?.id || lastMessage?._id || "",
+        lastMessageText: lastMessage?.textPreview || lastMessage?.text || "",
+        lastMessageStatus: conversation.lastMessageStatus || "",
+    };
+};
+
+const areConversationListsEqual = (a: Conversation[], b: Conversation[]): boolean => {
+    if (a.length !== b.length) return false;
+    return JSON.stringify(a.map(getConversationComparableSnapshot)) ===
+        JSON.stringify(b.map(getConversationComparableSnapshot));
+};
+
+const loadPersistedConversationList = async (): Promise<Conversation[]> => {
+    try {
+        const raw = await AsyncStorage.getItem(HOME_CONVERSATION_CACHE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed?.items) ? parsed.items : [];
+    } catch {
+        return [];
+    }
+};
+
+const savePersistedConversationList = async (items: Conversation[]): Promise<void> => {
+    if (items.length === 0) return;
+    try {
+        await AsyncStorage.setItem(
+            HOME_CONVERSATION_CACHE_KEY,
+            JSON.stringify({ items, savedAt: Date.now() })
+        );
+    } catch {
+        // Memory cache still keeps the back-navigation path instant.
+    }
+};
+
 export const HomeScreen: React.FC<HomeScreenProps> = ({
     onFriendPress,
     onGroupPress,
@@ -107,19 +163,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     });
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
-    const [conversations, setConversations] = useState<Conversation[]>([]);
+    const [conversations, setConversations] = useState<Conversation[]>(() => homeConversationListCache);
+    const [draftsByConversationId, setDraftsByConversationId] = useState<Record<string, DraftMessage>>({});
     const [conversationsLoading, setConversationsLoading] = useState(false);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
 
     // ── Pagination state ─────────────────────────────────────────────
     const PAGE_SIZE = 50;
-    const currentPageRef = useRef(1);
-    const [hasMorePages, setHasMorePages] = useState(true);
+    const currentPageRef = useRef(homeConversationListPage);
+    const [hasMorePages, setHasMorePages] = useState(homeConversationListHasMore);
     const [loadingMore, setLoadingMore] = useState(false);
 
     // ── Pin / Archive state ──────────────────────────────────────────
     const [showArchivedView, setShowArchivedView] = useState(false);
     const [contextMenuConversation, setContextMenuConversation] = useState<Conversation | null>(null);
+
+    useEffect(() => {
+        homeConversationListCache = conversations;
+        homeConversationListPage = currentPageRef.current;
+        homeConversationListHasMore = hasMorePages;
+        savePersistedConversationList(conversations);
+    }, [conversations, hasMorePages]);
 
     const getConversationIdentity = useCallback((conversation: Conversation): string => {
         const id = (conversation as any)?.id || (conversation as any)?._id;
@@ -162,6 +227,63 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return Array.from(map.values());
     }, [getConversationIdentity]);
 
+    const updateConversationsIfChanged = useCallback((items: Conversation[]) => {
+        const nextItems = dedupeConversations(items).sort(sortConversations);
+
+        setConversations((prev) => {
+            if (areConversationListsEqual(prev, nextItems)) {
+                return prev;
+            }
+            return nextItems;
+        });
+    }, [dedupeConversations]);
+
+    useEffect(() => {
+        const conversationIds = conversations
+            .map((conversation) => String(conversation?.id || conversation?._id || ""))
+            .filter(Boolean);
+
+        if (conversationIds.length === 0) {
+            setDraftsByConversationId({});
+            return;
+        }
+
+        let active = true;
+        draftService.getDrafts(conversationIds)
+            .then((drafts) => {
+                if (active) setDraftsByConversationId(drafts);
+            })
+            .catch(() => {
+                if (active) setDraftsByConversationId({});
+            });
+
+        return () => {
+            active = false;
+        };
+    }, [conversations]);
+
+    useEffect(() => {
+        const subscription = DeviceEventEmitter.addListener(
+            DRAFT_MESSAGE_CHANGED_EVENT,
+            (draft: DraftMessage) => {
+                const conversationId = String(draft?.conversationId || "");
+                if (!conversationId) return;
+
+                setDraftsByConversationId((current) => {
+                    const next = { ...current };
+                    if (draft.text?.trim()) {
+                        next[conversationId] = draft;
+                    } else {
+                        delete next[conversationId];
+                    }
+                    return next;
+                });
+            },
+        );
+
+        return () => subscription.remove();
+    }, []);
+
     // ── Load more conversations (next page) ──────────────────────────
     const loadMoreConversations = useCallback(async () => {
         if (loadingMore || !hasMorePages) return;
@@ -174,6 +296,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }
             if (items.length > 0) {
                 currentPageRef.current = nextPage;
+                homeConversationListPage = nextPage;
                 setConversations((prev) => dedupeConversations([...prev, ...items]));
             }
         } catch {
@@ -197,24 +320,39 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
     // Load friends on mount
     useEffect(() => {
+        let active = true;
+
         const loadHomeData = async () => {
-            setConversationsLoading(true);
+            setConversationsLoading(false);
+
             try {
-                await Promise.all([
-                    actions.loadFriends(),
-                    ConversationService.getConversations(1, PAGE_SIZE).then((items) => {
-                        currentPageRef.current = 1;
-                        setHasMorePages(items.length >= PAGE_SIZE);
-                        setConversations(dedupeConversations(items));
-                    }),
-                ]);
+                if (homeConversationListCache.length === 0) {
+                    const cachedItems = await loadPersistedConversationList();
+                    if (active && cachedItems.length > 0) {
+                        updateConversationsIfChanged(cachedItems);
+                    }
+                }
+
+                actions.loadFriends().catch(() => { });
+
+                const items = await ConversationService.getConversations(1, PAGE_SIZE);
+                if (!active) return;
+
+                currentPageRef.current = 1;
+                homeConversationListPage = 1;
+                setHasMorePages(items.length >= PAGE_SIZE);
+                updateConversationsIfChanged(items);
             } finally {
-                setConversationsLoading(false);
+                if (active) setConversationsLoading(false);
             }
         };
 
         loadHomeData();
-    }, []);
+
+        return () => {
+            active = false;
+        };
+    }, [updateConversationsIfChanged]);
 
     // Reload conversations when new group is created
     useEffect(() => {
@@ -242,7 +380,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     } else {
                         // Fallback: reload all conversations
                         const updated = await ConversationService.getConversations(1, 50);
-                        setConversations(dedupeConversations(updated));
+                        updateConversationsIfChanged(updated);
                     }
                 } catch (err) {
                     console.error("Failed to reload conversations:", err);
@@ -257,7 +395,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
             return () => clearTimeout(timeout);
         }
-    }, [createdGroupId, createdGroupData, onGroupCreatedAck, dedupeConversations]);
+    }, [createdGroupId, createdGroupData, onGroupCreatedAck, dedupeConversations, updateConversationsIfChanged]);
 
     const truncateName = (name: string | undefined, maxLength = 20) => {
         if (!name || name.length <= maxLength) {
@@ -689,10 +827,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             const conversationId = String(message?.conversationId || data?.conversationId || "");
             if (!conversationId) return;
 
-            if (message?.senderId && currentUserId && String(message.senderId) !== String(currentUserId)) {
-                playIncomingMessageSound();
-            }
-
             setConversations((prev) => {
                 const next = prev.map((conversation) => {
                     const id = conversation.id || conversation._id;
@@ -842,7 +976,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
             // Reload conversations when a new group is created or approved for current user.
             ConversationService.getConversations(1, PAGE_SIZE).then((updated) => {
-                setConversations(dedupeConversations(updated));
+                updateConversationsIfChanged(updated);
             });
         };
 
@@ -865,7 +999,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }
 
             ConversationService.getConversations(1, PAGE_SIZE).then((updated) => {
-                setConversations(dedupeConversations(updated));
+                updateConversationsIfChanged(updated);
             });
         };
 
@@ -991,7 +1125,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             socket.off("conversation:pin_toggled", handlePinToggled);
             socket.off("conversation:archived_toggled", handleArchivedToggled);
         };
-    }, [token, user?.id, (user as any)?._id, dedupeConversations, updateConversationLastMessage, normalizeConversationFromSocket]);
+    }, [token, user?.id, (user as any)?._id, dedupeConversations, updateConversationsIfChanged, updateConversationLastMessage, normalizeConversationFromSocket]);
 
     // Refresh conversations when app returns to foreground
     useEffect(() => {
@@ -1007,7 +1141,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 const totalLoaded = currentPageRef.current * PAGE_SIZE;
                 const updated = await ConversationService.getConversations(1, Math.max(totalLoaded, PAGE_SIZE));
                 if (isMounted) {
-                    setConversations(dedupeConversations(updated));
+                    updateConversationsIfChanged(updated);
                 }
             } catch {
                 // Silent fallback; socket path is still primary source.
@@ -1025,7 +1159,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             isMounted = false;
             appStateSub.remove();
         };
-    }, [token, dedupeConversations]);
+    }, [token, updateConversationsIfChanged]);
+
+    const handleManualRefresh = useCallback(async () => {
+        setIsRefreshing(true);
+        try {
+            const totalLoaded = currentPageRef.current * PAGE_SIZE;
+            const [items] = await Promise.all([
+                ConversationService.getConversations(1, Math.max(totalLoaded, PAGE_SIZE)),
+                actions.loadFriends().catch(() => { }),
+            ]);
+
+            setHasMorePages(items.length >= Math.max(totalLoaded, PAGE_SIZE));
+            updateConversationsIfChanged(items);
+        } finally {
+            setIsRefreshing(false);
+        }
+    }, [actions, updateConversationsIfChanged]);
 
     // ── Derived lists ────────────────────────────────────────────────
 
@@ -1614,8 +1764,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         if (!conversation) return null;
 
         const unreadCount = conversation?.unreadCount || 0;
-        const timeText = formatChatTime(getLastMessageCreatedAt(conversation));
-        const previewText = getLastMessagePreview(conversation);
+        const conversationId = String(conversation.id || conversation._id || "");
+        const draft = draftsByConversationId[conversationId];
+        const hasDraft = !!draft?.text?.trim();
+        const timeText = formatChatTime(hasDraft ? draft.updatedAt : getLastMessageCreatedAt(conversation));
+        const previewText = hasDraft ? draft.text.trim() : getLastMessagePreview(conversation);
         const isPinned = getIsPinned(conversation);
 
         const conversationType = getConversationType(conversation);
@@ -1688,10 +1841,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         </View>
                         <View style={styles.chatBottomLine}>
                             <Text
-                                style={styles.chatMessage}
+                                style={[styles.chatMessage, hasDraft && styles.draftMessage]}
                                 numberOfLines={1}
                             >
-                                {previewText}
+                                {hasDraft ? (
+                                    <>
+                                        <Text style={styles.draftPrefix}>[Bản nháp] </Text>
+                                        {previewText}
+                                    </>
+                                ) : (
+                                    previewText
+                                )}
                             </Text>
                             {conversation?.lastMessageStatus ? (
                                 <Ionicons
@@ -1738,6 +1898,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 keyboardShouldPersistTaps="handled"
                 onScroll={handleScrollEnd}
                 scrollEventThrottle={400}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={isRefreshing}
+                        onRefresh={handleManualRefresh}
+                        tintColor={colors.accent}
+                        colors={[colors.accent]}
+                    />
+                }
             >
                 {!showArchivedView && isSearchMode && (
                     <>
@@ -1842,7 +2010,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <Card style={styles.chatListCard}>
                     {isSearchMode ? (
                         renderGlobalSearchResults()
-                    ) : state.friendsLoading || conversationsLoading ? (
+                    ) : conversationsLoading && conversations.length === 0 ? (
                         <View style={styles.loadingContainer}>
                             <ActivityIndicator size="large" color={colors.accent} />
                             <Text style={styles.loadingText}>Đang tải danh sách chat...</Text>
@@ -2194,6 +2362,14 @@ const styles = StyleSheet.create({
         flex: 1,
         color: colors.textSoft,
         fontSize: 13,
+    },
+    draftMessage: {
+        color: colors.dangerSoft,
+        fontWeight: "600",
+    },
+    draftPrefix: {
+        color: colors.dangerSoft,
+        fontWeight: "800",
     },
     unreadBadge: {
         minWidth: 20,

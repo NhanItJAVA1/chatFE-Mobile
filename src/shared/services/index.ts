@@ -52,6 +52,8 @@ export {
     mediaService,
 } from "./mediaService";
 export { forwardService } from "./forwardService";
+export { draftService } from "./draftService";
+export type { DraftMessage } from "./draftService";
 export { playIncomingMessageSound } from "./messageSoundService";
 export {
     requestPresignedUrl,

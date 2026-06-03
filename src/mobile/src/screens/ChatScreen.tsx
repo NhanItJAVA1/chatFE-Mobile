@@ -22,6 +22,7 @@ import { Audio } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useChatMessage } from "../../../shared/hooks/useChat";
+import { useDraft } from "../../../shared/hooks/useDraft";
 import { useAuth } from "../../../shared/hooks";
 import { useCall } from "../../../shared/context";
 import {
@@ -72,6 +73,10 @@ const MessageBubble: React.FC<{
 
   const getStatusIcon = (status: string) => {
     switch (status) {
+      case "sending":
+        return "Đang gửi";
+      case "failed":
+        return "Lỗi";
       case "sent":
         return "✓";
       case "delivered":
@@ -269,7 +274,12 @@ const MessageBubble: React.FC<{
           <View style={styles.bubbleMetaRow}>
             <Text style={[styles.bubbleTime]}>{formatTime(message.createdAt)}</Text>
             {isOwn && (
-              <Text style={[styles.bubbleTime, message.status === "seen" && styles.seenStatus]}>
+              <Text style={[
+                styles.bubbleTime,
+                message.status === "seen" && styles.seenStatus,
+                message.status === "sending" && styles.sendingStatus,
+                message.status === "failed" && styles.failedStatus,
+              ]}>
                 {getStatusIcon(message.status)}
               </Text>
             )}
@@ -431,6 +441,10 @@ const ImageGalleryBubble: React.FC<{
 
   const getStatusIcon = (status: string) => {
     switch (status) {
+      case "sending":
+        return "Đang gửi";
+      case "failed":
+        return "Lỗi";
       case "sent":
         return "✓";
       case "delivered":
@@ -485,7 +499,12 @@ const ImageGalleryBubble: React.FC<{
         <View style={styles.bubbleMetaRow}>
           <Text style={styles.bubbleTime}>{formatTime(lastMessage.createdAt)}</Text>
           {isOwn && (
-            <Text style={[styles.bubbleTime, lastMessage.status === "seen" && styles.seenStatus]}>
+            <Text style={[
+              styles.bubbleTime,
+              lastMessage.status === "seen" && styles.seenStatus,
+              lastMessage.status === "sending" && styles.sendingStatus,
+              lastMessage.status === "failed" && styles.failedStatus,
+            ]}>
               {getStatusIcon(lastMessage.status)}
             </Text>
           )}
@@ -513,12 +532,11 @@ const TypingIndicator: React.FC<{ typingUsers: Set<string> }> = ({ typingUsers }
 /**
  * Chat Screen Component
  */
-export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: ChatScreenProps) => {
+export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat, onConversationReady }: ChatScreenProps) => {
   const authContext = useAuth();
   const callContext = useCall();
   const currentUser = authContext.user;
   const token = authContext.token;
-  const [messageText, setMessageText] = React.useState("");
   const [showMediaMenu, setShowMediaMenu] = React.useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = React.useState(false);
   const [showForwardDialog, setShowForwardDialog] = React.useState(false);
@@ -560,6 +578,14 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
   const currentUserId = currentUser?.id || (currentUser as any)?._id || "";
 
   const { state, actions, flatListRef, highlightedMessageId } = useChatMessage(friendId || "", token || "");
+  const conversationId = state.conversation?._id || state.conversation?.id || chatUser?.conversationId || "";
+  const { draftText: messageText, setDraftText: setMessageText, clearDraft } = useDraft(conversationId);
+
+  useEffect(() => {
+    if (conversationId && state.conversation) {
+      onConversationReady?.(conversationId);
+    }
+  }, [conversationId, onConversationReady, state.conversation]);
 
   useEffect(() => {
     if (!friendId || !token || isSelfChat) {
@@ -692,7 +718,6 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
   }, [friendId, chatUser?.name, onBackPress]);
 
   const { conversation, messages, isLoading, isLoadingMore, isSending, error, typingUsers, hasMoreMessages } = state;
-  const conversationId = conversation?._id || conversation?.id || chatUser?.conversationId || "";
   const isBlockedChatError = String(error || "").toLowerCase().includes("blocked") || isBlockedByMe;
 
   React.useEffect(() => {
@@ -1338,33 +1363,34 @@ export const ChatScreen = ({ onBackPress, chatUser = null, onOpenPrivateChat }: 
         const quotedMessageId = state.replyingTo._id || state.replyingTo.id;
         if (quotedMessageId && actionsRef.current.sendQuotedMessage) {
           await actionsRef.current.sendQuotedMessage(quotedMessageId, trimmedText || "", draftMedia);
-          setMessageText("");
+          await clearDraft();
           return;
         }
       }
 
       await sendDraftMedia(trimmedText || undefined);
-      setMessageText("");
+      await clearDraft();
       return;
     }
 
     if (trimmedText) {
-      setMessageText("");
-
       // If replying to a message, send as quoted message
+      let sendPromise: Promise<void>;
       if (state.replyingTo) {
         const quotedMessageId = state.replyingTo._id || state.replyingTo.id;
         if (quotedMessageId && actionsRef.current.sendQuotedMessage) {
-          await actionsRef.current.sendQuotedMessage(quotedMessageId, trimmedText);
+          sendPromise = actionsRef.current.sendQuotedMessage(quotedMessageId, trimmedText);
         } else {
           // Fallback to regular send if sendQuotedMessage is not available
-          await actionsRef.current.sendMessage(trimmedText);
+          sendPromise = actionsRef.current.sendMessage(trimmedText);
         }
       } else {
-        await actionsRef.current.sendMessage(trimmedText);
+        sendPromise = actionsRef.current.sendMessage(trimmedText);
       }
+      await clearDraft();
+      await sendPromise;
     }
-  }, [draftMedia.length, hasSendableContent, messageText, sendDraftMedia, state.replyingTo]);
+  }, [clearDraft, draftMedia.length, hasSendableContent, messageText, sendDraftMedia, state.replyingTo]);
 
   /**
    * Handle text input (typing indicator)
@@ -2672,6 +2698,15 @@ const styles = StyleSheet.create({
   },
   seenStatus: {
     color: "#4CAF50",
+  },
+  sendingStatus: {
+    color: colors.overlayWhite75,
+    fontSize: 10,
+  },
+  failedStatus: {
+    color: colors.dangerSoft,
+    fontSize: 10,
+    fontWeight: "700",
   },
   messageHighlighted: {
     backgroundColor: "rgba(255, 200, 0, 0.18)",

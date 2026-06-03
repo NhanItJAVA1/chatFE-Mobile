@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ConversationService, Conversation } from "../services/conversationService";
 import { SocketService, MessagePayload, TypingData } from "../services/socketService";
-import { playIncomingMessageSound } from "../services/messageSoundService";
 import { useAuth } from "./useAuth";
 import { saveMessagesToCache, loadMessagesFromCache, mergeMessages } from "../utils/cacheUtils";
 import { useScrollToMessage } from "./useScrollToMessage";
@@ -66,21 +65,74 @@ const conversationCache = new Map<string, {
     nextCursor: string | null;
 }>();
 
-const getMessageId = (message: MessagePayload): string => {
-    return message._id || message.id || `${message.senderId}-${message.createdAt}`;
+const makeClientMessageId = (): string => {
+    return `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 };
 
-const mergeUniqueMessages = (
+const getMessageId = (message: MessagePayload): string => {
+    return message._id || message.id || message.clientMessageId || `${message.senderId}-${message.createdAt}`;
+};
+
+const hasRealMessageId = (message: MessagePayload): boolean => {
+    return !!(message._id || message.id);
+};
+
+const isOptimisticMessage = (message: MessagePayload): boolean => {
+    return !!message.optimistic || message.status === "sending" || message.status === "failed";
+};
+
+const isLikelyServerAckForOptimisticMessage = (
+    optimistic: MessagePayload,
+    incoming: MessagePayload
+): boolean => {
+    if (!isOptimisticMessage(optimistic)) return false;
+    if ((optimistic.clientMessageId || "") && optimistic.clientMessageId === incoming.clientMessageId) return true;
+    if (!hasRealMessageId(incoming)) return false;
+    if (optimistic.senderId !== incoming.senderId) return false;
+    if (optimistic.conversationId !== incoming.conversationId) return false;
+    if ((optimistic.text || "").trim() !== (incoming.text || "").trim()) return false;
+
+    const optimisticMediaCount = optimistic.media?.length || 0;
+    const incomingMediaCount = incoming.media?.length || 0;
+    if (optimisticMediaCount !== incomingMediaCount) return false;
+
+    const optimisticTime = new Date(optimistic.createdAt).getTime();
+    const incomingTime = new Date(incoming.createdAt).getTime();
+    if (!Number.isFinite(optimisticTime) || !Number.isFinite(incomingTime)) return true;
+
+    return Math.abs(incomingTime - optimisticTime) < 30000;
+};
+
+const mergeServerMessages = (
     incoming: MessagePayload[],
     existing: MessagePayload[]
 ): MessagePayload[] => {
+    const matchedIncomingIndexes = new Set<number>();
+    const withoutMatchedOptimistic = existing.filter((message) => {
+        const matchIndex = incoming.findIndex((incomingMessage, index) =>
+            !matchedIncomingIndexes.has(index) &&
+            isLikelyServerAckForOptimisticMessage(message, incomingMessage)
+        );
+
+        if (matchIndex === -1) return true;
+        matchedIncomingIndexes.add(matchIndex);
+        return false;
+    });
+
+    return mergeUniqueMessages(incoming, withoutMatchedOptimistic);
+};
+
+function mergeUniqueMessages(
+    incoming: MessagePayload[],
+    existing: MessagePayload[]
+): MessagePayload[] {
     const merged = [...incoming, ...existing];
     const unique = new Map<string, MessagePayload>();
     merged.forEach((message) => {
         unique.set(getMessageId(message), message);
     });
     return Array.from(unique.values());
-};
+}
 
 /**
  * Build user map from messages for lookup by senderId
@@ -190,7 +242,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             if (message && (message._id || message.id)) {
                 setState((prev) => {
                     // Prepend/Merge and enrich
-                    const merged = mergeUniqueMessages([message], prev.messages);
+                    const merged = mergeServerMessages([message], prev.messages);
                     // For private chat, we need to sort to ensure correct order
                     const sorted = merged.sort((a, b) => {
                         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -260,7 +312,37 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         try {          SocketService.connect(token);            await SocketService.waitForConnection(5000);          const conversation = await ConversationService.getOrCreatePrivateConversation(
                 friendId
             );
-            const conversationId = conversation._id || conversation.id;          const messagesResponse = await ConversationService.loadMessages(
+            const conversationId = conversation._id || conversation.id;
+            const memoryCache = conversationCache.get(conversationId);
+
+            if (memoryCache) {
+                setState((prev) => ({
+                    ...prev,
+                    conversation: memoryCache.conversation,
+                    messages: memoryCache.messages,
+                    isLoading: false,
+                    error: null,
+                    hasMoreMessages: memoryCache.hasMoreMessages,
+                    nextCursor: memoryCache.nextCursor,
+                }));
+            } else {
+                try {
+                    const cachedMessages = await loadMessagesFromCache(conversationId);
+                    if (cachedMessages.length > 0) {
+                        setState((prev) => ({
+                            ...prev,
+                            conversation,
+                            messages: cachedMessages,
+                            isLoading: false,
+                            error: null,
+                        }));
+                    }
+                } catch (error) {
+                    console.error('[useChat] Failed to load from cache:', error);
+                }
+            }
+
+            const messagesResponse = await ConversationService.loadMessages(
                 conversation._id || conversation.id,
                 null,
                 MESSAGE_LIMIT
@@ -271,11 +353,13 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 loadingTimeoutRef.current = null;
             }            await SocketService.joinConversation(
                 conversation._id || conversation.id
-            );          let cachedMessages: MessagePayload[] = [];
-            try {
-                cachedMessages = await loadMessagesFromCache(conversationId);                if (cachedMessages.length > 0) {              }
-            } catch (error) {
-                console.error('[useChat] Failed to load from cache:', error);
+            );          let cachedMessages: MessagePayload[] = memoryCache?.messages || [];
+            if (!cachedMessages.length) {
+                try {
+                    cachedMessages = await loadMessagesFromCache(conversationId);                if (cachedMessages.length > 0) {              }
+                } catch (error) {
+                    console.error('[useChat] Failed to load from cache:', error);
+                }
             }
 
             // Step 3b: Load from API
@@ -368,13 +452,8 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 if (incomingConversationId && incomingConversationId !== conversationId) {                return;
                 }
 
-                const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
-                if (message.senderId && currentUserId && String(message.senderId) !== String(currentUserId)) {
-                    playIncomingMessageSound();
-                }
-
                 setState((prev) => {
-                    const merged = mergeUniqueMessages([message], prev.messages);
+                    const merged = mergeServerMessages([message], prev.messages);
                     // Use the helper to add and enrich
                     const enriched = enrichMessagesWithQuotedData(merged);
                     const newState = {
@@ -404,12 +483,8 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 if (incomingConvId && incomingConvId !== conversationId) {
                     return;
                 }
-                const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
-                if (message?.senderId && currentUserId && String(message.senderId) !== String(currentUserId)) {
-                    playIncomingMessageSound();
-                }
                 setState((prev) => {
-                    const merged = mergeUniqueMessages([message], prev.messages);
+                    const merged = mergeServerMessages([message], prev.messages);
                     // Use helper to add and enrich
                     const enriched = enrichMessagesWithQuotedData(merged);
                     const newState = {
@@ -664,26 +739,6 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         [user]
     );
 
-    /**
-     * Update both state and cache
-     */
-    const updateStateAndCache = useCallback((updates: Partial<UseChatMessageState>) => {
-        setState((prev) => {
-            const newState = { ...prev, ...updates };
-            // Update cache if conversation exists
-            if (newState.conversation) {
-                const conversationId = newState.conversation._id || newState.conversation.id;
-                conversationCache.set(conversationId, {
-                    conversation: newState.conversation,
-                    messages: newState.messages,
-                    hasMoreMessages: newState.hasMoreMessages,
-                    nextCursor: newState.nextCursor,
-                });
-            }
-            return newState;
-        });
-    }, []);
-
     const addMessages = useCallback((messages: MessagePayload[]) => {
         if (!messages.length) {
             return;
@@ -731,37 +786,131 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
      */
     const sendMessage = useCallback(
         async (text: string, media?: any[]) => {
-            if (!state.conversation || !text.trim()) {
+            const trimmedText = text.trim();
+            if (!state.conversation || (!trimmedText && (!media || media.length === 0))) {
                 return;
             }
 
-            setState((prev) => ({ ...prev, isSending: true, error: null }));
+            const conversationId = state.conversation._id || state.conversation.id;
+            const clientMessageId = makeClientMessageId();
+            const now = new Date().toISOString();
+            const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+            const optimisticMessage: MessagePayload = {
+                id: clientMessageId,
+                clientMessageId,
+                conversationId,
+                senderId: currentUserId,
+                senderName: user?.displayName || (user as any)?.name || "Bạn",
+                senderAvatar: (user as any)?.avatarUrl || (user as any)?.avatar || "",
+                text: trimmedText,
+                media: media || [],
+                reactions: [],
+                status: "sending",
+                createdAt: now,
+                updatedAt: now,
+                type: media?.length ? "image" : "text",
+                optimistic: true,
+            };
+
+            setState((prev) => {
+                const newMessages = mergeUniqueMessages([optimisticMessage], prev.messages);
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+                    saveMessagesToCache(convId, newMessages).catch((error) => {
+                        console.error('[useChat] Failed to save optimistic message to cache:', error);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    error: null,
+                };
+            });
 
             try {
                 // Stop typing indicator
-                stopTyping();
+                if (typingTimeoutRef.current) {
+                    clearTimeout(typingTimeoutRef.current);
+                }
+                SocketService.stopTyping(conversationId, { toUserId: friendId });
 
                 // Send message via Socket.IO
                 const messages = await SocketService.sendMessage(
-                    state.conversation._id || state.conversation.id,
-                    text.trim(),
+                    conversationId,
+                    trimmedText,
                     media
                 );
 
-                // Optimistically merge sent messages. If socket echo arrives, dedupe prevents duplicates.
-                updateStateAndCache({
-                    messages: mergeUniqueMessages(messages, state.messages),
-                    isSending: false,
+                setState((prev) => {
+                    const acknowledgedMessages = messages.length > 0
+                        ? messages.map((message) => ({ ...message, clientMessageId, optimistic: false }))
+                        : [{ ...optimisticMessage, status: "sent" as const, optimistic: false }];
+                    const newMessages = mergeServerMessages(acknowledgedMessages, prev.messages);
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages: newMessages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, newMessages).catch((error) => {
+                            console.error('[useChat] Failed to save sent message to cache:', error);
+                        });
+                    }
+
+                    return {
+                        ...prev,
+                        messages: newMessages,
+                        isSending: false,
+                    };
                 });
             } catch (error: any) {
-                setState((prev) => ({
-                    ...prev,
-                    error: error.message || "Failed to send message",
-                    isSending: false,
-                }));
+                setState((prev) => {
+                    const newMessages = prev.messages.map((message) =>
+                        message.clientMessageId === clientMessageId
+                            ? {
+                                ...message,
+                                status: "failed" as const,
+                                optimistic: true,
+                                sendError: error.message || "Failed to send message",
+                                updatedAt: new Date().toISOString(),
+                            }
+                            : message
+                    );
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages: newMessages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, newMessages).catch((cacheError) => {
+                            console.error('[useChat] Failed to save failed message to cache:', cacheError);
+                        });
+                    }
+
+                    return {
+                        ...prev,
+                        messages: newMessages,
+                        error: error.message || "Failed to send message",
+                        isSending: false,
+                    };
+                });
             }
         },
-        [state.conversation, state.messages, updateStateAndCache]
+        [state.conversation, friendId, user]
     );
 
     /**
@@ -1160,31 +1309,100 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
      * Send quoted/reply message
      */
     const sendQuotedMessage = useCallback(async (quotedMessageId: string, text: string, media?: any[]) => {
+        const trimmedText = text.trim();
+        const clientMessageId = makeClientMessageId();
+
         try {
             if (!state.conversation) {
                 throw new Error("No conversation loaded");
             }
 
-            if (!text.trim() && (!media || media.length === 0)) {
+            if (!trimmedText && (!media || media.length === 0)) {
                 throw new Error("Message cannot be empty");
             }
 
             const conversationId = state.conversation._id || state.conversation.id;
-            setState((prev) => ({ ...prev, isSending: true }));
+            const now = new Date().toISOString();
+            const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+            const quotedMessage = state.messages.find((message) => getMessageId(message) === quotedMessageId);
+            const optimisticMessage: MessagePayload = {
+                id: clientMessageId,
+                clientMessageId,
+                conversationId,
+                senderId: currentUserId,
+                senderName: user?.displayName || (user as any)?.name || "Bạn",
+                senderAvatar: (user as any)?.avatarUrl || (user as any)?.avatar || "",
+                text: trimmedText,
+                media: media || [],
+                reactions: [],
+                status: "sending",
+                createdAt: now,
+                updatedAt: now,
+                type: media?.length ? "image" : "text",
+                quotedMessageId,
+                quotedMessage: quotedMessage
+                    ? {
+                        _id: quotedMessage._id,
+                        id: quotedMessage.id,
+                        text: quotedMessage.text,
+                        senderId: quotedMessage.senderId,
+                        senderName: quotedMessage.senderName,
+                        type: quotedMessage.type,
+                        media: quotedMessage.media,
+                    }
+                    : undefined,
+                quotedMessagePreview: quotedMessage?.text,
+                quotedMessageSenderId: quotedMessage?.senderId,
+                quotedMessageSenderName: quotedMessage?.senderName,
+                optimistic: true,
+            };
+
+            setState((prev) => {
+                const newMessages = enrichMessagesWithQuotedData(mergeUniqueMessages([optimisticMessage], prev.messages));
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+                    saveMessagesToCache(convId, newMessages).catch((error) => {
+                        console.error('[useChat] Failed to save optimistic quoted message to cache:', error);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    replyingTo: null,
+                    error: null,
+                };
+            });
+
             const messages = await SocketService.sendQuotedMessage(
                 conversationId,
                 quotedMessageId,
-                text.trim(),
+                trimmedText,
                 media
             );
 
             setState((prev) => {
-                const merged = mergeUniqueMessages(messages || [], prev.messages);
+                const acknowledgedMessages = (messages?.length ? messages : [{ ...optimisticMessage, status: "sent" as const }])
+                    .map((message) => ({ ...message, clientMessageId, optimistic: false }));
+                const merged = mergeServerMessages(acknowledgedMessages, prev.messages);
                 const newMessages = enrichMessagesWithQuotedData(merged);
 
                 // Save to cache
                 if (prev.conversation) {
                     const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
                     saveMessagesToCache(convId, newMessages).catch((error) => {
                         console.error('[useChat] Failed to save quoted message to cache:', error);
                     });
@@ -1198,13 +1416,41 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 };
             });
         } catch (error: any) {
-            setState((prev) => ({
-                ...prev,
-                isSending: false,
-                error: error.message || "Failed to send quoted message",
-            }));
+            setState((prev) => {
+                const newMessages = prev.messages.map((message) =>
+                    message.clientMessageId === clientMessageId
+                        ? {
+                            ...message,
+                            status: "failed" as const,
+                            optimistic: true,
+                            sendError: error.message || "Failed to send quoted message",
+                            updatedAt: new Date().toISOString(),
+                        }
+                        : message
+                );
+
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+                    saveMessagesToCache(convId, newMessages).catch((cacheError) => {
+                        console.error('[useChat] Failed to save failed quoted message to cache:', cacheError);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    error: error.message || "Failed to send quoted message",
+                };
+            });
         }
-    }, [state.conversation]);
+    }, [state.conversation, state.messages, user]);
 
     /**
      * Set message to reply to

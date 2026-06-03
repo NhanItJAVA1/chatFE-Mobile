@@ -63,6 +63,7 @@ export type ChatScreenProps = {
     onBackPress: () => void;
     chatUser?: any;
     onOpenPrivateChat?: (user: any) => void;
+    onConversationReady?: (conversationId: string) => void;
 };
 
 // FriendRequestsScreen Component
