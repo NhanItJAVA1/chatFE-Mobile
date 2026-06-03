@@ -1,6 +1,7 @@
 import { io, Socket } from "socket.io-client";
 import { getApiBaseUrl } from "../runtime";
-import { apiCall } from "./api";
+import { apiCall, tokenManager } from "./api";
+import type { Poll, PollSocketEvent } from "@/types";
 
 // Remove /v1 suffix from API URL to get base socket URL
 const SOCKET_URL = getApiBaseUrl().replace("/v1", "");
@@ -27,14 +28,35 @@ export interface MessagePayload {
     media?: any[];
     reactions?: any[];
     replyTo?: any;
-    status: "sent" | "delivered" | "seen";
+    status: "sending" | "sent" | "delivered" | "seen" | "failed";
     createdAt: string;
     updatedAt: string;
-    type?: "text" | "image" | "file" | "link" | "system";
+    type?: "text" | "image" | "file" | "link" | "system" | "poll" | "profile_card";
+    messageType?: string;
+    profileCardUserId?: string;
+    profileCard?: {
+        id: string;
+        displayName?: string;
+        name?: string;
+        avatar?: string;
+        avatarUrl?: string;
+        phone?: string;
+        phoneNumber?: string;
+        relationship?: string;
+        [key: string]: any;
+    };
+    pollId?: string;
+    poll?: Poll;
     links?: string[];
     deletedForUserIds?: string[];
     deletedBy?: string;
     deletedAt?: string;
+    isForwarded?: boolean;
+    forwarded?: boolean;
+    forwardedFrom?: any;
+    forwardedFromMessageId?: string;
+    originalMessageId?: string;
+    sourceMessageId?: string;
 
     // Reply/Quote fields
     quotedMessageId?: string;
@@ -48,11 +70,18 @@ export interface MessagePayload {
     pinnedAt?: Date;
     pinnedBy?: string;
     pinnedByName?: string;
+
+    // Client-only optimistic messaging fields
+    clientMessageId?: string;
+    optimistic?: boolean;
+    sendError?: string;
 }
 
 export interface TypingData {
     userId: string;
     conversationId: string;
+    toUserId?: string;
+    groupId?: string;
     isTyping: boolean;
 }
 
@@ -94,22 +123,51 @@ export interface GroupOwnerTransferEvent extends GroupEventData {
 export class SocketService {
     private static socket: Socket | null = null;
     private static typingTimeout: ReturnType<typeof setTimeout> | null = null;
+    private static currentToken: string | null = null;
+    private static isRefreshingSocketToken = false;
+    private static joinedConversationIds = new Set<string>();
+    private static registeredListeners = new Map<string, Set<(...args: any[]) => void>>();
 
-    /**
-     * Connect to Socket.IO server
-     */
-    static connect(token: string): Socket {
-        if (this.socket?.connected) {
-            console.log('[SocketService] Socket already connected');
-            return this.socket;
+    private static addRegisteredListener(eventName: string, handler: (...args: any[]) => void): void {
+        if (!this.socket) return;
+
+        this.socket.on(eventName, handler);
+
+        const handlers = this.registeredListeners.get(eventName) || new Set();
+        handlers.add(handler);
+        this.registeredListeners.set(eventName, handlers);
+    }
+
+    private static offRegisteredListeners(eventName: string): void {
+        if (!this.socket) return;
+
+        const handlers = this.registeredListeners.get(eventName);
+        if (!handlers) return;
+
+        handlers.forEach((handler) => {
+            this.socket?.off(eventName, handler);
+        });
+        this.registeredListeners.delete(eventName);
+    }
+
+    private static isAuthError(error: any): boolean {
+        const message = String(error?.message || error || "").toLowerCase();
+        return message.includes("authentication") || message.includes("invalid token") || message.includes("jwt") || message.includes("unauthorized");
+    }
+
+    private static createSocket(token: string): Socket {
+        this.currentToken = token;
+
+        if (this.socket) {
+            this.registeredListeners.clear();
+            this.socket.removeAllListeners();
+            this.socket.disconnect();
         }
 
-        this.socket = io(SOCKET_URL + SOCKET_NAMESPACE, {
-            // Try Authorization header format first
+        const socket = io(SOCKET_URL + SOCKET_NAMESPACE, {
             extraHeaders: {
                 Authorization: `Bearer ${token}`,
             },
-            // Also try auth object as fallback
             auth: {
                 token,
             },
@@ -120,34 +178,96 @@ export class SocketService {
             reconnectionDelayMax: 5000,
         });
 
-        // Connection events
-        this.socket.on("connect", () => {
-            // Connected
-        });
-        this.socket.on("disconnect", (reason: string) => {
-            console.warn('[SocketService] Socket disconnected:', reason);
-        });
-        this.socket.on("connect_error", (error: any) => {
-            console.error('[SocketService] Socket connection error:', error?.message || error);
+        this.socket = socket;
+
+        socket.on("connect", () => {            this.rejoinKnownConversations();
         });
 
-        // Debug: Log all events received
-        const originalEmit = this.socket.on;
-        const self = this;
-        this.socket.on = function (eventName: string, callback: any) {
+        socket.on("disconnect", (reason: string) => {
+            console.warn("[SocketService] Socket disconnected:", reason);
+        });
+
+        socket.on("connect_error", (error: any) => {
+            console.error("[SocketService] Socket connection error:", error?.message || error);
+            if (this.isAuthError(error)) {
+                this.refreshTokenAndReconnect().catch((refreshError) => {
+                    console.error("[SocketService] Socket token refresh failed:", refreshError?.message || refreshError);
+                });
+            }
+        });
+
+        const originalOn = socket.on;
+        socket.on = function (eventName: string, callback: any) {
             const wrappedCallback = (...args: any[]) => {
-                if (eventName !== "receiveMessage" && eventName !== "messageSeen" && !eventName.includes("reconnect")) {
-                    console.log('[SocketService] EVENT RECEIVED:', eventName, {
-                        argsCount: args.length,
-                        firstArg: typeof args[0] === 'object' ? Object.keys(args[0]).slice(0, 3) : typeof args[0],
-                    });
-                }
+                if (eventName !== "receiveMessage" && eventName !== "messageSeen" && !eventName.includes("reconnect")) {                }
                 callback(...args);
             };
-            return originalEmit.call(this, eventName, wrappedCallback);
+            return originalOn.call(this, eventName, wrappedCallback);
         } as any;
 
-        return this.socket;
+        return socket;
+    }
+
+    private static async refreshTokenAndReconnect(): Promise<void> {
+        if (this.isRefreshingSocketToken) {
+            return;
+        }
+
+        this.isRefreshingSocketToken = true;
+
+        try {
+            const storedToken = await tokenManager.getAccessToken();
+            let nextToken = storedToken && storedToken !== this.currentToken ? storedToken : null;
+
+            if (!nextToken) {
+                const refreshed = await tokenManager.refreshAccessToken();
+                if (!refreshed) {
+                    throw new Error("Unable to refresh socket token");
+                }
+                nextToken = await tokenManager.getAccessToken();
+            }
+
+            if (!nextToken) {
+                throw new Error("No refreshed socket token available");
+            }            this.currentToken = nextToken;
+            if (this.socket) {
+                this.socket.auth = { token: nextToken };
+                (this.socket.io.opts as any).extraHeaders = {
+                    ...((this.socket.io.opts as any).extraHeaders || {}),
+                    Authorization: `Bearer ${nextToken}`,
+                };
+                this.socket.disconnect();
+                this.socket.connect();
+            } else {
+                this.createSocket(nextToken);
+            }
+        } finally {
+            this.isRefreshingSocketToken = false;
+        }
+    }
+
+    private static rejoinKnownConversations(): void {
+        if (!this.socket?.connected || this.joinedConversationIds.size === 0) {
+            return;
+        }
+
+        this.joinedConversationIds.forEach((conversationId) => {
+            this.socket?.emit("joinGroup", { conversationId }, (response: any) => {
+                if (response?.success) {                } else {
+                    console.warn("[SocketService] Failed to rejoin conversation:", conversationId, response?.error);
+                }
+            });
+        });
+    }
+
+    /**
+     * Connect to Socket.IO server
+     */
+    static connect(token: string): Socket {
+        if (this.socket?.connected) {            return this.socket;
+        }
+
+        return this.createSocket(token);
     }
 
     /**
@@ -157,6 +277,8 @@ export class SocketService {
         if (this.socket) {
             this.socket.disconnect();
             this.socket = null;
+            this.currentToken = null;
+            this.registeredListeners.clear();
             if (this.typingTimeout) {
                 clearTimeout(this.typingTimeout);
             }
@@ -186,29 +308,48 @@ export class SocketService {
         }
 
         return new Promise((resolve, reject) => {
-            if (!this.socket) {
+            const startingSocket = this.socket;
+            if (!startingSocket) {
                 reject(new Error("Socket not initialized"));
                 return;
             }
 
+            let settled = false;
             const timeout = setTimeout(() => {
+                cleanup();
                 reject(new Error("Socket connection timeout"));
-            }, timeoutMs);
+            }, Math.max(timeoutMs, 10000));
 
-            this.socket.once("connect", () => {
+            const cleanup = () => {
+                if (settled) return;
+                settled = true;
                 clearTimeout(timeout);
-                console.log('[SocketService] Resolved connection promise');
-                resolve();
-            });
+                startingSocket.off("connect", onConnect);
+                startingSocket.off("connect_error", onError);
+                clearInterval(pollInterval);
+            };
 
-            // Also reject on connection error
+            const onConnect = () => {
+                cleanup();                resolve();
+            };
+
             const onError = (error: any) => {
-                clearTimeout(timeout);
-                this.socket?.removeListener("connect_error", onError);
+                if (this.isAuthError(error)) {
+                    return;
+                }
+                cleanup();
                 reject(new Error(`Socket connection error: ${error?.message || error}`));
             };
 
-            this.socket.on("connect_error", onError);
+            const pollInterval = setInterval(() => {
+                if (this.socket?.connected) {
+                    cleanup();
+                    resolve();
+                }
+            }, 100);
+
+            startingSocket.once("connect", onConnect);
+            startingSocket.on("connect_error", onError);
         });
     }
 
@@ -218,21 +359,15 @@ export class SocketService {
     static async joinConversation(conversationId: string): Promise<any> {
         try {
             // Wait for socket to be connected before joining
-            if (!this.socket?.connected) {
-                console.log('[SocketService] Socket not connected yet, waiting...');
-                await this.waitForConnection(5000);
+            if (!this.socket?.connected) {                await this.waitForConnection(5000);
             }
 
             return new Promise((resolve, reject) => {
                 if (!this.socket) {
                     reject(new Error("Socket not connected"));
                     return;
-                }
-
-                console.log('[SocketService] Emitting joinGroup for conversationId:', conversationId);
-                this.socket.emit("joinGroup", { conversationId }, (response: any) => {
-                    if (response?.success) {
-                        console.log('[SocketService] ✓ Joined conversation:', conversationId);
+                }                this.socket.emit("joinGroup", { conversationId }, (response: any) => {
+                    if (response?.success) {                        this.joinedConversationIds.add(conversationId);
                         resolve(response);
                     } else {
                         console.error('[SocketService] Failed to join conversation:', response?.error);
@@ -257,8 +392,9 @@ export class SocketService {
             }
 
             this.socket.emit("leaveGroup", { conversationId }, (response: any) => {
-                if (response?.success) {
-                    resolve(response);
+            if (response?.success) {
+                this.joinedConversationIds.delete(conversationId);
+                resolve(response);
                 } else {
                     reject(new Error(response?.error || "Failed to leave"));
                 }
@@ -281,9 +417,7 @@ export class SocketService {
                 }
 
                 // Wait for connection if not connected
-                if (!this.socket.connected) {
-                    console.log('[SocketService] Socket not connected, waiting before sending message...');
-                    await this.waitForConnection(5000);
+                if (!this.socket.connected) {                    await this.waitForConnection(5000);
                 }
 
                 const payload = {
@@ -291,43 +425,14 @@ export class SocketService {
                     text,
                     media: media || [],
                 };
-
-                console.log('[SocketService] Emitting sendMessage:', {
-                    conversationId,
-                    textLength: text.length,
-                    mediaCount: media?.length || 0,
-                });
-
-                this.socket.emit("sendMessage", payload, (response: any) => {
-                    console.log('[SocketService] sendMessage callback received:', {
-                        success: response?.success,
-                        hasMessages: !!response?.messages,
-                        messagesCount: response?.messages?.length,
-                        responseKeys: Object.keys(response || {}),
-                        responseSample: {
-                            success: response?.success,
-                            error: response?.error,
-                            firstMsg: response?.messages?.[0] ? {
-                                _id: response.messages[0]._id || response.messages[0].id,
-                                text: response.messages[0].text?.substring(0, 30),
-                                senderId: response.messages[0].senderId,
-                            } : null,
-                        },
-                    });
-                    if (response?.success) {
+                this.socket.emit("sendMessage", payload, (response: any) => {                    if (response?.success) {
                         const messages = response?.messages || response?.data || response?.message;
-                        if (Array.isArray(messages)) {
-                            console.log('[SocketService] ✓ Message sent, received', messages.length, 'messages back');
-                            resolve(messages);
+                        if (Array.isArray(messages)) {                            resolve(messages);
                             return;
                         }
-                        if (messages) {
-                            console.log('[SocketService] ✓ Message sent');
-                            resolve([messages]);
+                        if (messages) {                            resolve([messages]);
                             return;
-                        }
-                        console.log('[SocketService] ✓ Message sent (empty response)');
-                        resolve([]);
+                        }                        resolve([]);
                     } else {
                         console.error('[SocketService] Send message failed:', response?.error);
                         reject(new Error(response?.error || "Failed to send message"));
@@ -358,9 +463,7 @@ export class SocketService {
                 }
 
                 // Wait for connection if not connected
-                if (!this.socket.connected) {
-                    console.log('[SocketService] Socket not connected, waiting before sending quoted message...');
-                    await this.waitForConnection(5000);
+                if (!this.socket.connected) {                    await this.waitForConnection(5000);
                 }
 
                 const payload = {
@@ -369,44 +472,16 @@ export class SocketService {
                     text,
                     media: media || [],
                 };
-
-                console.log('[SocketService] Emitting sendQuotedMessage (quoteMessage event):', {
-                    conversationId,
-                    quotedMessageId,
-                    textLength: text.length,
-                    mediaCount: media?.length || 0,
-                });
-
-                this.socket.emit("quoteMessage", payload, (response: any) => {
-                    console.log('[SocketService] quoteMessage callback received:', {
-                        success: response?.success,
-                        hasMessages: !!response?.messages,
-                        messagesCount: response?.messages?.length,
-                    });
-                    if (response?.success) {
+                this.socket.emit("quoteMessage", payload, (response: any) => {                    if (response?.success) {
                         const messages = response?.messages || response?.data || response?.message;
                         if (Array.isArray(messages)) {
                             // Debug: log first message to check fields
-                            if (messages.length > 0) {
-                                console.log('[SocketService] First quoted message from BE:', {
-                                    text: messages[0].text?.substring(0, 30),
-                                    quotedMessageId: messages[0].quotedMessageId,
-                                    quotedMessageSenderId: messages[0].quotedMessageSenderId,
-                                    quotedMessageSenderName: messages[0].quotedMessageSenderName,
-                                    quotedMessagePreview: messages[0].quotedMessagePreview?.substring(0, 30),
-                                });
-                            }
-                            console.log('[SocketService] ✓ Quoted message sent, received', messages.length, 'messages back');
-                            resolve(messages);
+                            if (messages.length > 0) {                            }                            resolve(messages);
                             return;
                         }
-                        if (messages) {
-                            console.log('[SocketService] ✓ Quoted message sent');
-                            resolve([messages]);
+                        if (messages) {                            resolve([messages]);
                             return;
-                        }
-                        console.log('[SocketService] ✓ Quoted message sent (empty response)');
-                        resolve([]);
+                        }                        resolve([]);
                     } else {
                         console.error('[SocketService] Send quoted message failed:', response?.error);
                         reject(new Error(response?.error || "Failed to send quoted message"));
@@ -426,25 +501,9 @@ export class SocketService {
         if (!this.socket) {
             console.warn('[SocketService] Cannot setup onMessage listener - socket not initialized');
             return;
-        }
-
-        console.log('[SocketService] Setting up "receiveMessage" listener');
-        this.socket.on("receiveMessage", (data: any) => {
-            const message = data.message || data;
-            console.log('[SocketService] EVENT FIRED: receiveMessage', {
-                hasMessage: !!data.message,
-                hasData: !!data,
-                dataKeys: Object.keys(data || {}),
-            });
-            // Debug: check if quoted message fields present
-            if (message?.quotedMessageId) {
-                console.log('[SocketService] Received quoted message:', {
-                    quotedMessageId: message.quotedMessageId,
-                    quotedMessageSenderId: message.quotedMessageSenderId,
-                    quotedMessageSenderName: message.quotedMessageSenderName,
-                    quotedMessagePreview: message.quotedMessagePreview?.substring(0, 30),
-                });
-            }
+        }        this.addRegisteredListener("receiveMessage", (data: any) => {
+            const message = data.message || data.systemMessage || data.activityMessage || data;            // Debug: check if quoted message fields present
+            if (message?.quotedMessageId) {            }
             callback(message);
         });
     }
@@ -453,9 +512,7 @@ export class SocketService {
      * Remove message listener
      */
     static offMessage(): void {
-        if (this.socket) {
-            this.socket.off("receiveMessage");
-        }
+        this.offRegisteredListeners("receiveMessage");
     }
 
     /**
@@ -466,16 +523,7 @@ export class SocketService {
             console.warn("[SocketService] Socket not available for onMessageQuoted");
             return;
         }
-
-        console.log("[SocketService] Setting up message:quoted listener");
-
-        this.socket.on("message:quoted", (data: any) => {
-            console.log("[SocketService] 🔔 RECEIVED message:quoted event:", {
-                conversationId: data.conversationId,
-                messageId: data.message?._id || data.message?.id,
-                quotedMessageId: data.quotedMessageId,
-            });
-            callback(data);
+        this.addRegisteredListener("message:quoted", (data: any) => {            callback(data);
         });
     }
 
@@ -483,9 +531,7 @@ export class SocketService {
      * Remove quoted message listener
      */
     static offMessageQuoted(): void {
-        if (this.socket) {
-            this.socket.off("message:quoted");
-        }
+        this.offRegisteredListeners("message:quoted");
     }
 
     /**
@@ -512,7 +558,7 @@ export class SocketService {
                 };
 
                 this.socket.emit("messageSeen", payload, (response: any) => {
-                    if (response?.success) {
+                    if (!response || response?.success || response?.ok) {
                         resolve(response);
                     } else {
                         reject(new Error(response?.error || "Failed to mark as seen"));
@@ -530,7 +576,7 @@ export class SocketService {
     static onMessageSeen(callback: (data: SeenData) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("messageSeen", (data: SeenData) => {
+        this.addRegisteredListener("messageSeen", (data: SeenData) => {
             callback(data);
         });
     }
@@ -539,17 +585,15 @@ export class SocketService {
      * Remove message seen listener
      */
     static offMessageSeen(): void {
-        if (this.socket) {
-            this.socket.off("messageSeen");
-        }
+        this.offRegisteredListeners("messageSeen");
     }
 
     /**
      * Start typing indicator
      */
-    static startTyping(conversationId: string): void {
+    static startTyping(conversationId: string, target?: { toUserId?: string; groupId?: string }): void {
         if (!this.socket) return;
-        this.socket.emit("typing:start", { groupId: conversationId });
+        this.socket.emit("typing:start", target || { groupId: conversationId });
 
         // Clear previous timeout
         if (this.typingTimeout) {
@@ -558,16 +602,16 @@ export class SocketService {
 
         // Stop typing after 3 seconds
         this.typingTimeout = setTimeout(() => {
-            this.stopTyping(conversationId);
+            this.stopTyping(conversationId, target);
         }, 3000);
     }
 
     /**
      * Stop typing indicator
      */
-    static stopTyping(conversationId: string): void {
+    static stopTyping(conversationId: string, target?: { toUserId?: string; groupId?: string }): void {
         if (!this.socket) return;
-        this.socket.emit("typing:stop", { groupId: conversationId });
+        this.socket.emit("typing:stop", target || { groupId: conversationId });
 
         if (this.typingTimeout) {
             clearTimeout(this.typingTimeout);
@@ -581,20 +625,20 @@ export class SocketService {
     static onTyping(callback: (data: TypingData) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("typing:start", (data: any) => {
-            console.log("[SocketService] User typing:", data);
-            callback({
+        this.addRegisteredListener("typing:start", (data: any) => {            callback({
                 userId: data.userId,
-                conversationId: data.groupId,
+                conversationId: data.conversationId || data.groupId || data.toUserId,
+                toUserId: data.toUserId,
+                groupId: data.groupId,
                 isTyping: true,
             });
         });
 
-        this.socket.on("typing:stop", (data: any) => {
-            console.log("[SocketService] User stopped typing:", data);
-            callback({
+        this.addRegisteredListener("typing:stop", (data: any) => {            callback({
                 userId: data.userId,
-                conversationId: data.groupId,
+                conversationId: data.conversationId || data.groupId || data.toUserId,
+                toUserId: data.toUserId,
+                groupId: data.groupId,
                 isTyping: false,
             });
         });
@@ -605,8 +649,8 @@ export class SocketService {
      */
     static offTyping(): void {
         if (this.socket) {
-            this.socket.off("typing:start");
-            this.socket.off("typing:stop");
+            this.offRegisteredListeners("typing:start");
+            this.offRegisteredListeners("typing:stop");
         }
     }
 
@@ -866,15 +910,7 @@ export class SocketService {
                 }
 
                 // Wait for connection if not connected (increase timeout to 10s for reliability)
-                if (!this.socket.connected) {
-                    console.log('[SocketService] Socket not connected, waiting 10s for connection before quoting message...', {
-                        socketExists: !!this.socket,
-                        socketConnected: this.socket?.connected,
-                        socketState: this.socket?.io?.engine?.readyState,
-                    });
-                    await this.waitForConnection(10000);
-                    console.log('[SocketService] Socket reconnected, proceeding with quoteMessage');
-                }
+                if (!this.socket.connected) {                    await this.waitForConnection(10000);                }
 
                 const payload: any = {
                     conversationId,
@@ -882,36 +918,15 @@ export class SocketService {
                 };
                 if (text) payload.text = text;
                 if (media) payload.media = media;
-
-                console.log('[SocketService] Emitting quoteMessage:', {
-                    conversationId,
-                    quotedMessageId,
-                    textLength: text?.length || 0,
-                    mediaCount: media?.length || 0,
-                });
-
                 this.socket.emit("quoteMessage", payload, (response: any) => {
-                    console.log('[SocketService] quoteMessage callback received:', {
-                        success: response?.success,
-                        hasMessages: !!response?.messages,
-                        messagesCount: response?.messages?.length,
-                        responseKeys: Object.keys(response || {}),
-                    });
-
                     if (response?.success) {
                         const messages = response?.messages || response?.data || response?.message;
-                        if (Array.isArray(messages)) {
-                            console.log('[SocketService] ✓ Message quoted, received', messages.length, 'messages back');
-                            resolve(messages);
+                        if (Array.isArray(messages)) {                            resolve(messages);
                             return;
                         }
-                        if (messages) {
-                            console.log('[SocketService] ✓ Message quoted');
-                            resolve([messages]);
+                        if (messages) {                            resolve([messages]);
                             return;
-                        }
-                        console.log('[SocketService] ✓ Message quoted (empty response)');
-                        resolve([]);
+                        }                        resolve([]);
                     } else {
                         console.error('[SocketService] Quote message failed:', response?.error);
                         reject(new Error(response?.error || "Failed to quote message"));
@@ -934,14 +949,10 @@ export class SocketService {
     static onMessageUpdated(callback: (message: MessagePayload) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("message:edited", (data: any) => {
-            console.log("[SocketService] Message edited:", data);
-            callback(data.message || data);
+        this.addRegisteredListener("message:edited", (data: any) => {            callback(data.message || data);
         });
 
-        this.socket.on("message:deleted", (data: any) => {
-            console.log("[SocketService] Message deleted:", data);
-            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
+        this.addRegisteredListener("message:deleted", (data: any) => {            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
             callback({
                 ...(data.message || {}),
                 id: messageId,
@@ -954,9 +965,7 @@ export class SocketService {
             } as any);
         });
 
-        this.socket.on("message:deleted_for_everyone", (data: any) => {
-            console.log("[SocketService] Message deleted for everyone:", data);
-            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
+        this.addRegisteredListener("message:deleted_for_everyone", (data: any) => {            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
             callback({
                 ...(data.message || {}),
                 id: messageId,
@@ -968,9 +977,7 @@ export class SocketService {
             } as any);
         });
 
-        this.socket.on("message:revoked", (data: any) => {
-            console.log("[SocketService] Message revoked:", data);
-            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
+        this.addRegisteredListener("message:revoked", (data: any) => {            const messageId = data?.messageId || data?.message?.id || data?.message?._id;
             callback({
                 ...(data.message || data),
                 id: messageId,
@@ -989,12 +996,10 @@ export class SocketService {
      * Remove message update listener
      */
     static offMessageUpdated(): void {
-        if (this.socket) {
-            this.socket.off("message:edited");
-            this.socket.off("message:deleted");
-            this.socket.off("message:deleted_for_everyone");
-            this.socket.off("message:revoked");
-        }
+        this.offRegisteredListeners("message:edited");
+        this.offRegisteredListeners("message:deleted");
+        this.offRegisteredListeners("message:deleted_for_everyone");
+        this.offRegisteredListeners("message:revoked");
     }
 
     /**
@@ -1003,9 +1008,7 @@ export class SocketService {
     static onMessageReaction(callback: (data: { messageId: string; reaction: any }) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("message:reaction", (data: any) => {
-            console.log("[SocketService] Message reaction:", data);
-            callback(data);
+        this.addRegisteredListener("message:reaction", (data: any) => {            callback(data);
         });
     }
 
@@ -1013,9 +1016,7 @@ export class SocketService {
      * Remove message reaction listener
      */
     static offMessageReaction(): void {
-        if (this.socket) {
-            this.socket.off("message:reaction");
-        }
+        this.offRegisteredListeners("message:reaction");
     }
 
     /**
@@ -1024,9 +1025,7 @@ export class SocketService {
     static onMessageReactionRemove(callback: (data: { messageId: string; userId: string; emoji?: string }) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("message:reaction:remove", (data: any) => {
-            console.log("[SocketService] Message reaction removed:", data);
-            callback(data);
+        this.addRegisteredListener("message:reaction:remove", (data: any) => {            callback(data);
         });
     }
 
@@ -1034,9 +1033,7 @@ export class SocketService {
      * Remove message reaction removal listener
      */
     static offMessageReactionRemove(): void {
-        if (this.socket) {
-            this.socket.off("message:reaction:remove");
-        }
+        this.offRegisteredListeners("message:reaction:remove");
     }
 
     /**
@@ -1045,9 +1042,7 @@ export class SocketService {
     static onMessageDelivered(callback: (data: { conversationId: string; userId: string; lastDeliveredMessageId: string }) => void): void {
         if (!this.socket) return;
 
-        this.socket.on("messageDelivered", (data: any) => {
-            console.log("[SocketService] Message delivered:", data);
-            callback(data);
+        this.addRegisteredListener("messageDelivered", (data: any) => {            callback(data);
         });
     }
 
@@ -1055,9 +1050,7 @@ export class SocketService {
      * Remove message delivered listener
      */
     static offMessageDelivered(): void {
-        if (this.socket) {
-            this.socket.off("messageDelivered");
-        }
+        this.offRegisteredListeners("messageDelivered");
     }
 
     // ========================================================================
@@ -1072,9 +1065,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("conversation:created", (data: any) => {
-            console.log("[SocketService] Group created:", data);
-            callback(data);
+        this.addRegisteredListener("conversation:created", (data: any) => {            callback(data);
         });
     }
 
@@ -1082,9 +1073,7 @@ export class SocketService {
      * Remove group created listener
      */
     static offGroupCreated(): void {
-        if (this.socket) {
-            this.socket.off("conversation:created");
-        }
+        this.offRegisteredListeners("conversation:created");
     }
 
     /**
@@ -1095,9 +1084,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("conversation:members_added", (data: any) => {
-            console.log("[SocketService] Members added to group:", data);
-            callback(data);
+        this.addRegisteredListener("conversation:members_added", (data: any) => {            callback(data);
         });
     }
 
@@ -1105,9 +1092,7 @@ export class SocketService {
      * Remove members added listener
      */
     static offGroupMembersAdded(): void {
-        if (this.socket) {
-            this.socket.off("conversation:members_added");
-        }
+        this.offRegisteredListeners("conversation:members_added");
     }
 
     /**
@@ -1118,9 +1103,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("conversation:member_removed", (data: any) => {
-            console.log("[SocketService] Member removed from group:", data);
-            callback(data);
+        this.addRegisteredListener("conversation:member_removed", (data: any) => {            callback(data);
         });
     }
 
@@ -1135,9 +1118,7 @@ export class SocketService {
             return () => { };
         }
 
-        const handler = (data: any) => {
-            console.log("[SocketService] Member removed from group:", data);
-            callback(data);
+        const handler = (data: any) => {            callback(data);
         };
 
         this.socket.on("conversation:member_removed", handler);
@@ -1151,9 +1132,7 @@ export class SocketService {
      * Remove member removed listener
      */
     static offGroupMemberRemoved(): void {
-        if (this.socket) {
-            this.socket.off("conversation:member_removed");
-        }
+        this.offRegisteredListeners("conversation:member_removed");
     }
 
     /**
@@ -1164,9 +1143,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("conversation:updated", (data: any) => {
-            console.log("[SocketService] Group updated:", data);
-            callback(data);
+        this.addRegisteredListener("conversation:updated", (data: any) => {            callback(data);
         });
     }
 
@@ -1174,9 +1151,7 @@ export class SocketService {
      * Remove group updated listener
      */
     static offGroupUpdated(): void {
-        if (this.socket) {
-            this.socket.off("conversation:updated");
-        }
+        this.offRegisteredListeners("conversation:updated");
     }
 
     /**
@@ -1187,9 +1162,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:admin_changed", (data: any) => {
-            console.log("[SocketService] Admin status changed:", data);
-            callback(data);
+        this.addRegisteredListener("group:admin_changed", (data: any) => {            callback(data);
         });
     }
 
@@ -1197,9 +1170,7 @@ export class SocketService {
      * Remove admin changed listener
      */
     static offGroupAdminChanged(): void {
-        if (this.socket) {
-            this.socket.off("group:admin_changed");
-        }
+        this.offRegisteredListeners("group:admin_changed");
     }
 
     /**
@@ -1210,9 +1181,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:owner_transferred", (data: any) => {
-            console.log("[SocketService] Owner transferred:", data);
-            callback(data);
+        this.addRegisteredListener("group:owner_transferred", (data: any) => {            callback(data);
         });
     }
 
@@ -1220,9 +1189,7 @@ export class SocketService {
      * Remove owner transferred listener
      */
     static offGroupOwnerTransferred(): void {
-        if (this.socket) {
-            this.socket.off("group:owner_transferred");
-        }
+        this.offRegisteredListeners("group:owner_transferred");
     }
 
     /**
@@ -1233,9 +1200,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:member_approved", (data: any) => {
-            console.log("[SocketService] Member approved:", data);
-            callback(data);
+        this.addRegisteredListener("group:member_approved", (data: any) => {            callback(data);
         });
     }
 
@@ -1243,9 +1208,7 @@ export class SocketService {
      * Remove member approved listener
      */
     static offGroupMemberApproved(): void {
-        if (this.socket) {
-            this.socket.off("group:member_approved");
-        }
+        this.offRegisteredListeners("group:member_approved");
     }
 
     /**
@@ -1256,9 +1219,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:member_rejected", (data: any) => {
-            console.log("[SocketService] Member rejected:", data);
-            callback(data);
+        this.addRegisteredListener("group:member_rejected", (data: any) => {            callback(data);
         });
     }
 
@@ -1266,9 +1227,7 @@ export class SocketService {
      * Remove member rejected listener
      */
     static offGroupMemberRejected(): void {
-        if (this.socket) {
-            this.socket.off("group:member_rejected");
-        }
+        this.offRegisteredListeners("group:member_rejected");
     }
 
     /**
@@ -1279,9 +1238,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:settings_updated", (data: any) => {
-            console.log("[SocketService] Settings updated:", data);
-            callback(data);
+        this.addRegisteredListener("group:settings_updated", (data: any) => {            callback(data);
         });
     }
 
@@ -1289,9 +1246,7 @@ export class SocketService {
      * Remove settings updated listener
      */
     static offGroupSettingsUpdated(): void {
-        if (this.socket) {
-            this.socket.off("group:settings_updated");
-        }
+        this.offRegisteredListeners("group:settings_updated");
     }
 
     /**
@@ -1302,9 +1257,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("group:dissolved", (data: any) => {
-            console.log("[SocketService] Group dissolved:", data);
-            callback(data);
+        this.addRegisteredListener("group:dissolved", (data: any) => {            callback(data);
         });
     }
 
@@ -1312,9 +1265,7 @@ export class SocketService {
      * Remove group dissolved listener
      */
     static offGroupDissolved(): void {
-        if (this.socket) {
-            this.socket.off("group:dissolved");
-        }
+        this.offRegisteredListeners("group:dissolved");
     }
 
     /**
@@ -1325,9 +1276,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("poll:new", (data: any) => {
-            console.log("[SocketService] Poll created:", data);
-            callback(data);
+        this.addRegisteredListener("poll:new", (data: any) => {            callback(data);
         });
     }
 
@@ -1335,9 +1284,7 @@ export class SocketService {
      * Remove poll new listener
      */
     static offPollNew(): void {
-        if (this.socket) {
-            this.socket.off("poll:new");
-        }
+        this.offRegisteredListeners("poll:new");
     }
 
     /**
@@ -1348,9 +1295,7 @@ export class SocketService {
     ): void {
         if (!this.socket) return;
 
-        this.socket.on("poll:vote", (data: any) => {
-            console.log("[SocketService] Poll voted:", data);
-            callback(data);
+        this.addRegisteredListener("poll:vote", (data: any) => {            callback(data);
         });
     }
 
@@ -1358,9 +1303,7 @@ export class SocketService {
      * Remove poll vote listener
      */
     static offPollVote(): void {
-        if (this.socket) {
-            this.socket.off("poll:vote");
-        }
+        this.offRegisteredListeners("poll:vote");
     }
 
     /**
@@ -1407,18 +1350,10 @@ export class SocketService {
         messageId: string
     ): Promise<any> {
         try {
-            console.log('[SocketService] 📌 Pinning message via HTTP POST:', { messageId, conversationId });
-
             const response = await apiCall(`/messages/${messageId}/pin`, {
                 method: "POST",
                 body: JSON.stringify({ conversationId }),
             });
-
-            console.log('[SocketService] ✓ Message pinned successfully (HTTP POST)', {
-                messageId,
-                pinned: response?.data?.pinned,
-            });
-
             return response;
         } catch (error: any) {
             console.error('[SocketService] ❌ Pin message HTTP error:', {
@@ -1438,17 +1373,10 @@ export class SocketService {
         messageId: string
     ): Promise<any> {
         try {
-            console.log('[SocketService] 📌 Unpinning message via HTTP DELETE:', { messageId, conversationId });
-
             const response = await apiCall(`/messages/${messageId}/pin`, {
                 method: "DELETE",
                 body: JSON.stringify({ conversationId }),
             });
-
-            console.log('[SocketService] ✓ Message unpinned successfully (HTTP DELETE)', {
-                pinned: response?.data?.pinned,
-            });
-
             return response;
         } catch (error: any) {
             console.error('[SocketService] ❌ Unpin message HTTP error:', {
@@ -1467,26 +1395,17 @@ export class SocketService {
             console.warn("[SocketService] Socket not available for onPinnedMessage");
             return;
         }
-
-        console.log("[SocketService] Setting up onPinnedMessage listener");
-
         // New message pinned
-        this.socket.on("message:pinned", (data: any) => {
-            console.log("[SocketService] 🔔 RECEIVED message:pinned event:", data);
-            callback({ type: "pinned", pinnedMessage: data });
+        this.addRegisteredListener("message:pinned", (data: any) => {            callback({ type: "pinned", pinnedMessage: data });
         });
 
         // Message unpinned
-        this.socket.on("message:unpinned", (data: any) => {
-            console.log("[SocketService] 🔔 RECEIVED message:unpinned event:", data);
-            callback({ type: "unpinned", pinnedMessage: data });
+        this.addRegisteredListener("message:unpinned", (data: any) => {            callback({ type: "unpinned", pinnedMessage: data });
         });
 
         // Debug: Log all socket events
         this.socket.onAny((event: string, ...args: any[]) => {
-            if (event.includes("pin")) {
-                console.log(`[SocketService] Socket event: ${event}`, args);
-            }
+            if (event.includes("pin")) {            }
         });
     }
 
@@ -1495,8 +1414,50 @@ export class SocketService {
      */
     static offPinnedMessage(): void {
         if (this.socket) {
-            this.socket.off("message:pinned");
-            this.socket.off("message:unpinned");
+            this.offRegisteredListeners("message:pinned");
+            this.offRegisteredListeners("message:unpinned");
+        }
+    }
+
+    /**
+     * Listen for group poll events
+     */
+    static onPollEvent(callback: (event: PollSocketEvent & { type: string }) => void): void {
+        if (!this.socket) {
+            console.warn("[SocketService] Socket not available for onPollEvent");
+            return;
+        }
+
+        const eventNames = [
+            "poll:new",
+            "poll:vote",
+            "poll:closed",
+            "poll:locked",
+            "poll:pinned",
+            "poll:unpinned",
+            "poll:deleted",
+            "poll:option_added",
+        ];
+
+        eventNames.forEach((eventName) => {
+            this.addRegisteredListener(eventName, (data: PollSocketEvent) => {                callback({ ...data, type: eventName });
+            });
+        });
+    }
+
+    /**
+     * Remove group poll listeners
+     */
+    static offPollEvent(): void {
+        if (this.socket) {
+            this.offRegisteredListeners("poll:new");
+            this.offRegisteredListeners("poll:vote");
+            this.offRegisteredListeners("poll:closed");
+            this.offRegisteredListeners("poll:locked");
+            this.offRegisteredListeners("poll:pinned");
+            this.offRegisteredListeners("poll:unpinned");
+            this.offRegisteredListeners("poll:deleted");
+            this.offRegisteredListeners("poll:option_added");
         }
     }
 
@@ -1505,8 +1466,6 @@ export class SocketService {
      */
     static async getPinnedMessages(conversationId: string): Promise<any[]> {
         try {
-            console.log('[SocketService] Fetching pinned messages via HTTP GET:', { conversationId });
-
             const response = await apiCall(`/conversations/${conversationId}/pinned-messages`, {
                 method: "GET",
             });
@@ -1558,9 +1517,6 @@ export class SocketService {
                     pinnedAt: pin.pinnedAt || new Date().toISOString(),
                 };
             });
-
-            console.log('[SocketService] ✓ Pinned messages loaded and normalized:', normalized.length);
-
             return normalized;
         } catch (error: any) {
             console.error('[SocketService] ❌ Failed to load pinned messages:', error?.message);

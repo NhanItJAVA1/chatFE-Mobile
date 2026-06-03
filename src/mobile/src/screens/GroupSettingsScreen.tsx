@@ -16,6 +16,7 @@ import {
     TextInput,
     KeyboardAvoidingView,
     Platform,
+    StatusBar,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -33,7 +34,61 @@ export const MEDIA_TABS = [
 ];
 import { Avatar } from "../components";
 import { colors } from "../theme";
-import { requestPresignedUrl, confirmUpload } from "../../../shared/services/presignedUrlService";
+import { ConversationService, type MuteConversationOptions } from "../../../shared/services/conversationService";
+import mediaService from "../../../shared/services/mediaService";
+
+const MAX_AVATAR_SIZE = 10 * 1024 * 1024;
+
+type MuteOptionKey = "1h" | "4h" | "8am" | "forever";
+
+const MUTE_OPTIONS: Array<{ key: MuteOptionKey; label: string }> = [
+    { key: "1h", label: "Trong 1 giờ" },
+    { key: "4h", label: "Trong 4 giờ" },
+    { key: "8am", label: "Cho đến 8:00 AM" },
+    { key: "forever", label: "Cho đến khi được mở lại" },
+];
+
+const FOREVER_MUTE_UNTIL = "9999-12-31T00:00:00.000Z";
+
+const getNextEightAmIso = (): string => {
+    const now = new Date();
+    const nextEight = new Date(now);
+    nextEight.setHours(8, 0, 0, 0);
+
+    if (nextEight.getTime() <= now.getTime()) {
+        nextEight.setDate(nextEight.getDate() + 1);
+    }
+
+    return nextEight.toISOString();
+};
+
+const buildMutePayload = (option: MuteOptionKey): { payload: MuteConversationOptions; localMuteUntil: string } => {
+    if (option === "1h") {
+        const duration = 60 * 60 * 1000;
+        return { payload: { duration }, localMuteUntil: new Date(Date.now() + duration).toISOString() };
+    }
+
+    if (option === "4h") {
+        const duration = 4 * 60 * 60 * 1000;
+        return { payload: { duration }, localMuteUntil: new Date(Date.now() + duration).toISOString() };
+    }
+
+    if (option === "8am") {
+        const muteUntil = getNextEightAmIso();
+        return { payload: { muteUntil }, localMuteUntil: muteUntil };
+    }
+
+    return { payload: {}, localMuteUntil: FOREVER_MUTE_UNTIL };
+};
+
+const isMuteUntilActive = (muteUntil?: string | null): boolean => {
+    if (!muteUntil) {
+        return false;
+    }
+
+    const mutedUntilMs = new Date(muteUntil).getTime();
+    return !Number.isNaN(mutedUntilMs) && mutedUntilMs > Date.now();
+};
 
 interface GroupMemberWithRole {
     _id: string;
@@ -47,7 +102,8 @@ export const GroupSettingsScreen: React.FC<{
     route: any;
     navigation: any;
     onBackPress?: () => void;
-}> = ({ route, navigation, onBackPress }) => {
+    onAddMembersPress?: () => void;
+}> = ({ route, navigation, onBackPress, onAddMembersPress }) => {
     const { groupId } = route.params || {};
     const authContext = useAuth();
     const { user } = authContext;
@@ -57,7 +113,7 @@ export const GroupSettingsScreen: React.FC<{
     const [mediaTab, setMediaTab] = useState('image');
 
     // Lấy toàn bộ messages của group để lọc media
-    const { state: groupMessageState } = useGroupChatMessage(groupId, authContext?.user?.token || authContext?.token || "");
+    const { state: groupMessageState } = useGroupChatMessage(groupId, authContext?.token || "");
 
     // Lọc media theo từng loại (dựa vào mediaType)
     const mediaByType = useMemo(() => {
@@ -182,9 +238,18 @@ export const GroupSettingsScreen: React.FC<{
         allowSendLink: groupState.group?.settings?.allowSendLink ?? true,
         requireApproval: groupState.group?.settings?.requireApproval ?? false,
         allowMemberInvite: groupState.group?.settings?.allowMemberInvite ?? true,
+        utilityPermissions: {
+            ...(groupState.group?.settings as any)?.utilityPermissions,
+            poll: (groupState.group?.settings as any)?.utilityPermissions?.poll || "all",
+        },
     });
     const [processingGroupUpdate, setProcessingGroupUpdate] = useState(false);
     const [uploadingAvatar, setUploadingAvatar] = useState(false);
+    const [groupAvatarPreview, setGroupAvatarPreview] = useState<string | null>(null);
+    const [showMuteDialog, setShowMuteDialog] = useState(false);
+    const [selectedMuteOption, setSelectedMuteOption] = useState<MuteOptionKey>("1h");
+    const [muteLoading, setMuteLoading] = useState(false);
+    const [localMuteUntil, setLocalMuteUntil] = useState<string | null>(null);
 
     // Collapse state
     const [adminCollapsed, setAdminCollapsed] = useState(false);
@@ -193,6 +258,13 @@ export const GroupSettingsScreen: React.FC<{
     useEffect(() => {
         loadGroupData();
     }, [groupId]);
+
+    useEffect(() => {
+        groupActions.setupGroupListeners();
+        return () => {
+            groupActions.cleanupGroupListeners();
+        };
+    }, [groupActions]);
 
     useEffect(() => {
         if (groupState.group) {
@@ -245,6 +317,10 @@ export const GroupSettingsScreen: React.FC<{
                 allowSendLink: groupState.group.settings?.allowSendLink ?? true,
                 requireApproval: groupState.group.settings?.requireApproval ?? false,
                 allowMemberInvite: groupState.group.settings?.allowMemberInvite ?? true,
+                utilityPermissions: {
+                    ...(groupState.group.settings as any)?.utilityPermissions,
+                    poll: (groupState.group.settings as any)?.utilityPermissions?.poll || "all",
+                },
             });
         }
     }, [groupState.group]);
@@ -277,6 +353,64 @@ export const GroupSettingsScreen: React.FC<{
     const canManageMembers = currentUserRole === "owner" || currentUserRole === "admin";
     const canTransferOwner = currentUserRole === "owner";
     const canSetAdmin = currentUserRole === "owner";
+    const currentMemberMuteUntil = useMemo(() => {
+        const currentMember = groupState.members?.find((member: any) => {
+            const memberUserId = member?.userId || member?._id || member?.id || "";
+            return currentUserIds.includes(String(memberUserId));
+        });
+
+        return (currentMember as any)?.muteUntil || null;
+    }, [currentUserIds, groupState.members]);
+    const groupMuteUntil = localMuteUntil || currentMemberMuteUntil;
+    const isGroupMuted = isMuteUntilActive(groupMuteUntil);
+
+    const handleConfirmMute = useCallback(async () => {
+        if (!groupId) {
+            Alert.alert("Thông báo", "Chưa có nhóm để tắt thông báo.");
+            return;
+        }
+
+        const { payload, localMuteUntil: nextMuteUntil } = buildMutePayload(selectedMuteOption);
+
+        try {
+            setMuteLoading(true);
+            await ConversationService.muteConversation(String(groupId), payload);
+            setLocalMuteUntil(nextMuteUntil);
+            setShowMuteDialog(false);
+            Alert.alert("Thông báo", "Đã tắt thông báo nhóm này.");
+        } catch (err: any) {
+            Alert.alert("Thông báo", err?.message || "Không thể tắt thông báo lúc này.");
+        } finally {
+            setMuteLoading(false);
+        }
+    }, [groupId, selectedMuteOption]);
+
+    const handleUnmuteConversation = useCallback(async () => {
+        if (!groupId) {
+            Alert.alert("Thông báo", "Chưa có nhóm để bật thông báo.");
+            return;
+        }
+
+        try {
+            setMuteLoading(true);
+            await ConversationService.unmuteConversation(String(groupId));
+            setLocalMuteUntil(null);
+            Alert.alert("Thông báo", "Đã bật lại thông báo nhóm này.");
+        } catch (err: any) {
+            Alert.alert("Thông báo", err?.message || "Không thể bật thông báo lúc này.");
+        } finally {
+            setMuteLoading(false);
+        }
+    }, [groupId]);
+
+    const handleMuteButtonPress = useCallback(() => {
+        if (isGroupMuted) {
+            handleUnmuteConversation();
+            return;
+        }
+
+        setShowMuteDialog(true);
+    }, [handleUnmuteConversation, isGroupMuted]);
 
     const handleMemberPress = (memberId: string) => {
         setSelectedMemberId(memberId);
@@ -497,16 +631,59 @@ export const GroupSettingsScreen: React.FC<{
         );
     }, [processingDangerAction, groupActions, groupId, navigateToHomeAfterAction]);
 
-    const handleUploadGroupAvatar = useCallback(async () => {
+    const uploadSelectedGroupAvatar = useCallback(async (pickedAsset: ImagePicker.ImagePickerAsset) => {
+        if (uploadingAvatar) {
+            return;
+        }
+
         try {
-            // Request permission
+            const fileSize = pickedAsset.fileSize || 0;
+            const mimeType = pickedAsset.mimeType || "image/jpeg";
+
+            if (!mimeType.startsWith("image/")) {
+                Alert.alert("Lỗi", "Vui lòng chọn một file ảnh.");
+                return;
+            }
+
+            if (fileSize > MAX_AVATAR_SIZE) {
+                Alert.alert("Lỗi", "Ảnh nhóm phải nhỏ hơn 10MB.");
+                return;
+            }
+
+            setUploadingAvatar(true);
+            setGroupAvatarPreview(pickedAsset.uri);
+
+            const uploaded = await mediaService.uploadMediaDirect({
+                uri: pickedAsset.uri,
+                name: pickedAsset.fileName || `group_${groupId}_${Date.now()}.jpg`,
+                mimeType,
+                type: mimeType,
+            });
+
+            await groupActions.updateGroup(groupId, { avatarUrl: uploaded.url });
+            setGroupAvatarPreview(null);
+            Alert.alert("Thành công", "Đã cập nhật ảnh nhóm");
+        } catch (err: any) {
+            setGroupAvatarPreview(null);
+            console.error("[GroupSettings] Avatar upload error:", err);
+            Alert.alert("Lỗi", err.message || "Không thể upload ảnh nhóm");
+        } finally {
+            setUploadingAvatar(false);
+        }
+    }, [groupId, groupActions, uploadingAvatar]);
+
+    const handleUploadGroupAvatar = useCallback(async () => {
+        if (uploadingAvatar) {
+            return;
+        }
+
+        const pickFromLibrary = async () => {
             const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (status !== "granted") {
                 Alert.alert("Lỗi", "Cần cấp quyền truy cập thư viện ảnh");
                 return;
             }
 
-            // Pick image
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'] as any,
                 allowsEditing: true,
@@ -514,72 +691,36 @@ export const GroupSettingsScreen: React.FC<{
                 quality: 0.8,
             });
 
-            if (result.canceled) {
+            if (!result.canceled) {
+                await uploadSelectedGroupAvatar(result.assets[0]);
+            }
+        };
+
+        const pickFromCamera = async () => {
+            const { status } = await ImagePicker.requestCameraPermissionsAsync();
+            if (status !== "granted") {
+                Alert.alert("Lỗi", "Cần cấp quyền camera để chụp ảnh nhóm");
                 return;
             }
 
-            const pickedAsset = result.assets[0];
-            const imageUri = pickedAsset.uri;
-
-            setUploadingAvatar(true);
-
-            // Get file info
-            const fileSize = pickedAsset.fileSize || 5242880; // 5MB default
-            const mimeType = pickedAsset.mimeType || "image/jpeg";
-            const fileName = `group_${groupId}_${Date.now()}.jpg`;
-
-            console.log("[GroupSettings] Uploading avatar:", { fileName, fileSize, mimeType });
-
-            // Step 1: Request presigned URL
-            const urlResponse = await requestPresignedUrl({
-                fileType: "IMAGE",
-                mimeType,
-                fileSize,
-                originalName: fileName,
-                expiresIn: 3600,
+            const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ['images'] as any,
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.8,
             });
 
-            console.log("[GroupSettings] Got presigned URL, uploading file...");
-
-            // Step 2: Upload to S3
-            const response = await fetch(imageUri);
-            const blob = await response.blob();
-
-            const uploadResponse = await fetch(urlResponse.presignedUrl, {
-                method: "PUT",
-                body: blob,
-                headers: {
-                    "Content-Type": mimeType,
-                    ...urlResponse.headers,
-                },
-            });
-
-            if (!uploadResponse.ok) {
-                throw new Error(`Upload failed: ${uploadResponse.statusText}`);
+            if (!result.canceled) {
+                await uploadSelectedGroupAvatar(result.assets[0]);
             }
+        };
 
-            console.log("[GroupSettings] File uploaded, confirming...");
-
-            // Step 3: Confirm upload
-            await confirmUpload({
-                fileId: urlResponse.fileId,
-                uploadedUrl: urlResponse.presignedUrl,
-            });
-
-            console.log("[GroupSettings] Upload confirmed, updating group...");
-
-            // Step 4: Update group with new avatar URL
-            const avatarUrl = `${urlResponse.presignedUrl.split("?")[0]}`;
-            await groupActions.updateGroup(groupId, { avatarUrl });
-
-            setUploadingAvatar(false);
-            Alert.alert("Thành công", "Đã cập nhật ảnh nhóm");
-        } catch (err: any) {
-            setUploadingAvatar(false);
-            console.error("[GroupSettings] Avatar upload error:", err);
-            Alert.alert("Lỗi", err.message || "Không thể upload ảnh nhóm");
-        }
-    }, [groupId, groupActions]);
+        Alert.alert("Đổi ảnh nhóm", "Chọn nguồn ảnh", [
+            { text: "Thư viện", onPress: pickFromLibrary },
+            { text: "Camera", onPress: pickFromCamera },
+            { text: "Hủy", style: "cancel" },
+        ]);
+    }, [uploadSelectedGroupAvatar, uploadingAvatar]);
 
     const handleUpdateGroupName = useCallback(async () => {
         if (!newGroupName.trim() || newGroupName === groupState.group?.name) {
@@ -866,10 +1007,17 @@ export const GroupSettingsScreen: React.FC<{
             <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
                 {/* Group Info */}
                 <View style={styles.groupInfoCard}>
-                    {groupState.group.avatarUrl && (
+                    {groupAvatarPreview || groupState.group.avatarUrl ? (
                         <Image
-                            source={{ uri: groupState.group.avatarUrl }}
+                            source={{ uri: groupAvatarPreview || groupState.group.avatarUrl }}
                             style={styles.groupAvatar}
+                        />
+                    ) : (
+                        <Avatar
+                            label={(groupState.group.name || "G").charAt(0).toUpperCase()}
+                            size={60}
+                            backgroundColor={colors.accentAlt}
+                            textSize={22}
                         />
                     )}
                     <View style={styles.groupInfoContent}>
@@ -901,6 +1049,36 @@ export const GroupSettingsScreen: React.FC<{
                                 )}
                             </Pressable>
                         </View>
+                    )}
+                </View>
+
+                <View style={styles.settingsButtonSection}>
+                    <Pressable
+                        style={[styles.settingsButton, muteLoading && styles.actionDisabled]}
+                        onPress={handleMuteButtonPress}
+                        disabled={muteLoading}
+                    >
+                        {muteLoading ? (
+                            <ActivityIndicator size="small" color={colors.accent} />
+                        ) : (
+                            <Ionicons
+                                name={isGroupMuted ? "notifications-off-outline" : "notifications-outline"}
+                                size={18}
+                                color={isGroupMuted ? colors.accentStrong : colors.text}
+                            />
+                        )}
+                        <Text style={styles.settingsButtonText}>
+                            {isGroupMuted ? "Bật thông báo" : "Tắt thông báo"}
+                        </Text>
+                    </Pressable>
+                    {canManageMembers && (
+                        <Pressable
+                            style={styles.settingsButton}
+                            onPress={onAddMembersPress}
+                        >
+                            <Ionicons name="person-add-outline" size={18} color={colors.text} />
+                            <Text style={styles.settingsButtonText}>Thêm thành viên</Text>
+                        </Pressable>
                     )}
                 </View>
 
@@ -982,7 +1160,13 @@ export const GroupSettingsScreen: React.FC<{
                                 </Pressable>
                             </View>
 
-                            <ScrollView style={styles.settingsForm} keyboardShouldPersistTaps="handled">
+                            <ScrollView
+                                style={styles.settingsForm}
+                                contentContainerStyle={styles.settingsFormContent}
+                                keyboardShouldPersistTaps="handled"
+                                nestedScrollEnabled
+                                showsVerticalScrollIndicator
+                            >
                                 {/* Allow Send Link */}
                                 <View style={styles.settingRow}>
                                     <View style={styles.settingLabel}>
@@ -1053,6 +1237,64 @@ export const GroupSettingsScreen: React.FC<{
                                             ]}
                                         />
                                     </Pressable>
+                                </View>
+
+                                {/* Poll Creation Permission */}
+                                <View style={styles.settingColumn}>
+                                    <View style={styles.settingLabel}>
+                                        <Text style={styles.settingLabelText}>Ai được tạo bình chọn</Text>
+                                        <Text style={styles.settingDescription}>Chọn quyền sử dụng tiện ích poll trong nhóm</Text>
+                                    </View>
+                                    <View style={styles.segmentedControl}>
+                                        <Pressable
+                                            style={[
+                                                styles.segmentButton,
+                                                settingForm.utilityPermissions.poll === "all" && styles.segmentButtonActive,
+                                            ]}
+                                            onPress={() =>
+                                                setSettingForm((prev) => ({
+                                                    ...prev,
+                                                    utilityPermissions: {
+                                                        ...prev.utilityPermissions,
+                                                        poll: "all",
+                                                    },
+                                                }))
+                                            }
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.segmentButtonText,
+                                                    settingForm.utilityPermissions.poll === "all" && styles.segmentButtonTextActive,
+                                                ]}
+                                            >
+                                                Mọi thành viên
+                                            </Text>
+                                        </Pressable>
+                                        <Pressable
+                                            style={[
+                                                styles.segmentButton,
+                                                settingForm.utilityPermissions.poll === "admins" && styles.segmentButtonActive,
+                                            ]}
+                                            onPress={() =>
+                                                setSettingForm((prev) => ({
+                                                    ...prev,
+                                                    utilityPermissions: {
+                                                        ...prev.utilityPermissions,
+                                                        poll: "admins",
+                                                    },
+                                                }))
+                                            }
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.segmentButtonText,
+                                                    settingForm.utilityPermissions.poll === "admins" && styles.segmentButtonTextActive,
+                                                ]}
+                                            >
+                                                Chủ nhóm/phó nhóm
+                                            </Text>
+                                        </Pressable>
+                                    </View>
                                 </View>
                             </ScrollView>
 
@@ -1249,6 +1491,51 @@ export const GroupSettingsScreen: React.FC<{
 
             {/* Owner transfer-and-leave overlay */}
             {showTransferBeforeLeave && renderTransferBeforeLeave()}
+
+            <Modal visible={showMuteDialog} transparent animationType="fade" onRequestClose={() => setShowMuteDialog(false)}>
+                <Pressable style={styles.muteDialogOverlay} onPress={() => setShowMuteDialog(false)}>
+                    <Pressable style={styles.muteDialogCard} onPress={(event) => event.stopPropagation()}>
+                        <View style={styles.muteDialogHeader}>
+                            <Text style={styles.muteDialogTitle}>Xác nhận</Text>
+                            <Pressable style={styles.muteDialogCloseButton} onPress={() => setShowMuteDialog(false)}>
+                                <Ionicons name="close" size={28} color={colors.text} />
+                            </Pressable>
+                        </View>
+                        <Text style={styles.muteDialogMessage}>Bạn có chắc muốn tắt thông báo nhóm này:</Text>
+                        <View style={styles.muteOptionList}>
+                            {MUTE_OPTIONS.map((option) => {
+                                const selected = selectedMuteOption === option.key;
+                                return (
+                                    <Pressable
+                                        key={option.key}
+                                        style={styles.muteOptionRow}
+                                        onPress={() => setSelectedMuteOption(option.key)}
+                                    >
+                                        <Ionicons
+                                            name={selected ? "radio-button-on-outline" : "radio-button-off-outline"}
+                                            size={22}
+                                            color={selected ? colors.accentStrong : colors.textMuted}
+                                        />
+                                        <Text style={styles.muteOptionText}>{option.label}</Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+                        <View style={styles.muteDialogActions}>
+                            <Pressable style={styles.muteCancelButton} onPress={() => setShowMuteDialog(false)} disabled={muteLoading}>
+                                <Text style={styles.muteCancelText}>Hủy</Text>
+                            </Pressable>
+                            <Pressable style={styles.muteConfirmButton} onPress={handleConfirmMute} disabled={muteLoading}>
+                                {muteLoading ? (
+                                    <ActivityIndicator size="small" color={colors.textOnAccent} />
+                                ) : (
+                                    <Text style={styles.muteConfirmText}>Đồng ý</Text>
+                                )}
+                            </Pressable>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </View>
     );
 };
@@ -1268,7 +1555,8 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-between",
         paddingHorizontal: 16,
-        paddingVertical: 12,
+        paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight || 0) + 8 : 12,
+        paddingBottom: 12,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
     },
@@ -1526,7 +1814,7 @@ const styles = StyleSheet.create({
         zIndex: 1000,
     },
     editModalOverlay: {
-        flex: 1,
+        ...StyleSheet.absoluteFillObject,
         backgroundColor: "rgba(0, 0, 0, 0.5)",
     },
     editModalContent: {
@@ -1535,7 +1823,8 @@ const styles = StyleSheet.create({
         borderTopRightRadius: 16,
         paddingHorizontal: 16,
         paddingVertical: 20,
-        maxHeight: "80%",
+        maxHeight: "72%",
+        minHeight: 360,
     },
     editModalHeader: {
         flexDirection: "row",
@@ -1594,6 +1883,7 @@ const styles = StyleSheet.create({
     settingsButtonSection: {
         paddingHorizontal: 12,
         marginVertical: 12,
+        gap: 10,
     },
     settingsButton: {
         flexDirection: "row",
@@ -1611,14 +1901,117 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         color: colors.text,
     },
+    muteDialogOverlay: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 20,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+    },
+    muteDialogCard: {
+        width: "100%",
+        maxWidth: 420,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.background,
+    },
+    muteDialogHeader: {
+        minHeight: 56,
+        paddingHorizontal: 16,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    muteDialogTitle: {
+        color: colors.text,
+        fontSize: 18,
+        fontWeight: "800",
+    },
+    muteDialogCloseButton: {
+        width: 36,
+        height: 36,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    muteDialogMessage: {
+        paddingHorizontal: 16,
+        paddingTop: 18,
+        paddingBottom: 10,
+        color: colors.text,
+        fontSize: 14,
+        lineHeight: 20,
+    },
+    muteOptionList: {
+        paddingHorizontal: 16,
+        gap: 12,
+    },
+    muteOptionRow: {
+        minHeight: 24,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    muteOptionText: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "600",
+    },
+    muteDialogActions: {
+        flexDirection: "row",
+        justifyContent: "flex-end",
+        gap: 14,
+        padding: 16,
+        paddingTop: 24,
+    },
+    muteCancelButton: {
+        minWidth: 64,
+        minHeight: 40,
+        paddingHorizontal: 16,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 4,
+        backgroundColor: colors.surface,
+    },
+    muteCancelText: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "800",
+    },
+    muteConfirmButton: {
+        minWidth: 86,
+        minHeight: 40,
+        paddingHorizontal: 18,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 4,
+        backgroundColor: colors.accentStrong,
+    },
+    muteConfirmText: {
+        color: colors.textOnAccent,
+        fontSize: 15,
+        fontWeight: "800",
+    },
     settingsForm: {
-        maxHeight: 400,
+        flexGrow: 0,
+        maxHeight: 360,
         marginBottom: 16,
+    },
+    settingsFormContent: {
+        paddingBottom: 18,
     },
     settingRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    settingColumn: {
+        gap: 12,
         paddingVertical: 14,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
@@ -1653,6 +2046,34 @@ const styles = StyleSheet.create({
     toggleSwitchActive: {
         backgroundColor: colors.accent,
         alignSelf: "flex-end",
+    },
+    segmentedControl: {
+        flexDirection: "row",
+        gap: 8,
+    },
+    segmentButton: {
+        flex: 1,
+        minHeight: 40,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 10,
+        backgroundColor: colors.background,
+    },
+    segmentButtonActive: {
+        borderColor: colors.accent,
+        backgroundColor: colors.accent,
+    },
+    segmentButtonText: {
+        fontSize: 13,
+        fontWeight: "700",
+        color: colors.text,
+        textAlign: "center",
+    },
+    segmentButtonTextActive: {
+        color: colors.textOnAccent,
     },
 
     // Edit Info Button

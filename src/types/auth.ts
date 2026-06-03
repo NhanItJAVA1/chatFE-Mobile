@@ -11,6 +11,7 @@ export type AuthResponse = {
     accessToken?: string;
     token?: string;
     refreshToken?: string;
+    refresh_token?: string;
     user?: User;
     data?: User;
     [key: string]: any;
@@ -22,10 +23,11 @@ export type AuthContextType = {
     loading: boolean;
     error: string | null;
     isAuthenticated: boolean;
-    login: (phone: string, password: string) => Promise<User>;
+    login: (phone: string | { phone?: string; email?: string; password?: string }, password?: string) => Promise<User>;
     register: (userData: any) => Promise<AuthResponse>;
     logout: () => Promise<void>;
     updateProfile: (profileData: any) => Promise<User>;
+    updateAvatar: (avatarUrl: string) => Promise<User>;
 };
 
 export type AuthProviderProps = {
@@ -45,10 +47,22 @@ export type AppProviderProps = {
 
 export type LoginScreenProps = {
     onSwitchToRegister: () => void;
+    onForgotPassword?: () => void;
+    onNeedEmailVerification?: (params: {
+        email?: string;
+        phone?: string;
+        shouldSendInitialOtp?: boolean;
+    }) => void;
 };
 
 export type RegisterScreenProps = {
     onSwitchToLogin: () => void;
+    onNeedEmailVerification?: (params: {
+        email: string;
+        phone: string;
+        displayName: string;
+        shouldSendInitialOtp?: boolean;
+    }) => void;
 };
 
 export type RegisterFormData = {

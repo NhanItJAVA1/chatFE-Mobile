@@ -40,6 +40,8 @@ export const subscribeToUserCache = (listener: CacheListener) => {
  * Fetch user by ID with cache-first strategy and duplicate request prevention.
  */
 export const fetchUserById = async (id: string): Promise<User | null> => {
+    if (!id || id === 'undefined') return null;
+
     // 1. Check cache
     const cached = getUserFromCache(id);
     if (cached) return cached;
@@ -52,7 +54,7 @@ export const fetchUserById = async (id: string): Promise<User | null> => {
         try {
             const res = await api.get(`/users/${id}/public`);
             const userData = res?.data?.data || res?.data || res;
-            
+
             if (userData) {
                 const user: User = {
                     id: userData.id || id,

@@ -234,9 +234,7 @@ export const useFriendship = (
     // Send friend request
     const sendRequest = useCallback(async (userId: string): Promise<FriendRequest> => {
         try {
-            const request = await sendFriendRequest(userId);
-            console.log('[useFriendship] Sent request returned:', JSON.stringify(request, null, 2));
-            setSentRequests((prev) => [...prev, request]);
+            const request = await sendFriendRequest(userId);            setSentRequests((prev) => [...prev, request]);
 
             const requestId = (request as any)?._id || (request as any)?.id;
             if (requestId) {
@@ -281,11 +279,7 @@ export const useFriendship = (
 
     // Cancel sent request
     const cancelRequest = useCallback(async (requestId: string) => {
-        try {
-            console.log('[useFriendship] Canceling request:', requestId);
-            await cancelFriendRequest(requestId);
-            console.log('[useFriendship] Cancel API succeeded');
-        } catch (error: any) {
+        try {            await cancelFriendRequest(requestId);        } catch (error: any) {
             console.error("[useFriendship] Cancel error:", error);
             throw error;
         }
@@ -303,16 +297,12 @@ export const useFriendship = (
     }, []);
 
     // Reset friendship status to NONE for a user
-    const resetFriendshipStatus = useCallback((userId: string) => {
-        console.log('[useFriendship] Resetting friendship status to NONE for userId:', userId);
-        setFriendshipStatuses((prevStatus) => {
+    const resetFriendshipStatus = useCallback((userId: string) => {        setFriendshipStatuses((prevStatus) => {
             const updated = new Map(prevStatus);
             updated.set(userId, {
                 isFriend: false,
                 status: "none",
-            });
-            console.log('[useFriendship] Friendship status reset to NONE for:', userId);
-            return updated;
+            });            return updated;
         });
     }, []);
 
@@ -417,17 +407,9 @@ export const useFriendship = (
             // Handle request rejected by receiver
             const handleRejectedRequest = (
                 notification: FriendRequestNotification
-            ): void => {
-                console.log('[useFriendship] Friend request rejected - Full notification:', JSON.stringify(notification, null, 2));
-                console.log('[useFriendship] Looking for requestId:', notification.data?.requestId);
-
-                setSentRequests((prev) => {
-                    console.log('[useFriendship] Current sentRequests count:', prev.length);
-
+            ): void => {                setSentRequests((prev) => {
                     // Log full request objects
-                    if (prev.length > 0) {
-                        console.log('[useFriendship] Full sentRequests[0]:', JSON.stringify(prev[0], null, 2));
-                    }
+                    if (prev.length > 0) {                    }
 
                     // Try to find by _id first
                     let rejectedRequest = prev.find(
@@ -435,9 +417,7 @@ export const useFriendship = (
                     );
 
                     // If not found, try by id field
-                    if (!rejectedRequest) {
-                        console.log('[useFriendship] Try matching by id field...');
-                        rejectedRequest = prev.find(
+                    if (!rejectedRequest) {                        rejectedRequest = prev.find(
                             (r) => (r as any).id === notification.data.requestId
                         );
                     }
@@ -455,12 +435,7 @@ export const useFriendship = (
                         mappedReceiverId = requestIdToUserIdRef.current.get(
                             String(notification.data.requestId)
                         );
-                    }
-
-                    console.log('[useFriendship] Found request:', !!rejectedRequest);
-                    if (rejectedRequest) {
-                        console.log('[useFriendship] Request receiverId:', rejectedRequest.receiverId);
-                    }
+                    }                    if (rejectedRequest) {                    }
 
                     const receiverIdForReset =
                         rejectedRequest?.receiverId ||
@@ -469,17 +444,13 @@ export const useFriendship = (
                         notification.data?.fromUserId;
 
                     if (receiverIdForReset) {
-                        console.log('[useFriendship] Updating friendship status for receiverId:', receiverIdForReset);
-
                         // Update friendship status to NONE
                         setFriendshipStatuses((prevStatus) => {
                             const updated = new Map(prevStatus);
                             updated.set(receiverIdForReset, {
                                 isFriend: false,
                                 status: "none",
-                            });
-                            console.log('[useFriendship] Updated friendship status to NONE for:', receiverIdForReset);
-                            return updated;
+                            });                            return updated;
                         });
                     } else {
                         console.warn('[useFriendship] Could not find request in sentRequests:', {
@@ -498,29 +469,16 @@ export const useFriendship = (
 
                     if (notification.data?.requestId) {
                         requestIdToUserIdRef.current.delete(String(notification.data.requestId));
-                    }
-                    console.log('[useFriendship] After filtering, sentRequests count:', filtered.length);
-                    return filtered;
+                    }                    return filtered;
                 });
-
-                // Force sync with server in case payload misses mapping fields
-                loadSentRequests();
             };
 
             // Handle request accepted by receiver (someone accepts your sent request)
             const handleAcceptedRequest = (
                 notification: FriendRequestNotification
-            ): void => {
-                console.log('[useFriendship] Friend request accepted - Full notification:', JSON.stringify(notification, null, 2));
-                console.log('[useFriendship] Looking for requestId:', notification.data?.requestId);
-
-                setSentRequests((prev) => {
-                    console.log('[useFriendship] Current sentRequests count:', prev.length);
-
+            ): void => {                setSentRequests((prev) => {
                     // Log full request objects
-                    if (prev.length > 0) {
-                        console.log('[useFriendship] Full sentRequests[0]:', JSON.stringify(prev[0], null, 2));
-                    }
+                    if (prev.length > 0) {                    }
 
                     // Try to find by _id first
                     let acceptedRequest = prev.find(
@@ -528,56 +486,31 @@ export const useFriendship = (
                     );
 
                     // If not found, try by id field
-                    if (!acceptedRequest) {
-                        console.log('[useFriendship] Try matching by id field...');
-                        acceptedRequest = prev.find(
+                    if (!acceptedRequest) {                        acceptedRequest = prev.find(
                             (r) => (r as any).id === notification.data.requestId
                         );
                     }
 
                     // If still not found, try to find by fromUserId or senderId matching current user
-                    if (!acceptedRequest && prev.length > 0) {
-                        console.log('[useFriendship] Try finding by sender (current user)...');
-                        acceptedRequest = prev[0];
-                        console.log('[useFriendship] Using first request as fallback');
-                    }
-
-                    console.log('[useFriendship] Found request:', !!acceptedRequest);
-                    if (acceptedRequest) {
-                        console.log('[useFriendship] Request details - receiverId:', acceptedRequest.receiverId, 'senderId:', acceptedRequest.senderId);
-                    }
+                    if (!acceptedRequest && prev.length > 0) {                        acceptedRequest = prev[0];                    }                    if (acceptedRequest) {                    }
 
                     if (acceptedRequest?.receiverId) {
-                        console.log('[useFriendship] Updating friendship status to ACCEPTED for receiverId:', acceptedRequest.receiverId);
-
                         // Update friendship status to ACCEPTED
                         setFriendshipStatuses((prevStatus) => {
                             const updated = new Map(prevStatus);
                             updated.set(acceptedRequest.receiverId, {
                                 isFriend: true,
                                 status: "accepted",
-                            });
-                            console.log('[useFriendship] Updated friendship status to ACCEPTED for:', acceptedRequest.receiverId);
-                            return updated;
-                        });
-
-                        // Reload friends list
-                        console.log('[useFriendship] Reloading friends list...');
-                        loadFriends();
-                    } else if (acceptedRequest) {
-                        console.log('[useFriendship] Request found but receiverId missing, trying alternative fields...');
-                        const receiverId = (acceptedRequest as any).toUserId || (acceptedRequest as any).fromUserId;
-                        console.log('[useFriendship] Alternative receiverId:', receiverId);
-
+                            });                            return updated;
+                        });                        loadFriends();
+                    } else if (acceptedRequest) {                        const receiverId = (acceptedRequest as any).toUserId || (acceptedRequest as any).fromUserId;
                         if (receiverId) {
                             setFriendshipStatuses((prevStatus) => {
                                 const updated = new Map(prevStatus);
                                 updated.set(receiverId, {
                                     isFriend: true,
                                     status: "accepted",
-                                });
-                                console.log('[useFriendship] Updated friendship status to ACCEPTED for:', receiverId);
-                                return updated;
+                                });                                return updated;
                             });
                             loadFriends();
                         }
@@ -590,60 +523,33 @@ export const useFriendship = (
                     }
 
                     // Remove from sent requests
-                    const filtered = prev.filter((r) => r._id !== notification.data.requestId && (r as any).id !== notification.data.requestId);
-                    console.log('[useFriendship] After filtering, sentRequests count:', filtered.length);
-                    return filtered;
+                    const filtered = prev.filter((r) => r._id !== notification.data.requestId && (r as any).id !== notification.data.requestId);                    return filtered;
                 });
             };
 
             // Handle sender's own request being canceled
             const handleSenderCanceledRequest = (
                 notification: FriendRequestNotification
-            ): void => {
-                console.log('[useFriendship] Own request canceled - Full notification:', JSON.stringify(notification, null, 2));
-                console.log('[useFriendship] Looking for requestId:', notification.data?.requestId);
-
-                setSentRequests((prev) => {
-                    console.log('[useFriendship] Current sentRequests count for cancel:', prev.length);
-
+            ): void => {                setSentRequests((prev) => {
                     // Try to find by _id first
                     let canceledRequest = prev.find(r => r._id === notification.data?.requestId);
 
                     // If not found, try by id field (API uses 'id' not '_id')
-                    if (!canceledRequest) {
-                        console.log('[useFriendship] Try matching by id field...');
-                        canceledRequest = prev.find(
+                    if (!canceledRequest) {                        canceledRequest = prev.find(
                             (r) => (r as any).id === notification.data?.requestId
                         );
                     }
-
-                    console.log('[useFriendship] Found canceled request:', !!canceledRequest);
-
-                    if (canceledRequest?.receiverId) {
-                        console.log('[useFriendship] Resetting status to NONE for:', canceledRequest.receiverId);
-                        // Reset the friendship status back to NONE
+                    if (canceledRequest?.receiverId) {                        // Reset the friendship status back to NONE
                         setFriendshipStatuses((prevStatus) => {
                             const updated = new Map(prevStatus);
                             updated.set(canceledRequest.receiverId, {
                                 isFriend: false,
                                 status: "none",
-                            });
-                            console.log('[useFriendship] Status updated to NONE for:', canceledRequest.receiverId);
-                            return updated;
+                            });                            return updated;
                         });
-                    }
-
-                    // Remove from sent requests (try both _id and id fields)
-                    console.log('[useFriendship] Removing canceled request:', notification.data?.requestId);
-                    const filtered = prev.filter((r) => r._id !== notification.data?.requestId && (r as any).id !== notification.data?.requestId);
-                    console.log('[useFriendship] After cancel, sentRequests count:', filtered.length);
-                    return filtered;
+                    }                    const filtered = prev.filter((r) => r._id !== notification.data?.requestId && (r as any).id !== notification.data?.requestId);                    return filtered;
                 });
             };
-
-            FriendSocketService.onFriendRequestRejected(handleRejectedRequest);
-            FriendSocketService.onFriendRequestAccepted(handleAcceptedRequest);
-            FriendSocketService.onFriendRequestCanceled(handleSenderCanceledRequest);
 
             const handleUnfriended = (notification: FriendshipNotification): void => {
                 const unfriendedUserId = notification.data.friendId || notification.data.userId;
@@ -662,6 +568,9 @@ export const useFriendship = (
                 });
             };
 
+            FriendSocketService.onFriendRequestRejected(handleRejectedRequest);
+            FriendSocketService.onFriendRequestAccepted(handleAcceptedRequest);
+            FriendSocketService.onFriendRequestCanceled(handleSenderCanceledRequest);
             FriendSocketService.onFriendshipUnfriended(handleUnfriended);
 
             // Cleanup
@@ -681,24 +590,13 @@ export const useFriendship = (
         if (autoLoad) {
             loadFriends();
             loadReceivedRequests();
-            loadSentRequests();
+            // Removed: loadSentRequests() - fetch only when user uses add friend feature
         }
-    }, [autoLoad, loadFriends, loadReceivedRequests, loadSentRequests]);
+    }, [autoLoad, loadFriends, loadReceivedRequests]);
 
-    // Fallback sync: keep sent requests fresh in case socket event is missed on some clients (e.g. web tab idle/network hiccup)
-    useEffect(() => {
-        if (!autoLoad || !currentUserId || !token) {
-            return;
-        }
-
-        const intervalId = setInterval(() => {
-            loadSentRequests();
-        }, 30000);
-
-        return () => {
-            clearInterval(intervalId);
-        };
-    }, [autoLoad, currentUserId, token, loadSentRequests]);
+    // Note: Removed 5-second polling interval for sent requests
+    // Socket events handle real-time updates; no need for periodic fallback polling
+    // This reduces API spam from ~48 calls/minute to just initial load on mount
 
     const state: UseFriendshipState = {
         friends,

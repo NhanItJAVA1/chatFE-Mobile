@@ -12,6 +12,11 @@ export const getProfile = async (): Promise<User> => {
 };
 
 export const getUserById = async (userId: string): Promise<any> => {
+    if (!userId || userId === "undefined" || userId === "null") {
+        console.warn("[userService] Skipping fetch user: invalid userId", userId);
+        return null;
+    }
+
     try {
         const response = await api.get(`/users/${userId}/public`);
 
@@ -51,28 +56,13 @@ export const updateProfile = async (profileData: any): Promise<User> => {
             }
         });
 
-        const response = await api.patch("/users/me/profile", updateData);
-        console.log(
-            "[userService] PATCH /users/me/profile request data:",
-            JSON.stringify(updateData, null, 2)
-        );
-        console.log(
-            "[userService] PATCH /users/me/profile response:",
-            JSON.stringify(response, null, 2)
-        );
-
-        if (response) {
+        const response = await api.patch("/users/me/profile", updateData);        if (response) {
             try {
                 const currentUser = await authStorage.getItem("user");
                 if (currentUser) {
                     const user = JSON.parse(currentUser);
                     const updatedUser = { ...user, ...updateData };
-                    await authStorage.setItem("user", JSON.stringify(updatedUser));
-                    console.log(
-                        "[userService] Profile updated in storage:",
-                        JSON.stringify(updatedUser, null, 2)
-                    );
-                }
+                    await authStorage.setItem("user", JSON.stringify(updatedUser));                }
             } catch (parseError: any) {
                 console.warn(
                     "[userService] Could not update user in storage:",
@@ -102,12 +92,7 @@ export const updateAvatarViaAuth = async (avatarUrl: string): Promise<any> => {
                 if (currentUser) {
                     const user = JSON.parse(currentUser);
                     const updatedUser = { ...user, avatarUrl };
-                    await authStorage.setItem("user", JSON.stringify(updatedUser));
-                    console.log(
-                        "[userService] Avatar updated in storage:",
-                        avatarUrl
-                    );
-                }
+                    await authStorage.setItem("user", JSON.stringify(updatedUser));                }
             } catch (parseError: any) {
                 console.warn(
                     "[userService] Could not update avatar in storage:",

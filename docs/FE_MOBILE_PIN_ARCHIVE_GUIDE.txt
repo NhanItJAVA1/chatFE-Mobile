@@ -1,0 +1,210 @@
+FE Mobile guide - Pin Conversation & Archive Conversation UI logic
+
+Backend is shared with Web FE, so Mobile only needs to implement the same UI/state behavior.
+
+1. API endpoints
+
+Pin conversation:
+- POST /conversations/{conversationId}/pin-conversation
+- DELETE /conversations/{conversationId}/pin-conversation
+
+Archive conversation:
+- POST /conversations/{conversationId}/archive
+- DELETE /conversations/{conversationId}/archive
+
+2. Socket events to listen
+
+conversation:pin_toggled
+Payload:
+- conversationId
+- pinnedBy
+- pinned: boolean
+- pinnedAt may be absent, so FE can fallback to current timestamp when pinned = true.
+
+conversation:archived_toggled
+Payload:
+- conversationId
+- userId
+- archived: boolean
+
+receiveMessage
+- When a new message arrives, update the conversation lastMessage/unreadCount as usual, but keep pinned conversations above unpinned conversations.
+
+3. Conversation fields used by UI
+
+Each conversation can contain:
+- id or conversationId
+- name
+- lastMessage
+- unreadCount
+- pinned or isPinned
+- pinnedAt
+- archived or isArchived
+- type / isSavedMessages / isSelfChat
+
+Normalize booleans like this:
+- isPinned = conversation.pinned || conversation.isPinned
+- isArchived = conversation.archived || conversation.isArchived
+- isSavedMessages = conversation.type === "saved_messages" || conversation.isSavedMessages || conversation.isSelfChat
+
+4. Sorting rule
+
+Always sort conversation list with pinned-first logic:
+
+1. Pinned conversations always appear above unpinned conversations.
+2. Inside pinned conversations, newer pinnedAt appears first.
+3. Inside unpinned conversations, newer activity/lastMessageAt appears first.
+
+Important:
+- When new message arrives, do not simply move that conversation to index 0.
+- Instead, update the conversation data, then re-apply the pinned-first sort.
+- This prevents an unpinned conversation with new activity from jumping above pinned conversations.
+
+Pseudo logic:
+
+sortConversations(list):
+  pinnedA = a.pinned || a.isPinned
+  pinnedB = b.pinned || b.isPinned
+  if pinnedA != pinnedB:
+    return pinnedA ? -1 : 1
+
+  if pinnedA && pinnedB:
+    compare b.pinnedAt - a.pinnedAt
+
+  compare b.lastMessageAt/activityAt/updatedAt - a.lastMessageAt/activityAt/updatedAt
+
+5. Pin UI behavior
+
+Use Telegram-like behavior:
+- Show a small pin icon on pinned conversation rows.
+- Do not show a permanent large pin button in the row.
+- Put action in long-press/context menu:
+  - "Pin to top" if not pinned
+  - "Unpin from top" if pinned
+
+Optimistic update:
+- On Pin:
+  - Set pinned = true, isPinned = true, pinnedAt = now.
+  - Re-sort list.
+  - Call API.
+  - Rollback if API fails.
+- On Unpin:
+  - Set pinned = false, isPinned = false, pinnedAt = null/undefined.
+  - Re-sort list.
+  - Call API.
+  - Rollback if API fails.
+
+Socket sync:
+- On conversation:pin_toggled, update only that conversation pinned/isPinned/pinnedAt, then re-sort.
+
+6. Archive UI behavior
+
+Use Telegram-like behavior:
+- Normal chat list does not show archived conversations.
+- If there is at least one archived conversation, show an "Archived Chats" row at the top of the normal chat list.
+- The row should show:
+  - Archive icon/avatar.
+  - Title: "Archived Chats".
+  - Subtitle: conversation names only, separated by comma.
+  - If subtitle is longer than panel width, truncate with ellipsis.
+  - Unread badge showing total unread count from archived conversations.
+
+Example subtitle:
+An Vo, L.O.K.I, HVF - LUC...
+
+Do not show message content in the Archived Chats row. Only show conversation names.
+
+Archived view:
+- Tapping "Archived Chats" opens archived conversation list.
+- Archived screen/header should show title "Archived Chats".
+- Provide a Back button to return to normal chat list.
+- In archived view, show only archived conversations.
+- In normal view, show only non-archived conversations.
+
+7. Archive actions
+
+Long-press/context menu on conversation:
+- Show "Archive" if conversation is not archived.
+- Show "Unarchive" if conversation is archived.
+
+Optimistic update:
+- On Archive:
+  - Set archived = true, isArchived = true.
+  - Remove from normal list immediately.
+  - It should become visible in Archived Chats.
+  - Call API.
+  - Rollback if API fails.
+- On Unarchive:
+  - Set archived = false, isArchived = false.
+  - Remove from archived view immediately.
+  - It should become visible in normal chat list.
+  - Call API.
+  - Rollback if API fails.
+
+Socket sync:
+- On conversation:archived_toggled, update archived/isArchived for that conversation.
+- Recompute:
+  - normal list
+  - archived list
+  - Archived Chats row
+  - unread badge
+
+8. Unread badge behavior
+
+Normal app unread badge/tab badge:
+- Count only unread messages from non-archived conversations.
+- Archived conversations must not increase the main tab/app badge.
+
+Archived Chats badge:
+- Count unread messages from archived conversations only.
+- When an archived conversation gets a new message:
+  - Do not show it in normal chat list.
+  - Do not increment normal app badge.
+  - Increment the Archived Chats row badge.
+
+When user opens an archived conversation:
+- Clear unread count for that conversation.
+- Recompute Archived Chats unread badge.
+
+9. Saved Messages rule
+
+Saved Messages must not be archivable.
+
+UI:
+- Do not show "Archive" for Saved Messages in context menu.
+
+Logic guard:
+- If conversation is Saved Messages, do not call archive API.
+
+Detection:
+- type === "saved_messages"
+- or isSavedMessages === true
+- or isSelfChat === true
+
+10. Recommended state shape
+
+Keep one source list of all conversations currently known by FE:
+- conversations[]
+
+Derived lists:
+- normalConversations = conversations.filter(!isArchived)
+- archivedConversations = conversations.filter(isArchived)
+- archivedUnreadCount = sum(archivedConversations.unreadCount)
+- archivedPreviewNames = archivedConversations sorted by activity, map name, join(", ")
+
+Render:
+- Normal screen:
+  - if archivedConversations.length > 0, render Archived Chats row first.
+  - render normalConversations after it.
+- Archived screen:
+  - render header with Back button.
+  - render archivedConversations only.
+
+11. Edge cases
+
+- If archivedConversations.length = 0, hide Archived Chats row.
+- If all archived unread counts are 0, hide badge or show no number.
+- If an archived conversation receives a message, keep it archived.
+- If user creates/opens a private conversation that backend unarchives automatically, process the returned archived=false state and move it back to normal list.
+- If socket payload does not include pinnedAt, use current timestamp for optimistic display only.
+

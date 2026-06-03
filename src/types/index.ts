@@ -28,6 +28,7 @@ export type {
     BottomTabBarProps,
     TabItem,
     ChatScreenProps,
+    FriendRequestsScreenProps,
     EditData,
 } from "./component";
 
@@ -54,6 +55,13 @@ export type {
     GroupCreatePayload,
     GroupUpdatePayload,
     GroupResponse,
+    Poll,
+    PollOption,
+    PollStatus,
+    CreatePollRequest,
+    VotePollRequest,
+    AddPollOptionRequest,
+    PollSocketEvent,
 } from "./message";
 
 // Media types

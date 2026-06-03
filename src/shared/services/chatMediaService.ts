@@ -39,13 +39,6 @@ class ChatMediaService {
     ): Promise<any[]> {
         try {
             const messages = await SocketService.sendMessage(conversationId, text || '', mediaArray);
-
-            console.log('[ChatMediaService] Message with media sent:', {
-                conversationId,
-                mediaCount: mediaArray.length,
-                hasText: !!text,
-            });
-
             if (callback) {
                 callback({ success: true, messages });
             }
@@ -70,8 +63,6 @@ class ChatMediaService {
         onProgress?: UploadProgressCallback
     ): Promise<any[]> {
         try {
-            console.log('[ChatMediaService] Uploading image:', imageFile.name);
-
             // Upload image
             const uploadResult = await uploadMedia(imageFile);
 
@@ -84,9 +75,6 @@ class ChatMediaService {
                 width: imageFile.width || 800,
                 height: imageFile.height || 600,
             });
-
-            console.log('[ChatMediaService] Image uploaded, sending message:', media);
-
             // Send via Socket.IO
             return await this.sendMessageWithMedia(conversationId, caption, [media]);
 
@@ -107,8 +95,6 @@ class ChatMediaService {
         onProgress?: UploadProgressCallback
     ): Promise<any[]> {
         try {
-            console.log('[ChatMediaService] Uploading video:', videoFile.name);
-
             // Upload video
             const uploadResult = await uploadMedia(videoFile);
 
@@ -120,9 +106,6 @@ class ChatMediaService {
             const media: MessageMedia = this.buildMessageMedia(videoFile, 'video', uploadResult.url, {
                 duration: videoFile.duration, // If available
             });
-
-            console.log('[ChatMediaService] Video uploaded, sending message:', media);
-
             // Send via Socket.IO
             return await this.sendMessageWithMedia(conversationId, caption, [media]);
 
@@ -143,8 +126,6 @@ class ChatMediaService {
         onProgress?: UploadProgressCallback
     ): Promise<any[]> {
         try {
-            console.log('[ChatMediaService] Uploading audio:', audioFile.name);
-
             // Upload audio
             const uploadResult = await uploadMedia(audioFile);
 
@@ -156,9 +137,6 @@ class ChatMediaService {
             const media: MessageMedia = this.buildMessageMedia(audioFile, 'audio', uploadResult.url, {
                 duration: audioFile.duration, // If available
             });
-
-            console.log('[ChatMediaService] Audio uploaded, sending message:', media);
-
             // Send via Socket.IO
             return await this.sendMessageWithMedia(conversationId, caption, [media]);
 
@@ -179,8 +157,6 @@ class ChatMediaService {
         onProgress?: UploadProgressCallback
     ): Promise<any[]> {
         try {
-            console.log('[ChatMediaService] Uploading document:', documentFile.name);
-
             // Upload document
             const uploadResult = await uploadMedia(documentFile);
 
@@ -190,9 +166,6 @@ class ChatMediaService {
 
             // Create message media
             const media: MessageMedia = this.buildMessageMedia(documentFile, 'document', uploadResult.url);
-
-            console.log('[ChatMediaService] Document uploaded, sending message:', media);
-
             // Send via Socket.IO
             return await this.sendMessageWithMedia(conversationId, caption, [media]);
 
@@ -238,9 +211,7 @@ class ChatMediaService {
         }
 
         if (mediaArray.length > 0) {
-            return await this.sendMessageWithMedia(conversationId, caption, mediaArray);
-            console.log('[ChatMediaService] Sent', mediaArray.length, 'media files');
-        }
+            return await this.sendMessageWithMedia(conversationId, caption, mediaArray);        }
 
         return [];
     }

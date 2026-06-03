@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useMemo, useState, useRef, useEffect } from "react";
 import {
     Ionicons,
 } from "@expo/vector-icons";
@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { Avatar, Card, PrimaryButton } from "../components";
 import { colors } from "../theme";
+import userService from "../../../shared/services/userService";
 import type { User } from "@/types";
 import type { UseFriendshipState, UseFriendshipActions } from "../../../shared/hooks/useFriendship";
 
@@ -35,11 +36,164 @@ interface AddFriendScreenProps {
  */
 export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreenProps) => {
     const [searchQuery, setSearchQuery] = useState("");
+    const [sentRequestUsers, setSentRequestUsers] = useState<Record<string, User>>({});
 
     // Store mapping of userId -> full request object for quick lookup during cancel
     const sentRequestMapRef = useRef<Map<string, any>>(new Map());
+    const fetchingSentUserIdsRef = useRef<Set<string>>(new Set());
     // Track the last userId we sent a request to (for matching with incomplete API response)
     const lastSentUserIdRef = useRef<string | null>(null);
+
+    // Load sent requests when component mounts (on AddFriend screen enter)
+    useEffect(() => {
+        actions.loadSentRequests();
+    }, []); // Only run on mount, not on actions change
+
+    const getRequestReceiverId = (request: any): string => {
+        return String(
+            request?.receiverId ||
+            request?.toUserId ||
+            request?.recipientId ||
+            request?.userId ||
+            request?.receiver?.id ||
+            request?.receiver?._id ||
+            request?.receiverInfo?.id ||
+            request?.receiverInfo?._id ||
+            ""
+        );
+    };
+
+    const getSentRequestUser = (request: any): User => {
+        const receiver = request?.receiverInfo || request?.receiver || request?.recipient || request?.toUser || request?.user || {};
+        const id = getRequestReceiverId(request);
+        const enrichedUser = sentRequestUsers[id];
+        if (enrichedUser) {
+            return enrichedUser;
+        }
+
+        const phone = receiver.phoneNumber || receiver.phone || request?.receiverPhone || "";
+        const resolvedName =
+            receiver.displayName ||
+            receiver.name ||
+            receiver.username ||
+            request?.receiverName ||
+            request?.displayName ||
+            request?.name ||
+            (phone ? phone : (id ? `User #${id.slice(-6)}` : ""));
+
+        return {
+            id,
+            _id: id,
+            email: receiver.email || "",
+            displayName: resolvedName || "Đang tải...",
+            phoneNumber: phone,
+            avatar: receiver.avatar || receiver.avatarUrl || request?.receiverAvatar || "",
+            avatarUrl: receiver.avatarUrl || receiver.avatar || request?.receiverAvatar || "",
+            status: receiver.status || receiver.presenceStatus || "offline",
+        } as User;
+    };
+
+    useEffect(() => {
+        const missingUserIds = state.sentRequests
+            .filter((request: any) => String(request?.status || "pending").toLowerCase() === "pending")
+            .map((request: any) => getRequestReceiverId(request))
+            .filter((userId) => {
+                if (!userId || userId === "undefined" || userId === "null") {
+                    return false;
+                }
+
+                if (sentRequestUsers[userId] || fetchingSentUserIdsRef.current.has(userId)) {
+                    return false;
+                }
+
+                const request: any = state.sentRequests.find((item: any) => getRequestReceiverId(item) === userId);
+                const receiver = request?.receiverInfo || request?.receiver || request?.recipient || request?.toUser || request?.user;
+                if (receiver?.displayName && !receiver.displayName.startsWith("Đang tải") && !receiver.displayName.startsWith("User #")) return false;
+                return !receiver?.displayName && !receiver?.name && !receiver?.username || true;
+            });
+
+        if (missingUserIds.length === 0) {
+            return;
+        }
+
+        missingUserIds.forEach((userId) => fetchingSentUserIdsRef.current.add(userId));
+
+        let isActive = true;
+        Promise.all(
+            missingUserIds.map(async (userId) => {
+                const profile = await userService.getUserById(userId);
+                return { userId, profile };
+            })
+        )
+            .then((items) => {
+                if (!isActive) return;
+
+                setSentRequestUsers((current) => {
+                    const next = { ...current };
+                    items.forEach(({ userId, profile }) => {
+                        if (!profile) return;
+                        next[userId] = {
+                            id: profile.id || profile._id || userId,
+                            _id: profile._id || profile.id || userId,
+                            email: profile.email || "",
+                            displayName: profile.displayName || profile.name || profile.username || profile.phoneNumber || profile.phone || "Người dùng",
+                            phoneNumber: profile.phoneNumber || profile.phone || "",
+                            phone: profile.phone || profile.phoneNumber || "",
+                            avatar: profile.avatar || profile.avatarUrl || "",
+                            avatarUrl: profile.avatarUrl || profile.avatar || "",
+                            status: profile.status || profile.presenceStatus || "offline",
+                        } as User;
+                    });
+                    return next;
+                });
+            })
+            .finally(() => {
+                missingUserIds.forEach((userId) => fetchingSentUserIdsRef.current.delete(userId));
+            });
+
+        return () => {
+            isActive = false;
+        };
+    }, [state.sentRequests, sentRequestUsers]);
+
+    const sentRequestItems = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        const searchResultIds = new Set(
+            state.searchResults
+                .map((user) => String(user.id || (user as any)._id || ""))
+                .filter(Boolean)
+        );
+
+        return state.sentRequests
+            .filter((request: any) => String(request?.status || "pending").toLowerCase() === "pending")
+            .map((request: any) => ({
+                request,
+                user: getSentRequestUser(request),
+            }))
+            .filter(({ user }) => {
+                const userId = String(user.id || (user as any)._id || "");
+                if (searchResultIds.has(userId)) {
+                    return false;
+                }
+
+                if (!query) {
+                    return true;
+                }
+
+                const haystack = [
+                    user.displayName,
+                    user.name,
+                    (user as any).username,
+                    user.phone,
+                    (user as any).phoneNumber,
+                ]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase();
+
+                return haystack.includes(query);
+            });
+    }, [searchQuery, sentRequestUsers, state.searchResults, state.sentRequests]);
 
     // Handle search
     const handleSearch = async () => {
@@ -54,18 +208,14 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
     // Handle send friend request
     const handleSendRequest = async (userId: string) => {
         try {
-            console.log('[AddFriendScreen] Sending friend request to userId:', userId);
             lastSentUserIdRef.current = userId;
 
             // Capture the returned request object
             const sentRequest = await actions.sendRequest(userId);
-            console.log('[AddFriendScreen] Received request object:', JSON.stringify(sentRequest, null, 2));
-
             if (sentRequest) {
                 // Store the full request object for use during cancel
                 sentRequestMapRef.current.set(userId, sentRequest);
                 const requestId = (sentRequest as any).id || sentRequest._id;
-                console.log('[AddFriendScreen] Stored request for userId:', userId, 'with id:', requestId);
             }
 
             Alert.alert("Success", "Lời mời kết bạn đã được gửi!");
@@ -76,54 +226,29 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
     // Handle cancel sent request
     const handleCancelRequest = async (userId: string) => {
-        console.log('[AddFriendScreen] handleCancelRequest called with userId:', userId);
-
         // First, try to use the stored request object from when we sent it
         let requestId: string | undefined;
         let storedRequest = sentRequestMapRef.current.get(userId);
 
-        if (storedRequest) {
-            console.log('[AddFriendScreen] Found stored request:', JSON.stringify(storedRequest, null, 2));
-            requestId = (storedRequest as any).id || storedRequest._id;
-            console.log('[AddFriendScreen] Using stored request id:', requestId);
-        } else {
-            // Fallback: try to find in current state
-            console.log('[AddFriendScreen] No stored request, searching in state.sentRequests...');
-            console.log('[AddFriendScreen] state.sentRequests:', JSON.stringify(state.sentRequests, null, 2));
-
+        if (storedRequest) { requestId = (storedRequest as any).id || storedRequest._id; } else {
             const sentRequest = state.sentRequests.find(r => {
-                const receiverId = r.receiverId || (r as any).toUserId;
-                const matches = receiverId === userId;
-                if (matches) console.log('[AddFriendScreen] Found request in state with id:', (r as any).id);
-                return matches;
+                const receiverId = getRequestReceiverId(r);
+                const matches = receiverId === String(userId);
+                if (matches) return matches;
             });
 
             if (sentRequest) {
                 requestId = (sentRequest as any).id || sentRequest._id;
-                console.log('[AddFriendScreen] Found in state, id:', requestId);
             }
         }
-
-        console.log('[AddFriendScreen] Final requestId:', requestId);
-
         if (!requestId) {
             console.warn('[AddFriendScreen] Could not find requestId for userId:', userId);
             Alert.alert("Error", "Không tìm thấy lời mời để hủy");
             return;
         }
-
-        console.log('[AddFriendScreen] About to show Alert dialog with requestId:', requestId);
-
         const onConfirm = async () => {
-            console.log('[AddFriendScreen] onConfirm callback executed with requestId:', requestId);
             try {
-                console.log('[AddFriendScreen] Calling cancelRequest with id:', requestId);
-                await actions.cancelRequest(requestId);
-                console.log('[AddFriendScreen] Cancel API succeeded, updating status locally');
-
-                // Remove from state.sentRequests so button text changes back to "Gửi lời mời"
-                console.log('[AddFriendScreen] Removing request from sentRequests');
-                actions.removeSentRequest(requestId);
+                await actions.cancelRequest(requestId); actions.removeSentRequest(requestId);
 
                 // Reset the friendship status to NONE (redundant but ensures status is correct)
                 (actions as any).resetFriendshipStatus(userId);
@@ -145,7 +270,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             [
                 {
                     text: "Không",
-                    onPress: () => console.log('[AddFriendScreen] User pressed Không button')
+                    onPress: () => { },
                 },
                 {
                     text: "Hủy",
@@ -158,30 +283,16 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 
     // Render user search result
     const renderUserCard = (user: User) => {
-        const userId = user.id || (user as any)._id;
-        console.log('[AddFriendScreen] renderUserCard for user:', userId);
-
-        // Log all sentRequests with details
-        console.log('[AddFriendScreen] Total sentRequests:', state.sentRequests.length);
-        if (state.sentRequests.length > 0) {
-            console.log('[AddFriendScreen] sentRequests details:', JSON.stringify(state.sentRequests.map(r => ({ _id: r._id, receiverId: r.receiverId, status: (r as any).status })), null, 2));
-        }
+        const userId = user.id || (user as any)._id; if (state.sentRequests.length > 0) { }
 
         // Check if already sent request
         const sentRequest = state.sentRequests.find(
             (r) => {
-                console.log('[AddFriendScreen] Comparing - r.receiverId:', r.receiverId, 'user.id:', userId, 'match:', r.receiverId === userId);
-                return r.receiverId === userId;
+                return getRequestReceiverId(r) === String(userId);
             }
         );
-        console.log('[AddFriendScreen] Found sentRequest for user:', sentRequest?._id);
-
         const isFriend = state.friends.some((f) => f.friendId === userId);
-        const status = state.friendshipStatuses.get(userId);
-        console.log('[AddFriendScreen] Status for user:', status);
-        console.log('[AddFriendScreen] Button condition check - sentRequest:', !!sentRequest, 'status.status:', status?.status);
-
-        let buttonText = "Gửi lời mời";
+        const status = state.friendshipStatuses.get(userId); let buttonText = "Gửi lời mời";
         let isDisabledState = false;
         let buttonVariant: "primary" | "secondary" = "primary";
         let buttonAction = () => handleSendRequest(userId);
@@ -195,11 +306,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             isDisabledState = false;
             buttonVariant = "secondary";
             buttonAction = () => handleCancelRequest(userId);
-            console.log('[AddFriendScreen] BUTTON SET TO CANCEL for user:', userId);
         }
-
-        console.log('[AddFriendScreen] Button final state - text:', buttonText, 'disabled:', isDisabledState);
-
         return (
             <Card key={userId} style={styles.userCard}>
                 <View style={styles.userHeader}>
@@ -257,15 +364,67 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
                         <PrimaryButton
                             label={buttonText}
                             onPress={() => {
-                                console.log('[AddFriendScreen] Button pressed - buttonText:', buttonText, 'isDisabled:', isDisabledState);
                                 if (!isDisabledState) {
-                                    console.log('[AddFriendScreen] Calling buttonAction');
                                     buttonAction();
-                                } else {
-                                    console.log('[AddFriendScreen] Button disabled, skipping action');
-                                }
+                                } else { }
                             }}
                             variant={buttonVariant}
+                        />
+                    </View>
+                    <Pressable
+                        onPress={() => onChatPress?.({ ...user, id: userId })}
+                        style={({ pressed }) => [
+                            styles.chatButton,
+                            pressed && styles.chatButtonPressed,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Bắt đầu chat"
+                    >
+                        <Ionicons name="chatbubble-ellipses" size={22} color={colors.textOnAccent} />
+                    </Pressable>
+                </View>
+            </Card>
+        );
+    };
+
+    const renderSentRequestCard = ({ request, user }: { request: any; user: User }) => {
+        const userId = String(user.id || (user as any)._id || getRequestReceiverId(request));
+
+        return (
+            <Card key={(request as any)._id || (request as any).id || userId} style={styles.userCard}>
+                <View style={styles.userHeader}>
+                    {user.avatar || user.avatarUrl ? (
+                        <Image
+                            source={{ uri: user.avatar || user.avatarUrl }}
+                            style={styles.avatar}
+                        />
+                    ) : (
+                        <Avatar
+                            label={(user.displayName || "U").slice(0, 1).toUpperCase()}
+                            size={50}
+                            backgroundColor="#3d6df2"
+                            textSize={20}
+                        />
+                    )}
+
+                    <View style={styles.userInfo}>
+                        <Text style={styles.userName}>{user.displayName}</Text>
+                        {!!(user as any).phoneNumber && <Text style={styles.userPhone}>{(user as any).phoneNumber}</Text>}
+                        <View style={styles.sentRequestBadge}>
+                            <Ionicons name="time-outline" size={13} color={colors.accent} />
+                            <Text style={styles.sentRequestBadgeText}>Đã gửi lời mời</Text>
+                        </View>
+                    </View>
+                </View>
+
+                <View style={styles.divider} />
+
+                <View style={styles.actionRow}>
+                    <View style={styles.friendAction}>
+                        <PrimaryButton
+                            label="Hủy lời mời"
+                            onPress={() => handleCancelRequest(userId)}
+                            variant="secondary"
                         />
                     </View>
                     <Pressable
@@ -354,6 +513,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             {!state.searchLoading &&
                 !state.searchError &&
                 state.searchResults.length === 0 &&
+                sentRequestItems.length === 0 &&
                 searchQuery && (
                     <View style={styles.centerContent}>
                         <Ionicons
@@ -368,10 +528,18 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
             {/* Search results */}
             {state.searchResults.map(renderUserCard)}
 
+            {sentRequestItems.length > 0 && (
+                <View style={styles.sentSection}>
+                    <Text style={styles.sectionTitle}>Lời mời đã gửi</Text>
+                    {sentRequestItems.map(renderSentRequestCard)}
+                </View>
+            )}
+
             {/* Initial state - no search */}
             {!state.searchLoading &&
                 !state.searchError &&
                 state.searchResults.length === 0 &&
+                sentRequestItems.length === 0 &&
                 !searchQuery && (
                     <View style={styles.centerContent}>
                         <Ionicons
@@ -391,7 +559,7 @@ export const AddFriendScreen = ({ state, actions, onChatPress }: AddFriendScreen
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: "transparent",
     },
     screenContent: {
         padding: 16,
@@ -408,9 +576,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         borderRadius: 8,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: colors.overlayWhite10,
         paddingHorizontal: 12,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceSoftTransparent,
     },
     searchIcon: {
         marginRight: 8,
@@ -479,6 +647,32 @@ const styles = StyleSheet.create({
         color: colors.textMuted,
         lineHeight: 18,
         marginVertical: 8,
+    },
+    sentSection: {
+        marginTop: 4,
+    },
+    sectionTitle: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "800",
+        marginBottom: 10,
+    },
+    sentRequestBadge: {
+        alignSelf: "flex-start",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        paddingVertical: 4,
+        backgroundColor: "rgba(63, 140, 255, 0.14)",
+        borderWidth: 1,
+        borderColor: "rgba(63, 140, 255, 0.28)",
+    },
+    sentRequestBadgeText: {
+        color: colors.accent,
+        fontSize: 12,
+        fontWeight: "800",
     },
     divider: {
         height: 1,
