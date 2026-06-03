@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, ImageBackground, StyleSheet, View, Text, Pressable } from "react-native";
-import { NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
+import { NavigationContainer, createNavigationContainerRef, DefaultTheme } from "@react-navigation/native";
 import { createNativeStackNavigator, type NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useAuth, useFriendRequests, useFriendship } from "../../shared/hooks";
 import { SocketService, type MessagePayload } from "../../shared/services/socketService";
@@ -119,6 +119,14 @@ type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
+const transparentNavigationTheme = {
+    ...DefaultTheme,
+    colors: {
+        ...DefaultTheme.colors,
+        background: "transparent",
+        card: "transparent",
+    },
+};
 
 const getMessageConversationId = (message: any, fallback?: string): string => {
     return String(message?.conversationId || fallback || "");
@@ -395,6 +403,7 @@ const MainShell = () => {
             ) : null}
             <NavigationContainer
                 ref={navigationRef}
+                theme={transparentNavigationTheme}
                 onReady={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name || "Main")}
                 onStateChange={() => {
                     const routeName = navigationRef.getCurrentRoute()?.name || "Main";
@@ -405,7 +414,14 @@ const MainShell = () => {
                 }}
             >
                 <View style={styles.content}>
-                    <Stack.Navigator id="RootStack" screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
+                    <Stack.Navigator
+                        id="RootStack"
+                        screenOptions={{
+                            headerShown: false,
+                            animation: "slide_from_right",
+                            contentStyle: { backgroundColor: "transparent" },
+                        }}
+                    >
                         <Stack.Screen name="Main">
                             {({ navigation }) => renderMainScreen(navigation)}
                         </Stack.Screen>
