@@ -12,7 +12,7 @@ export interface ConversationLastMessageSummary {
 export interface Conversation {
     _id: string;
     id?: string;
-    type: "PRIVATE" | "GROUP";
+    type: "PRIVATE" | "GROUP" | "saved_messages";
     name?: string;
     members?: string[];
     pairKey?: string;
@@ -26,6 +26,16 @@ export interface Conversation {
     unreadCount?: number;
     createdAt: string;
     updatedAt: string;
+    // Pin fields
+    pinned?: boolean;
+    isPinned?: boolean;
+    pinnedAt?: string;
+    // Archive fields
+    archived?: boolean;
+    isArchived?: boolean;
+    // Saved Messages fields
+    isSavedMessages?: boolean;
+    isSelfChat?: boolean;
 }
 
 export interface MessageResponse {
@@ -75,13 +85,15 @@ export class ConversationService {
         try {
             const response = await api.post("/conversations/private", {
                 targetUserId,
+            }, {
+                suppressErrorLog: true,
             });
 
             const data = response.data || response;
 
             return data.data || data;
         } catch (error: any) {
-            throw new Error(error.message || "Failed to get/create conversation");
+            throw error;
         }
     }
 
@@ -106,18 +118,6 @@ export class ConversationService {
     static async getGroupDetail(groupId: string): Promise<Conversation> {
         try {
             const response = await api.get(`/groups/${groupId}/info`);
-
-            // Log comprehensive response structure
-            console.log('[ConversationService] getGroupDetail response:', {
-                type: typeof response,
-                isObject: typeof response === 'object',
-                keys: Array.isArray(response) ? 'array' : Object.keys(response || {}),
-                hasData: 'data' in response,
-                dataType: response?.data ? typeof response.data : 'missing',
-                dataKeys: response?.data ? Object.keys(response.data) : 'N/A',
-                fullResponse: JSON.stringify(response).substring(0, 2000),
-            });
-
             // If response.data doesn't exist, check if entire response IS the data
             if (!response?.data && response?.conversation) {
                 return response.conversation;
@@ -142,8 +142,7 @@ export class ConversationService {
         page: number = 1,
         limit: number = 20
     ): Promise<Conversation[]> {
-        try {
-            const response = await api.get("/conversations", {
+        try {            const response = await api.get("/conversations", {
                 params: { page, limit },
             });
 
@@ -170,12 +169,6 @@ export class ConversationService {
         limit: number = 30
     ): Promise<MessagePage> {
         try {
-            console.log('[ConversationService] loadMessages called:', {
-                conversationId,
-                cursor,
-                limit,
-            });
-
             const response = await api.get(
                 `/conversations/${conversationId}/messages`,
                 {
@@ -185,29 +178,11 @@ export class ConversationService {
                     },
                 }
             );
-
-            console.log('[ConversationService] loadMessages response:', {
-                status: response.status,
-                hasData: !!response.data,
-                dataKeys: Object.keys(response.data || {}),
-                dataDataKeys: Object.keys(response.data?.data || {}),
-            });
-
             const data = response.data || response;
 
             // Current backend shape: { data: { messages, nextCursor, hasMore } }
             const payload = data?.data || data;
             const messages = payload?.messages || payload?.items || [];
-
-            console.log('[ConversationService] Messages parsed:', {
-                count: messages.length,
-                messagePreview: messages.slice(0, 2).map((m: any) => ({
-                    id: m._id || m.id,
-                    text: m.text?.substring(0, 30),
-                    senderId: m.senderId,
-                })),
-            });
-
             if (Array.isArray(messages)) {
                 return {
                     items: messages,
@@ -360,7 +335,7 @@ export class ConversationService {
      */
     static async deleteConversation(conversationId: string): Promise<void> {
         try {
-            await api.delete(`/groups/${conversationId}`);
+            await api.delete(`/conversations/${conversationId}`);
         } catch (error: any) {
             console.error("[ConversationService] Error deleting conversation:", error);
             throw error;
@@ -406,6 +381,54 @@ export class ConversationService {
             const response = await api.delete(`/conversations/${conversationId}/mute`);
             return response.data || response;
         } catch (error: any) {
+    /**
+     * Pin a conversation
+     */
+    static async pinConversation(conversationId: string): Promise<any> {
+        try {
+            const response = await api.post(`/conversations/${conversationId}/pin-conversation`, {});
+            return response.data || response;
+        } catch (error: any) {
+            console.error("[ConversationService] Error pinning conversation:", error);
+            throw error;
+        }
+    }
+
+    /**
+     * Unpin a conversation
+     */
+    static async unpinConversation(conversationId: string): Promise<any> {
+        try {
+            const response = await api.delete(`/conversations/${conversationId}/pin-conversation`);
+            return response.data || response;
+        } catch (error: any) {
+            console.error("[ConversationService] Error unpinning conversation:", error);
+            throw error;
+        }
+    }
+
+    /**
+     * Archive a conversation
+     */
+    static async archiveConversation(conversationId: string): Promise<any> {
+        try {
+            const response = await api.post(`/conversations/${conversationId}/archive`, {});
+            return response.data || response;
+        } catch (error: any) {
+            console.error("[ConversationService] Error archiving conversation:", error);
+            throw error;
+        }
+    }
+
+    /**
+     * Unarchive a conversation
+     */
+    static async unarchiveConversation(conversationId: string): Promise<any> {
+        try {
+            const response = await api.delete(`/conversations/${conversationId}/archive`);
+            return response.data || response;
+        } catch (error: any) {
+            console.error("[ConversationService] Error unarchiving conversation:", error);
             throw error;
         }
     }

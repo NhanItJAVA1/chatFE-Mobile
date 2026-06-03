@@ -1,0 +1,419 @@
+**Poll Nghiệp Vụ**
+
+Poll chỉ dùng trong group conversation, không dùng cho private chat.
+
+Quyền tạo poll phụ thuộc `group.settings.utilityPermissions.poll`:
+
+- `"all"`: mọi member active trong group đều tạo poll được.
+- `"admins"`: chỉ owner/admin tạo poll được.
+
+Mặc định khi tạo group mới:
+
+```ts
+utilityPermissions: {
+  poll: "all",
+  reminder: "all",
+  note: "all",
+}
+```
+
+User không phải member active của group thì không được tạo/vote/xem poll.
+
+**Create Poll**
+
+API:
+
+```http
+POST /v1/groups/:groupId/polls
+```
+
+Payload FE gửi:
+
+```ts
+{
+  question: string;
+  options: string[]; // tối thiểu 2 option
+  isMultipleChoice: boolean; // UI label: Multiple votes
+  allowAddOption: boolean;
+  allowChangeVote: boolean;
+  showResultsBeforeClose: boolean;
+  hideVoters: boolean;
+}
+```
+
+Hiện tại không gửi `expiresAt` vì auto close poll chưa chạy ổn.
+
+Default trên UI create poll:
+
+```ts
+isMultipleChoice: false;
+allowChangeVote: true;
+showResultsBeforeClose: true;
+allowAddOption: true;
+hideVoters: false;
+```
+
+Response create:
+
+```ts
+{
+  data: {
+    poll: Poll,
+    message: Message // message type poll để append vào chat
+  }
+}
+```
+
+BE cũng emit realtime:
+
+```ts
+poll:new {
+  conversationId,
+  poll,
+  message
+}
+```
+
+**Poll Model Chính**
+
+```ts
+type Poll = {
+  id: string;
+  conversationId: string;
+  messageId?: string;
+  question: string;
+  options: PollOption[];
+  createdBy: string;
+
+  isMultipleChoice: boolean;
+  allowAddOption: boolean;
+  allowChangeVote: boolean;
+  showResultsBeforeClose: boolean;
+  hideVoters: boolean;
+
+  status: "active" | "closed";
+  closedAt?: string;
+  closedBy?: string;
+
+  pinned?: boolean;
+  totalVotes: number;
+
+  createdAt: string;
+  updatedAt: string;
+};
+
+type PollOption = {
+  id: string;
+  text: string;
+  voteCount: number;
+  votedUserIds: string[];
+  addedBy?: string;
+};
+```
+
+**Vote Poll**
+
+API:
+
+```http
+POST /v1/groups/:groupId/polls/:pollId/vote
+```
+
+Payload:
+
+```ts
+{
+  optionIds: string[];
+}
+```
+
+Single vote:
+
+```ts
+optionIds: [selectedOptionId]
+```
+
+Multiple votes:
+
+```ts
+optionIds: selectedOptionIds
+```
+
+Rules:
+
+- Poll closed thì không vote được.
+- Single vote không được gửi nhiều hơn 1 option.
+- Nếu `allowChangeVote=false`, user đã vote rồi thì không đổi vote được.
+- Nếu `allowChangeVote=true`, user được đổi vote.
+- Nếu vote lại đúng lựa chọn cũ, BE xem là idempotent no-op.
+- Multiple votes cho phép gửi mảng rỗng nếu user muốn bỏ hết lựa chọn đã vote.
+
+Response:
+
+```ts
+{
+  data: Poll
+}
+```
+
+Realtime:
+
+```ts
+poll:vote {
+  pollId,
+  userId,
+  poll,
+  activityMessage?
+}
+```
+
+**Add Option Khi Vote**
+
+Chỉ hiển thị nếu:
+
+```ts
+poll.allowAddOption === true && poll chưa closed
+```
+
+API:
+
+```http
+POST /v1/groups/:groupId/polls/:pollId/options
+```
+
+Payload:
+
+```ts
+{
+  text: string;
+}
+```
+
+Rules:
+
+- Không cho thêm nếu `allowAddOption=false`.
+- Không cho thêm option trùng text, BE trả lỗi.
+- Poll closed thì không thêm được.
+- Member active trong group mới được thêm.
+
+Response:
+
+```ts
+{
+  data: Poll
+}
+```
+
+Realtime:
+
+```ts
+poll:option_added {
+  conversationId,
+  pollId,
+  poll,
+  addedBy
+}
+```
+
+**Close Poll**
+
+Chỉ owner/admin hoặc người tạo poll được close.
+
+API:
+
+```http
+POST /v1/groups/:groupId/polls/:pollId/lock
+```
+
+Response:
+
+```ts
+{
+  data: Poll
+}
+```
+
+Realtime:
+
+```ts
+poll:closed {
+  conversationId,
+  pollId,
+  poll,
+  closedBy,
+  systemMessage?
+}
+```
+
+**Pin / Unpin / Delete**
+
+API:
+
+```http
+POST /v1/groups/:groupId/polls/:pollId/pin
+DELETE /v1/groups/:groupId/polls/:pollId/pin
+DELETE /v1/groups/:groupId/polls/:pollId
+```
+
+Realtime:
+
+```ts
+poll:pinned
+poll:unpinned
+poll:deleted
+```
+
+Mobile nếu chưa làm UI pin/delete riêng thì vẫn nên listen event để update/remove poll message realtime.
+
+**UI Create Poll**
+
+Modal/sheet tạo poll gồm:
+
+1. Header:
+   - Cancel
+   - Poll title/icon
+   - Create
+
+2. Question:
+   - textarea/input
+   - required
+
+3. Options:
+   - mặc định 2 dòng option rỗng
+   - tối thiểu 2 option có text
+   - tối đa 10 options
+   - khi user gõ vào option cuối cùng, tự thêm một dòng option mới nếu chưa đủ 10
+   - có nút xoá option nếu tổng số dòng > 2
+
+4. Settings theo thứ tự:
+
+```txt
+Allow changing vote      checked default
+Show results early       checked default
+Members can add options  checked default
+Multiple votes           unchecked default
+Hide voters              unchecked default
+```
+
+5. Không hiển thị `Close at`.
+
+**UI Poll Message**
+
+Poll card trong chat gồm:
+
+- icon poll
+- question
+- trạng thái `Closed` nếu poll đã đóng
+- danh sách options
+- footer: tổng vote hoặc `Results hidden`
+- nút vote/update vote nếu là multiple votes
+- dòng `Add option` nếu được phép
+- nút `Close poll` nếu current user là creator
+
+**Cách Xác Định User Đã Chọn Option**
+
+FE so current user với `option.votedUserIds`:
+
+```ts
+const selectedOptionIds = poll.options
+  .filter(option => option.votedUserIds.includes(currentUserId))
+  .map(option => option.id);
+```
+
+**Hiển Thị Kết Quả**
+
+```ts
+const showResults =
+  poll.showResultsBeforeClose !== false ||
+  poll.status === "closed" ||
+  currentUserId === poll.createdBy;
+```
+
+Nếu `showResults=false`:
+
+- Không show phần trăm.
+- Không show total vote thật.
+- Footer hiển thị `Results hidden`.
+- Chỉ nên show trạng thái lựa chọn của chính user.
+
+Nếu `hideVoters=true`:
+
+- Không show avatar/list voter.
+- Creator/admin có thể vẫn thấy tùy BE sanitize, nhưng mobile nên ưu tiên dữ liệu BE trả về.
+
+**UI Single Vote**
+
+Nếu `isMultipleChoice=false`:
+
+- Tap option là submit vote ngay.
+- Nếu user đã vote và `allowChangeVote=false`, disable option.
+- Nếu user đã vote và `allowChangeVote=true`, tap option khác là đổi vote.
+
+**UI Multiple Votes**
+
+Nếu `isMultipleChoice=true`:
+
+- Tap option chỉ toggle chọn/bỏ chọn local.
+- Có nút submit:
+  - Chưa vote: `Vote (n)`
+  - Đã vote và đang đổi: `Update vote (n)`
+- Disable nút nếu chưa có thay đổi.
+- Nếu user đã vote và bỏ chọn hết, vẫn cho bấm `Update vote` để gửi `optionIds: []`.
+
+State nên tách rõ:
+
+```ts
+pendingOptionIds: string[] | null
+```
+
+- `null`: user chưa chỉnh gì.
+- `string[]`: user đang chỉnh lựa chọn.
+
+Effective selection:
+
+```ts
+const effectiveOptionIds =
+  pendingOptionIds ?? selectedOptionIds;
+```
+
+So sánh thay đổi:
+
+```ts
+const hasSelectionChanges =
+  pendingOptionIds !== null &&
+  !sameSet(pendingOptionIds, selectedOptionIds);
+```
+
+**Gợi Ý UI Khi Multiple Votes + Allow Change Vote**
+
+Để dễ nhìn:
+
+- Option đã vote: nền xanh nhẹ, check icon, label `Selected` nếu results hidden.
+- Option mới chọn thêm: label `Add`.
+- Option đã vote nhưng đang bỏ chọn: nền đỏ nhẹ, label `Remove`.
+- Nút submit: `Update vote`.
+
+Tránh dùng cùng một màu cho cả “đã vote” và “đang chọn mới” nếu kết quả bị ẩn, vì user sẽ khó hiểu trạng thái.
+
+**Realtime FE Cần Listen**
+
+Mobile nên listen các event này:
+
+```ts
+poll:new
+poll:vote
+poll:option_added
+poll:closed
+poll:pinned
+poll:unpinned
+poll:deleted
+```
+
+Mapping:
+
+- `poll:new`: append `message`, update poll trong message nếu có.
+- `poll:vote`: replace poll data trong message.
+- `poll:option_added`: replace poll data trong message.
+- `poll:closed`: replace poll data, show closed.
+- `poll:deleted`: remove poll message hoặc mark deleted.
+- `poll:pinned/unpinned`: update `poll.pinned` và message pinned state nếu có.

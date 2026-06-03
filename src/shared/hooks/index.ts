@@ -16,3 +16,4 @@ export type { UseGroupChatState, UseGroupChatActions, UseGroupChatReturn } from 
 export { useConversationList } from "./useConversationList";
 export type { UseConversationListState, UseConversationListActions, UseConversationListReturn } from "./useConversationList";
 export { useUserCache } from "./useUserCache";
+export { useDraft } from "./useDraft";

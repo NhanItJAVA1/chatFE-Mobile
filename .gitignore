@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.codex-tools
 dist
 dist-ssr
 *.local
@@ -28,3 +29,6 @@ dist-ssr
 # .env
 # .env.local
 # .env.*.local
+
+# Tools
+.codex-tools

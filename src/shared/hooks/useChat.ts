@@ -9,6 +9,7 @@ export interface UseChatMessageState {
     conversation: Conversation | null;
     messages: MessagePayload[];
     isLoading: boolean;
+    isLoadingMore: boolean;
     isSending: boolean;
     error: string | null;
     typingUsers: Set<string>;
@@ -31,7 +32,7 @@ export interface UseChatMessageActions {
     deleteMessage: (messageId: string) => Promise<void>;
     revokeMessage: (messageId: string) => Promise<void>;
     addReaction: (messageId: string, emoji: string) => Promise<void>;
-    removeReaction: (messageId: string, emoji: string) => Promise<void>;
+    removeReaction: (messageId: string, emoji?: string) => Promise<void>;
     pinMessage: (messageId: string) => Promise<void>;
     unpinMessage: (messageId: string) => Promise<void>;
     navigatePinnedMessages: (direction: "prev" | "next") => void;
@@ -64,21 +65,74 @@ const conversationCache = new Map<string, {
     nextCursor: string | null;
 }>();
 
-const getMessageId = (message: MessagePayload): string => {
-    return message._id || message.id || `${message.senderId}-${message.createdAt}`;
+const makeClientMessageId = (): string => {
+    return `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 };
 
-const mergeUniqueMessages = (
+const getMessageId = (message: MessagePayload): string => {
+    return message._id || message.id || message.clientMessageId || `${message.senderId}-${message.createdAt}`;
+};
+
+const hasRealMessageId = (message: MessagePayload): boolean => {
+    return !!(message._id || message.id);
+};
+
+const isOptimisticMessage = (message: MessagePayload): boolean => {
+    return !!message.optimistic || message.status === "sending" || message.status === "failed";
+};
+
+const isLikelyServerAckForOptimisticMessage = (
+    optimistic: MessagePayload,
+    incoming: MessagePayload
+): boolean => {
+    if (!isOptimisticMessage(optimistic)) return false;
+    if ((optimistic.clientMessageId || "") && optimistic.clientMessageId === incoming.clientMessageId) return true;
+    if (!hasRealMessageId(incoming)) return false;
+    if (optimistic.senderId !== incoming.senderId) return false;
+    if (optimistic.conversationId !== incoming.conversationId) return false;
+    if ((optimistic.text || "").trim() !== (incoming.text || "").trim()) return false;
+
+    const optimisticMediaCount = optimistic.media?.length || 0;
+    const incomingMediaCount = incoming.media?.length || 0;
+    if (optimisticMediaCount !== incomingMediaCount) return false;
+
+    const optimisticTime = new Date(optimistic.createdAt).getTime();
+    const incomingTime = new Date(incoming.createdAt).getTime();
+    if (!Number.isFinite(optimisticTime) || !Number.isFinite(incomingTime)) return true;
+
+    return Math.abs(incomingTime - optimisticTime) < 30000;
+};
+
+const mergeServerMessages = (
     incoming: MessagePayload[],
     existing: MessagePayload[]
 ): MessagePayload[] => {
+    const matchedIncomingIndexes = new Set<number>();
+    const withoutMatchedOptimistic = existing.filter((message) => {
+        const matchIndex = incoming.findIndex((incomingMessage, index) =>
+            !matchedIncomingIndexes.has(index) &&
+            isLikelyServerAckForOptimisticMessage(message, incomingMessage)
+        );
+
+        if (matchIndex === -1) return true;
+        matchedIncomingIndexes.add(matchIndex);
+        return false;
+    });
+
+    return mergeUniqueMessages(incoming, withoutMatchedOptimistic);
+};
+
+function mergeUniqueMessages(
+    incoming: MessagePayload[],
+    existing: MessagePayload[]
+): MessagePayload[] {
     const merged = [...incoming, ...existing];
     const unique = new Map<string, MessagePayload>();
     merged.forEach((message) => {
         unique.set(getMessageId(message), message);
     });
     return Array.from(unique.values());
-};
+}
 
 /**
  * Build user map from messages for lookup by senderId
@@ -118,12 +172,7 @@ const enrichMessagesWithQuotedData = (messages: MessagePayload[]): MessagePayloa
 
             // 2. Lookup by quotedMessageSenderId in user map
             if (!quotedSenderName && msg.quotedMessageSenderId) {
-                quotedSenderName = userMap[msg.quotedMessageSenderId];
-                console.log('[enrichMessagesWithQuotedData] Lookup user by senderId:', {
-                    quotedMessageSenderId: msg.quotedMessageSenderId,
-                    foundName: quotedSenderName,
-                });
-            }
+                quotedSenderName = userMap[msg.quotedMessageSenderId];            }
 
             // 3. Fallback to lookup original message by ID
             if (!quotedSenderName) {
@@ -157,16 +206,7 @@ const enrichMessagesWithQuotedData = (messages: MessagePayload[]): MessagePayloa
                 if (quotedText && !msg.quotedMessage.text) {
                     msg.quotedMessage.text = quotedText;
                 }
-            }
-
-            console.log('[enrichMessagesWithQuotedData] Enriched quoted message:', {
-                quotedMessageId: msg.quotedMessageId,
-                senderName: msg.quotedMessage.senderName,
-                fromBE: msg.quotedMessageSenderName,
-                fromUserMap: msg.quotedMessageSenderId ? userMap[msg.quotedMessageSenderId] : 'N/A',
-                senderId: msg.quotedMessageSenderId,
-            });
-        }
+            }        }
         return msg;
     });
 };
@@ -185,6 +225,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         conversation: null,
         messages: [],
         isLoading: false,
+        isLoadingMore: false,
         isSending: false,
         error: null,
         typingUsers: new Set(),
@@ -201,7 +242,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             if (message && (message._id || message.id)) {
                 setState((prev) => {
                     // Prepend/Merge and enrich
-                    const merged = mergeUniqueMessages([message], prev.messages);
+                    const merged = mergeServerMessages([message], prev.messages);
                     // For private chat, we need to sort to ensure correct order
                     const sorted = merged.sort((a, b) => {
                         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -219,7 +260,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             console.error("[useChat] Failed to fetch missing message:", error);
             return false;
         }
-    }, []);
+    }, [user?.id]);
 
     const {
         flatListRef,
@@ -237,11 +278,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
     /**
      * Initialize conversation and Socket.IO
      */
-    const initializeConversation = useCallback(async () => {
-        console.log('[useChat] ===== initializeConversation CALLED =====');
-        console.log('[useChat] friendId:', friendId);
-
-        if (!friendId || !token) {
+    const initializeConversation = useCallback(async () => {        if (!friendId || !token) {
             console.warn('[useChat] Missing friendId or token:', {
                 friendIdPresent: !!friendId,
                 tokenPresent: !!token,
@@ -272,73 +309,57 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
         loadingTimeoutRef.current = timeoutId;
 
-        try {
-            // Step 1: Connect Socket.IO
-            console.log('[useChat] Step 1: Connecting socket with token...');
-            console.log('[useChat] Token to pass:', token ? `${token.substring(0, 20)}...` : 'MISSING');
-            SocketService.connect(token);
-
-            // Wait for actual connection
-            console.log('[useChat] Step 1b: Waiting for socket connection...');
-            await SocketService.waitForConnection(5000);
-            console.log('[useChat] Step 1b: Socket connected!');
-
-            // Step 2: Create/get conversation
-            console.log('[useChat] Step 2: Getting/creating conversation...');
-            const conversation = await ConversationService.getOrCreatePrivateConversation(
+        try {          SocketService.connect(token);            await SocketService.waitForConnection(5000);          const conversation = await ConversationService.getOrCreatePrivateConversation(
                 friendId
             );
             const conversationId = conversation._id || conversation.id;
-            console.log('[useChat] Step 2: Got conversation:', {
-                id: conversationId,
-                type: conversation.type,
-                friendIdParam: friendId,
-                pairKey: conversation.pairKey,
-            });
+            const memoryCache = conversationCache.get(conversationId);
 
-            // Step 3: Load initial messages
-            console.log('[useChat] Step 3: Loading messages from API...');
+            if (memoryCache) {
+                setState((prev) => ({
+                    ...prev,
+                    conversation: memoryCache.conversation,
+                    messages: memoryCache.messages,
+                    isLoading: false,
+                    error: null,
+                    hasMoreMessages: memoryCache.hasMoreMessages,
+                    nextCursor: memoryCache.nextCursor,
+                }));
+            } else {
+                try {
+                    const cachedMessages = await loadMessagesFromCache(conversationId);
+                    if (cachedMessages.length > 0) {
+                        setState((prev) => ({
+                            ...prev,
+                            conversation,
+                            messages: cachedMessages,
+                            isLoading: false,
+                            error: null,
+                        }));
+                    }
+                } catch (error) {
+                    console.error('[useChat] Failed to load from cache:', error);
+                }
+            }
+
             const messagesResponse = await ConversationService.loadMessages(
                 conversation._id || conversation.id,
                 null,
                 MESSAGE_LIMIT
             );
-
-            console.log('[useChat] Step 3: API Messages loaded:', {
-                itemsCount: messagesResponse?.items?.length || 0,
-                hasMore: messagesResponse?.hasMore,
-                nextCursor: !!messagesResponse?.nextCursor,
-                firstMessageSender: messagesResponse?.items?.[0]?.senderId,
-                firstMessageText: messagesResponse?.items?.[0]?.text?.substring(0, 30),
-                apiConversationId: conversation._id || conversation.id,
-                requestedFriendId: friendId,
-            });
-
             // Clear timeout since loading succeeded
             if (loadingTimeoutRef.current) {
                 clearTimeout(loadingTimeoutRef.current);
                 loadingTimeoutRef.current = null;
-            }
-
-            // Step 4: Join conversation room
-            console.log('[useChat] Step 4: Joining conversation...');
-            await SocketService.joinConversation(
+            }            await SocketService.joinConversation(
                 conversation._id || conversation.id
-            );
-            console.log('[useChat] Step 4: Joined conversation');
-
-            // Step 3a: Load from cache FIRST (for immediate display)
-            console.log('[useChat] Step 3a: Loading from cache...');
-            let cachedMessages: MessagePayload[] = [];
-            try {
-                cachedMessages = await loadMessagesFromCache(conversationId);
-                console.log('[useChat] ✓ Step 3a: Loaded', cachedMessages.length, 'messages from cache');
-                if (cachedMessages.length > 0) {
-                    console.log('[useChat] Cache first message sender:', cachedMessages[0].senderId);
-                    console.log('[useChat] Cache first message text:', cachedMessages[0].text?.substring(0, 30));
+            );          let cachedMessages: MessagePayload[] = memoryCache?.messages || [];
+            if (!cachedMessages.length) {
+                try {
+                    cachedMessages = await loadMessagesFromCache(conversationId);                if (cachedMessages.length > 0) {              }
+                } catch (error) {
+                    console.error('[useChat] Failed to load from cache:', error);
                 }
-            } catch (error) {
-                console.error('[useChat] Failed to load from cache:', error);
             }
 
             // Step 3b: Load from API
@@ -347,33 +368,8 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             const nextCursor = messagesResponse?.nextCursor ?? null;
 
             // Step 3c: Merge messages intelligently
-            let finalMessages: MessagePayload[] = loadedMessages;
-            console.log('[useChat] Step 3c: Before merge:');
-            console.log('[useChat]   loadedMessages.length:', loadedMessages.length);
-            console.log('[useChat]   cachedMessages.length:', cachedMessages.length);
-
-            if (loadedMessages.length === 0 && cachedMessages.length > 0) {
-                // API returned nothing, use cache
-                console.log('[useChat] API empty, using cached messages');
-                finalMessages = cachedMessages;
-            } else if (loadedMessages.length > 0 && cachedMessages.length > 0) {
-                // Both have data, merge smart
-                console.log('[useChat] Merging API + cache messages');
-                finalMessages = mergeMessages(loadedMessages, cachedMessages);
-                console.log('[useChat] After merge, count:', finalMessages.length);
-            }
-
-            console.log('[useChat] Step 3c: After merge, finalMessages.length:', finalMessages.length);
-
-            console.log('[useChat] ====== ABOUT TO SET STATE ======');
-            console.log('[useChat] conversationId:', conversationId);
-            console.log('[useChat] friendId:', friendId);
-            console.log('[useChat] finalMessages count:', finalMessages.length);
-            console.log('[useChat] hasMore:', hasMore);
-            if (finalMessages.length > 0) {
-                console.log('[useChat] FINAL first message sender:', finalMessages[0].senderId);
-                console.log('[useChat] FINAL first message text:', finalMessages[0].text?.substring(0, 30));
-            }
+            let finalMessages: MessagePayload[] = loadedMessages;          if (loadedMessages.length === 0 && cachedMessages.length > 0) {                finalMessages = cachedMessages;
+            } else if (loadedMessages.length > 0 && cachedMessages.length > 0) {                finalMessages = mergeMessages(loadedMessages, cachedMessages);            }  if (finalMessages.length > 0) {          }
 
             setState((prev) => {
                 const newState = {
@@ -383,14 +379,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     isLoading: false,
                     hasMoreMessages: hasMore,
                     nextCursor,
-                };
-                console.log('[useChat] ====== STATE UPDATED ======');
-                console.log('[useChat] new conversationId:', newState.conversation?._id || newState.conversation?.id);
-                console.log('[useChat] new messages count:', newState.messages.length);
-                if (newState.messages.length > 0) {
-                    console.log('[useChat] STATE first message sender:', newState.messages[0].senderId);
-                    console.log('[useChat] STATE first message text:', newState.messages[0].text?.substring(0, 30));
-                }
+                };            if (newState.messages.length > 0) {              }
                 return newState;
             });
 
@@ -408,51 +397,44 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 hasMoreMessages: hasMore,
                 nextCursor,
             });
-            // console.log('[useChat] Saved to in-memory cache. Size:', conversationCache.size);
 
-            // // Step 5: Setup Socket.IO event listeners
-            // console.log('[useChat] Step 5: Setting up socket listeners...');
             setupSocketListeners(conversationId);
 
             // Join conversation room to receive events
             SocketService.joinConversation(conversationId).catch(err => {
                 console.warn('[useChat] Failed to join socket room:', err.message);
             });
-            // console.log('[useChat] Step 5: Socket listeners and room join ready');
-
             // Step 6: Load pinned messages
-            // console.log('[useChat] Step 6: Loading pinned messages...');
             try {
                 const pinnedMsgs = await SocketService.getPinnedMessages(conversationId);
                 setState((prev) => ({
                     ...prev,
                     pinnedMessages: pinnedMsgs || [],
                     pinnedMessageIndex: 0,
-                }));
-                console.log('[useChat] Step 6: Loaded', pinnedMsgs?.length || 0, 'pinned messages');
-            } catch (error: any) {
+                }));            } catch (error: any) {
                 console.warn('[useChat] Failed to load pinned messages:', error.message);
                 // Don't fail the entire conversation load if pinned messages fail
             }
         } catch (error: any) {
-            console.error('[useChat] Initialize error:', error);
+            const errorMessage = error.message || "Failed to initialize chat";
+            const isBlockedError =
+                (error?.status === 403 && error?.details?.code === "blocked") ||
+                String(errorMessage).toLowerCase().includes("blocked");
+
+            if (!isBlockedError) {
+                console.error('[useChat] Initialize error:', error);
+            } else {            }
 
             // Clear timeout on error
             if (loadingTimeoutRef.current) {
                 clearTimeout(loadingTimeoutRef.current);
                 loadingTimeoutRef.current = null;
-            }
-
-            console.log('[useChat] ====== ERROR - SETTING isLoading to FALSE ======');
-            setState((prev) => {
+            }            setState((prev) => {
                 const newState = {
                     ...prev,
-                    error: error.message || "Failed to initialize chat",
+                    error: isBlockedError ? "blocked" : errorMessage,
                     isLoading: false,
-                };
-                console.log('[useChat] new isLoading:', newState.isLoading);
-                console.log('[useChat] new error:', newState.error);
-                return newState;
+                };              return newState;
             });
         }
     }, [friendId, token]);
@@ -461,37 +443,17 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
      * Setup Socket.IO event listeners
      */
     const setupSocketListeners = useCallback(
-        (conversationId: string) => {
-            console.log('[useChat] ===== setupSocketListeners CALLED =====');
-            console.log('[useChat] conversationId:', conversationId);
-            console.log('[useChat] messageListenerActiveRef.current:', messageListenerActiveRef.current);
-
-            if (messageListenerActiveRef.current) {
-                console.log('[useChat] ⚠️ Listeners already active, skipping setup - THIS IS WRONG!');
-                return;
+        (conversationId: string) => {          if (messageListenerActiveRef.current) {                return;
             }
 
             // Incoming messages
             SocketService.onMessage((message: MessagePayload) => {
                 const incomingConversationId = message.conversationId || (message as any)?.conversationId;
-                console.log('[useChat] !!!!! RECEIVED MESSAGE LISTENER FIRED !!!!!', {
-                    incomingConversationId,
-                    currentConversationId: conversationId,
-                    messageText: message.text?.substring(0, 50),
-                    quotedMessageSenderName: message.quotedMessageSenderName,
-                    matches: incomingConversationId === conversationId,
-                });
-
-                if (incomingConversationId && incomingConversationId !== conversationId) {
-                    console.log('[useChat] ⚠️ Message from DIFFERENT conversation! Ignoring.');
-                    console.log('[useChat]   Expected:', conversationId);
-                    console.log('[useChat]   Got:', incomingConversationId);
-                    return;
+                if (incomingConversationId && incomingConversationId !== conversationId) {                return;
                 }
 
-                console.log('[useChat] ✓ Message is for current conversation, adding to state');
                 setState((prev) => {
-                    const merged = mergeUniqueMessages([message], prev.messages);
+                    const merged = mergeServerMessages([message], prev.messages);
                     // Use the helper to add and enrich
                     const enriched = enrichMessagesWithQuotedData(merged);
                     const newState = {
@@ -521,13 +483,8 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 if (incomingConvId && incomingConvId !== conversationId) {
                     return;
                 }
-
-                console.log('[useChat] !!!!! RECEIVED QUOTED MESSAGE LISTENER FIRED !!!!!', {
-                    messageId: message._id || message.id,
-                });
-
                 setState((prev) => {
-                    const merged = mergeUniqueMessages([message], prev.messages);
+                    const merged = mergeServerMessages([message], prev.messages);
                     // Use helper to add and enrich
                     const enriched = enrichMessagesWithQuotedData(merged);
                     const newState = {
@@ -552,7 +509,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
 
             // Message seen events
             SocketService.onMessageSeen((data) => {
-                if (data.conversationId !== conversationId) {
+                if (data.conversationId !== conversationId && data.userId !== friendId) {
                     return;
                 }
 
@@ -606,13 +563,6 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 if (message.conversationId && message.conversationId !== conversationId) {
                     return;
                 }
-
-                console.log('[useChat] Socket message:updated event:', {
-                    messageId: getMessageId(message),
-                    text: message.text?.substring(0, 50),
-                    conversationId: message.conversationId
-                });
-
                 setState((prev) => {
                     const messageId = getMessageId(message);
                     const currentUserId = user?.id || (user as any)?._id;
@@ -661,15 +611,100 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 });
             });
 
+            SocketService.onMessageReaction((data: any) => {
+                if (data.conversationId && data.conversationId !== conversationId) {
+                    return;
+                }
+
+                const messageId = data.messageId || data.reaction?.messageId;
+                const reaction = data.reaction || data;
+                const reactionUserId = reaction?.userId || data.userId;
+                if (!messageId || !reaction?.emoji || !reactionUserId) {
+                    return;
+                }
+                const reactionId = reaction?._id || reaction?.id;
+
+                setState((prev) => {
+                    const messages = prev.messages.map((msg) =>
+                        getMessageId(msg) === messageId
+                            ? {
+                                ...msg,
+                                reactions: [
+                                    ...(msg.reactions || []).filter((item: any) =>
+                                        reactionId ? (item._id || item.id) !== reactionId : true
+                                    ),
+                                    { ...reaction, userId: reactionUserId },
+                                ],
+                            }
+                            : msg
+                    );
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, messages).catch((error) => {
+                            console.error("[useChat] Failed to save reaction to cache:", error);
+                        });
+                    }
+
+                    return { ...prev, messages };
+                });
+            });
+
+            SocketService.onMessageReactionRemove((data: any) => {
+                if (data.conversationId && data.conversationId !== conversationId) {
+                    return;
+                }
+
+                const messageId = data.messageId || data.reaction?.messageId;
+                const reactionUserId = data.userId || data.reaction?.userId;
+                const emoji = data.emoji || data.reaction?.emoji;
+                if (!messageId || !reactionUserId) {
+                    return;
+                }
+
+                setState((prev) => {
+                    const messages = prev.messages.map((msg) =>
+                        getMessageId(msg) === messageId
+                            ? {
+                                ...msg,
+                                reactions: (msg.reactions || []).filter(
+                                    (reaction: any) =>
+                                        reaction.userId !== reactionUserId ||
+                                        (!!emoji && reaction.emoji !== emoji)
+                                ),
+                            }
+                            : msg
+                    );
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, messages).catch((error) => {
+                            console.error("[useChat] Failed to save reaction removal to cache:", error);
+                        });
+                    }
+
+                    return { ...prev, messages };
+                });
+            });
+
             // Pinned message events
             SocketService.onPinnedMessage((data: any) => {
                 const incomingConvId = data.conversationId || data.pinnedMessage?.conversationId;
                 if (incomingConvId && incomingConvId !== conversationId) {
                     return;
                 }
-
-                console.log('[useChat] Pinned message event:', data);
-
                 setState((prev) => {
                     if (data.type === "pinned") {
                         const pinnedMsg = data.pinnedMessage?.message || data.pinnedMessage;
@@ -700,34 +735,9 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     }
                     return prev;
                 });
-            });
-
-            console.log('[useChat] ====== ALL LISTENERS SET UP ======');
-            messageListenerActiveRef.current = true;
-            console.log('[useChat] messageListenerActiveRef set to true');
-        },
+            });            messageListenerActiveRef.current = true;        },
         [user]
     );
-
-    /**
-     * Update both state and cache
-     */
-    const updateStateAndCache = useCallback((updates: Partial<UseChatMessageState>) => {
-        setState((prev) => {
-            const newState = { ...prev, ...updates };
-            // Update cache if conversation exists
-            if (newState.conversation) {
-                const conversationId = newState.conversation._id || newState.conversation.id;
-                conversationCache.set(conversationId, {
-                    conversation: newState.conversation,
-                    messages: newState.messages,
-                    hasMoreMessages: newState.hasMoreMessages,
-                    nextCursor: newState.nextCursor,
-                });
-            }
-            return newState;
-        });
-    }, []);
 
     const addMessages = useCallback((messages: MessagePayload[]) => {
         if (!messages.length) {
@@ -776,37 +786,131 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
      */
     const sendMessage = useCallback(
         async (text: string, media?: any[]) => {
-            if (!state.conversation || !text.trim()) {
+            const trimmedText = text.trim();
+            if (!state.conversation || (!trimmedText && (!media || media.length === 0))) {
                 return;
             }
 
-            setState((prev) => ({ ...prev, isSending: true, error: null }));
+            const conversationId = state.conversation._id || state.conversation.id;
+            const clientMessageId = makeClientMessageId();
+            const now = new Date().toISOString();
+            const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+            const optimisticMessage: MessagePayload = {
+                id: clientMessageId,
+                clientMessageId,
+                conversationId,
+                senderId: currentUserId,
+                senderName: user?.displayName || (user as any)?.name || "Bạn",
+                senderAvatar: (user as any)?.avatarUrl || (user as any)?.avatar || "",
+                text: trimmedText,
+                media: media || [],
+                reactions: [],
+                status: "sending",
+                createdAt: now,
+                updatedAt: now,
+                type: media?.length ? "image" : "text",
+                optimistic: true,
+            };
+
+            setState((prev) => {
+                const newMessages = mergeUniqueMessages([optimisticMessage], prev.messages);
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+                    saveMessagesToCache(convId, newMessages).catch((error) => {
+                        console.error('[useChat] Failed to save optimistic message to cache:', error);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    error: null,
+                };
+            });
 
             try {
                 // Stop typing indicator
-                stopTyping();
+                if (typingTimeoutRef.current) {
+                    clearTimeout(typingTimeoutRef.current);
+                }
+                SocketService.stopTyping(conversationId, { toUserId: friendId });
 
                 // Send message via Socket.IO
                 const messages = await SocketService.sendMessage(
-                    state.conversation._id || state.conversation.id,
-                    text.trim(),
+                    conversationId,
+                    trimmedText,
                     media
                 );
 
-                // Optimistically merge sent messages. If socket echo arrives, dedupe prevents duplicates.
-                updateStateAndCache({
-                    messages: mergeUniqueMessages(messages, state.messages),
-                    isSending: false,
+                setState((prev) => {
+                    const acknowledgedMessages = messages.length > 0
+                        ? messages.map((message) => ({ ...message, clientMessageId, optimistic: false }))
+                        : [{ ...optimisticMessage, status: "sent" as const, optimistic: false }];
+                    const newMessages = mergeServerMessages(acknowledgedMessages, prev.messages);
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages: newMessages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, newMessages).catch((error) => {
+                            console.error('[useChat] Failed to save sent message to cache:', error);
+                        });
+                    }
+
+                    return {
+                        ...prev,
+                        messages: newMessages,
+                        isSending: false,
+                    };
                 });
             } catch (error: any) {
-                setState((prev) => ({
-                    ...prev,
-                    error: error.message || "Failed to send message",
-                    isSending: false,
-                }));
+                setState((prev) => {
+                    const newMessages = prev.messages.map((message) =>
+                        message.clientMessageId === clientMessageId
+                            ? {
+                                ...message,
+                                status: "failed" as const,
+                                optimistic: true,
+                                sendError: error.message || "Failed to send message",
+                                updatedAt: new Date().toISOString(),
+                            }
+                            : message
+                    );
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages: newMessages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, newMessages).catch((cacheError) => {
+                            console.error('[useChat] Failed to save failed message to cache:', cacheError);
+                        });
+                    }
+
+                    return {
+                        ...prev,
+                        messages: newMessages,
+                        error: error.message || "Failed to send message",
+                        isSending: false,
+                    };
+                });
             }
         },
-        [state.conversation, state.messages, updateStateAndCache]
+        [state.conversation, friendId, user]
     );
 
     /**
@@ -865,7 +969,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
     const handleTyping = useCallback(() => {
         if (!state.conversation) return;
 
-        SocketService.startTyping(state.conversation._id || state.conversation.id);
+        SocketService.startTyping(state.conversation._id || state.conversation.id, { toUserId: friendId });
 
         // Auto-stop after TYPING_DEBOUNCE_TIME
         if (typingTimeoutRef.current) {
@@ -873,7 +977,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         }
 
         typingTimeoutRef.current = setTimeout(() => {
-            SocketService.stopTyping(state.conversation!._id || state.conversation!.id);
+            SocketService.stopTyping(state.conversation!._id || state.conversation!.id, { toUserId: friendId });
         }, TYPING_DEBOUNCE_TIME);
     }, [state.conversation]);
 
@@ -887,19 +991,24 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             clearTimeout(typingTimeoutRef.current);
         }
 
-        SocketService.stopTyping(state.conversation._id || state.conversation.id);
-    }, [state.conversation]);
+        SocketService.stopTyping(state.conversation._id || state.conversation.id, { toUserId: friendId });
+    }, [state.conversation, friendId]);
 
     /**
      * Load more messages (pagination)
      */
     const loadMoreMessages = useCallback(
         async () => {
-            if (!state.conversation || !state.hasMoreMessages) {
+            if (!state.conversation || !state.hasMoreMessages || state.isLoadingMore) {
                 return;
             }
 
             try {
+                setState((prev) => ({
+                    ...prev,
+                    isLoadingMore: true,
+                }));
+
                 const response = await ConversationService.loadMessages(
                     state.conversation._id || state.conversation.id,
                     state.nextCursor,
@@ -912,6 +1021,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                         messages: mergeUniqueMessages(prev.messages, response.items || []),
                         hasMoreMessages: response.hasMore || false,
                         nextCursor: response.nextCursor || null,
+                        isLoadingMore: false,
                     };
 
                     // Save updated messages to cache
@@ -927,11 +1037,12 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             } catch (error: any) {
                 setState((prev) => ({
                     ...prev,
+                    isLoadingMore: false,
                     error: error.message || "Failed to load more messages",
                 }));
             }
         },
-        [state.conversation, state.hasMoreMessages, state.nextCursor]
+        [state.conversation, state.hasMoreMessages, state.isLoadingMore, state.nextCursor]
     );
 
     /**
@@ -1057,6 +1168,8 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
     const addReaction = useCallback(async (messageId: string, emoji: string) => {
         try {
             const reaction = await SocketService.addReaction(messageId, emoji);
+            const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
+            const reactionId = reaction?._id || reaction?.id;
 
             setState((prev) => ({
                 ...prev,
@@ -1064,7 +1177,12 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     getMessageId(msg) === messageId
                         ? {
                             ...msg,
-                            reactions: [...(msg.reactions || []), reaction],
+                            reactions: [
+                                ...(msg.reactions || []).filter((item: any) =>
+                                    reactionId ? (item._id || item.id) !== reactionId : true
+                                ),
+                                reaction || { emoji, userId: currentUserId },
+                            ],
                         }
                         : msg
                 ),
@@ -1072,14 +1190,15 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         } catch (error: any) {
             // Silently fail
         }
-    }, []);
+    }, [user?.id, (user as any)?._id, (user as any)?.userId]);
 
     /**
      * Remove reaction from message
      */
-    const removeReaction = useCallback(async (messageId: string, emoji: string) => {
+    const removeReaction = useCallback(async (messageId: string, emoji?: string) => {
         try {
             await SocketService.removeReaction(messageId, emoji);
+            const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId;
 
             setState((prev) => ({
                 ...prev,
@@ -1087,8 +1206,10 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     getMessageId(msg) === messageId
                         ? {
                             ...msg,
-                            reactions: (msg.reactions || []).filter(
-                                (r: any) => r.emoji !== emoji
+                            reactions: (msg.reactions || []).filter((r: any) =>
+                                currentUserId
+                                    ? r.userId !== currentUserId || (!!emoji && r.emoji !== emoji)
+                                    : !!emoji && r.emoji !== emoji
                             ),
                         }
                         : msg
@@ -1097,7 +1218,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
         } catch (error: any) {
             // Silently fail
         }
-    }, []);
+    }, [user?.id, (user as any)?._id, (user as any)?.userId]);
 
     /**
      * Pin message
@@ -1109,9 +1230,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             }
             const conversationId = state.conversation._id || state.conversation.id;
 
-            await SocketService.pinMessage(conversationId, messageId);
-            console.log('[useChat] Pin message action completed');
-        } catch (error: any) {
+            await SocketService.pinMessage(conversationId, messageId);        } catch (error: any) {
             setState((prev) => ({
                 ...prev,
                 error: error.message || "Failed to pin message",
@@ -1147,9 +1266,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 };
             });
 
-            await SocketService.unpinMessage(conversationId, messageId);
-            console.log('[useChat] Unpin message action completed');
-        } catch (error: any) {
+            await SocketService.unpinMessage(conversationId, messageId);        } catch (error: any) {
             const errorMsg = error?.message || "Failed to unpin message";
             const isNotPinnedError = errorMsg.includes("not pinned") || error?.status === 400;
 
@@ -1163,11 +1280,7 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                     error: errorMsg,
                 }));
                 throw new Error(errorMsg);
-            }
-
-            // For "not pinned" error, keep the removal (message wasn't pinned anyway)
-            console.log('[useChat] Message was not pinned on backend, but removal succeeded');
-        }
+            }        }
     }, [state.conversation, state.pinnedMessages, state.pinnedMessageIndex]);
 
     /**
@@ -1196,38 +1309,100 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
      * Send quoted/reply message
      */
     const sendQuotedMessage = useCallback(async (quotedMessageId: string, text: string, media?: any[]) => {
+        const trimmedText = text.trim();
+        const clientMessageId = makeClientMessageId();
+
         try {
             if (!state.conversation) {
                 throw new Error("No conversation loaded");
             }
 
-            if (!text.trim() && (!media || media.length === 0)) {
+            if (!trimmedText && (!media || media.length === 0)) {
                 throw new Error("Message cannot be empty");
             }
 
             const conversationId = state.conversation._id || state.conversation.id;
-            setState((prev) => ({ ...prev, isSending: true }));
-
-            console.log('[useChat] sendQuotedMessage:', {
+            const now = new Date().toISOString();
+            const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+            const quotedMessage = state.messages.find((message) => getMessageId(message) === quotedMessageId);
+            const optimisticMessage: MessagePayload = {
+                id: clientMessageId,
+                clientMessageId,
                 conversationId,
+                senderId: currentUserId,
+                senderName: user?.displayName || (user as any)?.name || "Bạn",
+                senderAvatar: (user as any)?.avatarUrl || (user as any)?.avatar || "",
+                text: trimmedText,
+                media: media || [],
+                reactions: [],
+                status: "sending",
+                createdAt: now,
+                updatedAt: now,
+                type: media?.length ? "image" : "text",
                 quotedMessageId,
-                textLength: text.length,
+                quotedMessage: quotedMessage
+                    ? {
+                        _id: quotedMessage._id,
+                        id: quotedMessage.id,
+                        text: quotedMessage.text,
+                        senderId: quotedMessage.senderId,
+                        senderName: quotedMessage.senderName,
+                        type: quotedMessage.type,
+                        media: quotedMessage.media,
+                    }
+                    : undefined,
+                quotedMessagePreview: quotedMessage?.text,
+                quotedMessageSenderId: quotedMessage?.senderId,
+                quotedMessageSenderName: quotedMessage?.senderName,
+                optimistic: true,
+            };
+
+            setState((prev) => {
+                const newMessages = enrichMessagesWithQuotedData(mergeUniqueMessages([optimisticMessage], prev.messages));
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+                    saveMessagesToCache(convId, newMessages).catch((error) => {
+                        console.error('[useChat] Failed to save optimistic quoted message to cache:', error);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    replyingTo: null,
+                    error: null,
+                };
             });
 
             const messages = await SocketService.sendQuotedMessage(
                 conversationId,
                 quotedMessageId,
-                text.trim(),
+                trimmedText,
                 media
             );
 
             setState((prev) => {
-                const merged = mergeUniqueMessages(messages || [], prev.messages);
+                const acknowledgedMessages = (messages?.length ? messages : [{ ...optimisticMessage, status: "sent" as const }])
+                    .map((message) => ({ ...message, clientMessageId, optimistic: false }));
+                const merged = mergeServerMessages(acknowledgedMessages, prev.messages);
                 const newMessages = enrichMessagesWithQuotedData(merged);
 
                 // Save to cache
                 if (prev.conversation) {
                     const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
                     saveMessagesToCache(convId, newMessages).catch((error) => {
                         console.error('[useChat] Failed to save quoted message to cache:', error);
                     });
@@ -1241,13 +1416,41 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
                 };
             });
         } catch (error: any) {
-            setState((prev) => ({
-                ...prev,
-                isSending: false,
-                error: error.message || "Failed to send quoted message",
-            }));
+            setState((prev) => {
+                const newMessages = prev.messages.map((message) =>
+                    message.clientMessageId === clientMessageId
+                        ? {
+                            ...message,
+                            status: "failed" as const,
+                            optimistic: true,
+                            sendError: error.message || "Failed to send quoted message",
+                            updatedAt: new Date().toISOString(),
+                        }
+                        : message
+                );
+
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+                    saveMessagesToCache(convId, newMessages).catch((cacheError) => {
+                        console.error('[useChat] Failed to save failed quoted message to cache:', cacheError);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    error: error.message || "Failed to send quoted message",
+                };
+            });
         }
-    }, [state.conversation]);
+    }, [state.conversation, state.messages, user]);
 
     /**
      * Set message to reply to
@@ -1269,17 +1472,9 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
     /**
      * Initialize on mount
      */
-    useEffect(() => {
-        console.log('[useChat] ===== useEffect TRIGGERED =====');
-        console.log('[useChat] Dependencies changed - friendId:', friendId, 'token:', !!token);
+    useEffect(() => {        initializeConversation();
 
-        initializeConversation();
-
-        return () => {
-            console.log('[useChat] ===== CLEANUP RUNNING =====');
-            console.log('[useChat] Cleaning up for conversationId:', state.conversation?._id || state.conversation?.id);
-
-            // Cleanup timeouts
+        return () => {            // Cleanup timeouts
             if (loadingTimeoutRef.current) {
                 clearTimeout(loadingTimeoutRef.current);
                 loadingTimeoutRef.current = null;
@@ -1298,12 +1493,12 @@ export const useChatMessage = (friendId: string, token: string): UseChatMessageR
             SocketService.offMessageSeen();
             SocketService.offTyping();
             SocketService.offMessageUpdated();
+            SocketService.offMessageReaction();
+            SocketService.offMessageReactionRemove();
             SocketService.offPinnedMessage();
             SocketService.offMessageQuoted();
 
-            messageListenerActiveRef.current = false;
-            console.log('[useChat] messageListenerActiveRef.current set to FALSE');
-        };
+            messageListenerActiveRef.current = false;        };
     }, [friendId, token]);
 
     return {

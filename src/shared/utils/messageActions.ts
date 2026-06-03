@@ -29,8 +29,13 @@ export const buildMessageActionSheetOptions = ({
 }: BuildMessageActionSheetOptions): MessageActionButton[] => {
     const buttons: MessageActionButton[] = [
         { text: "Hủy", style: "cancel", onPress: () => { } },
-        { text: "Xóa phía tôi", style: "destructive", onPress: onDeleteForMe },
     ];
+
+    if (isOwn && onRevoke) {
+        buttons.push({ text: "Xóa", style: "destructive", onPress: onRevoke });
+    }
+
+    buttons.push({ text: "Xóa phía tôi", style: "destructive", onPress: onDeleteForMe });
 
     if (onReply) {
         buttons.push({ text: "Trả lời", style: "default", onPress: onReply });
@@ -38,6 +43,8 @@ export const buildMessageActionSheetOptions = ({
 
     if (onTranslate) {
         buttons.push({ text: "Dịch tin nhắn", style: "default", onPress: onTranslate });
+    if (onForward) {
+        buttons.push({ text: "Chuyển tiếp", style: "default", onPress: onForward });
     }
 
     if (onPin) {
@@ -46,14 +53,6 @@ export const buildMessageActionSheetOptions = ({
 
     if (isOwn && onEdit) {
         buttons.push({ text: "Sửa", style: "default", onPress: onEdit });
-    }
-
-    if (isOwn && onRevoke) {
-        buttons.push({ text: "Thu hồi", style: "destructive", onPress: onRevoke });
-    }
-
-    if (onForward) {
-        buttons.push({ text: "Chuyển tiếp", style: "default", onPress: onForward });
     }
 
     return buttons;

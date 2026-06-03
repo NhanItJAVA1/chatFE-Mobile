@@ -10,33 +10,20 @@ const normalizeReactNativeFile = async (file: any): Promise<File> => {
     try {
         // Check if this is a React Native file (has uri property)
         if (file.uri) {
-            console.log('[mediaService] Converting React Native file:', {
-                name: file.name,
-                type: file.type,
-                mimeType: file.mimeType,
-            });
-
             // Fetch the file from URI
             const response = await fetch(file.uri);
             const blob = await response.blob();
 
             // Use mimeType from ImagePicker if available, otherwise determine from filename
             let mimeType = file.mimeType;
-            if (!mimeType || !mimeType.includes('/')) {
-                console.log('[mediaService] No valid mimeType from ImagePicker, detecting from filename');
-                mimeType = getMimeTypeFromName(file.name);
+            if (!mimeType || !mimeType.includes('/')) {                mimeType = getMimeTypeFromName(file.name);
             }
 
             // Sanitize MIME type (convert unsupported formats like HEIC to JPEG)
             let filename = file.name;
             const { mimeType: sanitizedMimeType, filename: sanitizedFilename } = sanitizeMimeType(mimeType, filename);
             mimeType = sanitizedMimeType;
-            filename = sanitizedFilename;
-
-            console.log('[mediaService] Final MIME type:', mimeType);
-            console.log('[mediaService] Final filename:', filename);
-
-            // Create a File object from Blob
+            filename = sanitizedFilename;            // Create a File object from Blob
             return new File([blob], filename, { type: mimeType });
         }
 
@@ -47,7 +34,8 @@ const normalizeReactNativeFile = async (file: any): Promise<File> => {
 
         // If it's a Blob, convert to File
         if (file instanceof Blob) {
-            return new File([file], file.name || 'unnamed', { type: file.type });
+            const fileName = (file as any).name || 'unnamed';
+            return new File([file], fileName, { type: file.type });
         }
 
         throw new Error('Invalid file type');
@@ -66,36 +54,22 @@ const sanitizeMimeType = (mimeType: string, filename: string): { mimeType: strin
     let newFilename = filename;
 
     // Convert HEIC (iOS) to JPEG
-    if (mimeType === 'image/heic' || mimeType === 'image/heif') {
-        console.log('[mediaService] Converting unsupported format HEIC/HEIF to JPEG');
-        sanitized = 'image/jpeg';
+    if (mimeType === 'image/heic' || mimeType === 'image/heif') {        sanitized = 'image/jpeg';
         // Update filename extension if needed
         if (newFilename.toLowerCase().endsWith('.heic') || newFilename.toLowerCase().endsWith('.heif')) {
             newFilename = newFilename.replace(/\.(heic|heif)$/i, '.jpg');
         }
     }
 
-    // Convert WebP to JPEG if needed (some backends don't support WebP)
-    // Uncomment if backend doesn't support WebP:
-    // if (mimeType === 'image/webp') {
-    //     console.log('[mediaService] Converting WebP to JPEG');
-    //     sanitized = 'image/jpeg';
-    //     newFilename = newFilename.replace(/\.webp$/i, '.jpg');
-    // }
-
     // Convert audio/m4a to audio/mpeg (expo-av HIGH_QUALITY preset records as m4a, but backend only accepts mpeg/wav/ogg/mp3)
-    if (mimeType === 'audio/m4a') {
-        console.log('[mediaService] Converting unsupported audio format m4a to mpeg');
-        sanitized = 'audio/mpeg';
+    if (mimeType === 'audio/m4a') {        sanitized = 'audio/mpeg';
         // Update filename extension if needed
         if (newFilename.toLowerCase().endsWith('.m4a')) {
             newFilename = newFilename.replace(/\.m4a$/i, '.mp3');
         }
     }
 
-    if (sanitized !== mimeType) {
-        console.log('[mediaService] Sanitized MIME type:', mimeType, '->', sanitized);
-    }
+    if (sanitized !== mimeType) {    }
 
     return { mimeType: sanitized, filename: newFilename };
 };
@@ -103,11 +77,7 @@ const sanitizeMimeType = (mimeType: string, filename: string): { mimeType: strin
 /**
  * Get MIME type from filename
  */
-const getMimeTypeFromName = (filename: string): string => {
-    console.log('[mediaService] Getting MIME type from filename:', filename);
-    const ext = filename.split('.').pop()?.toLowerCase();
-    console.log('[mediaService] Detected file extension:', ext);
-
+const getMimeTypeFromName = (filename: string): string => {    const ext = filename.split('.').pop()?.toLowerCase();
     const mimeTypes: Record<string, string> = {
         'jpg': 'image/jpeg',
         'jpeg': 'image/jpeg',
@@ -126,9 +96,7 @@ const getMimeTypeFromName = (filename: string): string => {
         'doc': 'application/msword',
         'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     };
-    const mimeType = mimeTypes[ext || ''] || 'application/octet-stream';
-    console.log('[mediaService] Resolved MIME type:', mimeType);
-    return mimeType;
+    const mimeType = mimeTypes[ext || ''] || 'application/octet-stream';    return mimeType;
 };
 
 /**
@@ -151,41 +119,20 @@ const uploadToS3WithFetch = async (
     mimeType: string,
     headers?: Record<string, string>,
     onProgress?: (progress: number) => void
-): Promise<void> => {
-    console.log('[mediaService] Uploading to S3 with fetch...');
-    console.log('[mediaService] Presigned URL full:', presignedUrl);
-    console.log('[mediaService] Headers provided:', headers);
-
-    try {
+): Promise<void> => {  try {
         // Build headers - include all headers from presigned URL response
         const uploadHeaders: Record<string, string> = {
             'Content-Type': mimeType,
         };
 
         // Merge in any additional headers from presigned URL (like authorization, x-amz-*, etc.)
-        if (headers && Object.keys(headers).length > 0) {
-            console.log('[mediaService] Additional S3 headers:', headers);
-            Object.assign(uploadHeaders, headers);
-        } else {
-            console.log('[mediaService] No additional headers from presigned URL response');
-        }
-
-        console.log('[mediaService] Final upload headers:', uploadHeaders);
-
+        if (headers && Object.keys(headers).length > 0) {            Object.assign(uploadHeaders, headers);
+        } else {        }
         const response = await fetch(presignedUrl, {
             method: 'PUT',
             body: fileBlob,
             headers: uploadHeaders,
-        });
-
-        console.log('[mediaService] S3 upload response status:', response.status);
-        console.log('[mediaService] S3 upload response headers:', {
-            contentType: response.headers.get('content-type'),
-            etag: response.headers.get('etag'),
-            server: response.headers.get('server'),
-        });
-
-        if (!response.ok) {
+        });        if (!response.ok) {
             const text = await response.text();
             console.error('[mediaService] S3 upload error (status ' + response.status + '):', text);
 
@@ -199,9 +146,7 @@ const uploadToS3WithFetch = async (
         }
 
         // Simulate 100% progress for fetch (no progress tracking available)
-        onProgress?.(100);
-        console.log('[mediaService] S3 upload successful');
-    } catch (error: any) {
+        onProgress?.(100);    } catch (error: any) {
         console.error('[mediaService] S3 upload error:', error.message);
         throw error;
     }
@@ -215,23 +160,10 @@ export const uploadMedia = async (file: any, onProgress?: (progress: number) => 
         if (!file) {
             throw new Error("File is required");
         }
-
-        console.log('[mediaService] Starting media upload:', {
-            name: file.name,
-            type: file.type,
-            hasUri: !!file.uri,
-            size: file.size
-        });
-
         // Normalize React Native file to proper File object
         const normalizedFile = await normalizeReactNativeFile(file);
-
-        console.log('[mediaService] File normalized, size:', normalizedFile.size, 'type:', normalizedFile.type);
-
         // Step 1: Request presigned URL from backend
         onProgress?.(10);
-        console.log('[mediaService] Requesting presigned URL...');
-
         const fileType = detectFileTypeFromMime(normalizedFile.type);
         const presignedData = await requestPresignedUrl({
             fileType: fileType as any,
@@ -240,20 +172,7 @@ export const uploadMedia = async (file: any, onProgress?: (progress: number) => 
             originalName: normalizedFile.name,
             expiresIn: 300, // 5 minutes
         });
-
-        console.log('[mediaService] Received presigned URL response:', {
-            fileId: presignedData.fileId,
-            hasPresignedUrl: !!presignedData.presignedUrl,
-            headerCount: presignedData.headers ? Object.keys(presignedData.headers).length : 0,
-            headerKeys: presignedData.headers ? Object.keys(presignedData.headers) : [],
-        });
-
-        onProgress?.(30);
-
-        // Step 2: Upload file to S3 using presigned URL
-        console.log('[mediaService] Starting S3 upload...');
-        console.log('[mediaService] Presigned URL:', presignedData.presignedUrl?.substring(0, 100) + '...');
-        await uploadToS3WithFetch(
+        onProgress?.(30);      await uploadToS3WithFetch(
             presignedData.presignedUrl,
             normalizedFile,
             normalizedFile.type,
@@ -265,40 +184,20 @@ export const uploadMedia = async (file: any, onProgress?: (progress: number) => 
             }
         );
 
-        onProgress?.(90);
-
-        // Step 3: Confirm upload with backend
-        console.log('[mediaService] Confirming upload...');
-        const confirmResponse = await confirmUpload({
+        onProgress?.(90);        const confirmResponse = await confirmUpload({
             fileId: presignedData.fileId,
             uploadedUrl: presignedData.presignedUrl,
         });
-
-        console.log('[mediaService] Confirm response:', {
-            hasResponse: !!confirmResponse,
-            hasData: !!confirmResponse?.data,
-            responseFields: confirmResponse?.data ? Object.keys(confirmResponse.data) : [],
-        });
-
         onProgress?.(100);
-        console.log('[mediaService] Upload completed successfully!');
-
         // Return URL and metadata
         // Prefer the URL from confirmUpload response if available, otherwise use presigned URL without params
         const backendUrl = confirmResponse?.data?.url;
         const cleanUrl = (backendUrl || presignedData.presignedUrl)?.split('?')[0];
-
-        console.log('[mediaService] URL cleaning:', {
-            backendUrl: backendUrl?.substring(0, 80),
-            cleanUrl: cleanUrl?.substring(0, 80),
-            used: cleanUrl ? 'cleaned' : 'none',
-        });
-
         return {
             // Ensure clean URL without query params
             url: cleanUrl,
             fileId: presignedData.fileId,
-            filename: presignedData.filename,
+            filename: (presignedData as any).filename,
             // Spread confirmResponse data but exclude url (we've already cleaned it)
             ...(confirmResponse?.data ? {
                 ...confirmResponse.data,
@@ -341,16 +240,7 @@ export const uploadMultipleMedia = async (files: any[]): Promise<any> => {
             );
         }
 
-        const data = await response.json();
-        console.log(
-            "[mediaService] Upload multiple response:",
-            JSON.stringify(data, null, 2)
-        );
-        console.log(
-            "[mediaService] Upload multiple data:",
-            JSON.stringify(data.data, null, 2)
-        );
-        return data.data;
+        const data = await response.json();      return data.data;
     } catch (error: any) {
         console.error("Media upload failed:", error);
         throw new Error(error.message || "Failed to upload files");

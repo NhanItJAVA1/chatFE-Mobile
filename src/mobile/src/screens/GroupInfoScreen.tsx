@@ -15,6 +15,7 @@ import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { useAuth } from "../../../shared/hooks";
 import { Avatar, PrimaryButton } from "../components";
 import { colors } from "../theme";
+import type { GroupMember, GroupMemberRole } from "@/types";
 
 /**
  * GroupInfoScreen - Group management interface
@@ -209,7 +210,7 @@ export const GroupInfoScreen: React.FC<{ route: any; navigation: any }> = ({ rou
     if (!state.group) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.primary} />
+                <ActivityIndicator size="large" color={colors.accent} />
             </View>
         );
     }
@@ -237,9 +238,9 @@ export const GroupInfoScreen: React.FC<{ route: any; navigation: any }> = ({ rou
                 <View style={styles.groupHeader}>
                     {state.group.avatarUrl && (
                         <Avatar
-                            source={{ uri: state.group.avatarUrl }}
+                            imageUrl={state.group.avatarUrl}
                             size={64}
-                            name={state.group.name}
+                            label={state.group.name?.charAt(0) || "G"}
                         />
                     )}
                     <View style={styles.groupNameContainer}>
@@ -258,7 +259,7 @@ export const GroupInfoScreen: React.FC<{ route: any; navigation: any }> = ({ rou
                                     <Ionicons
                                         name="checkmark"
                                         size={20}
-                                        color={colors.primary}
+                                        color={colors.accent}
                                     />
                                 </Pressable>
                             </View>
@@ -495,7 +496,7 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontSize: 14,
         fontWeight: "600",
-        color: colors.placeholder,
+        color: colors.textMuted,
         textTransform: "uppercase",
         marginBottom: 8,
     },
@@ -534,7 +535,7 @@ const styles = StyleSheet.create({
     },
     editButton: {
         fontSize: 14,
-        color: colors.primary,
+        color: colors.accent,
         fontWeight: "600",
     },
     infoRow: {
@@ -544,7 +545,7 @@ const styles = StyleSheet.create({
     },
     infoLabel: {
         fontSize: 14,
-        color: colors.placeholder,
+        color: colors.textMuted,
     },
     infoValue: {
         fontSize: 14,
@@ -555,7 +556,7 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         padding: 12,
-        backgroundColor: colors.card,
+        backgroundColor: colors.surface,
         borderRadius: 8,
         gap: 12,
     },
@@ -572,10 +573,10 @@ const styles = StyleSheet.create({
     },
     roleLabel: {
         fontSize: 12,
-        color: colors.placeholder,
+        color: colors.textMuted,
     },
     actionMenu: {
-        backgroundColor: colors.card,
+        backgroundColor: colors.surface,
         borderRadius: 8,
         margin: 16,
         marginTop: 0,
@@ -620,7 +621,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         paddingVertical: 12,
         borderRadius: 8,
-        backgroundColor: colors.card,
+        backgroundColor: colors.surface,
         gap: 8,
     },
     dangerButtonText: {

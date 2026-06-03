@@ -227,9 +227,16 @@ const ForwardDialog: React.FC<ForwardDialogProps> = ({
         setError(null);
 
         try {
+            const targetById = new Map(targets.map((target) => [target.id, target]));
             const targetConversationIds = await Promise.all(
-                selectedTargetIds.map(async (friendId) => {
-                    const conversation = await ConversationService.getOrCreatePrivateConversation(friendId);
+                selectedTargetIds.map(async (targetId) => {
+                    const target = targetById.get(targetId);
+
+                    if (target?.type === "GROUP") {
+                        return target.id;
+                    }
+
+                    const conversation = await ConversationService.getOrCreatePrivateConversation(targetId);
                     return conversation.id || conversation._id || "";
                 })
             );

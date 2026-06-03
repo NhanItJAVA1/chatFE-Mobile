@@ -8,8 +8,9 @@ import type { RegisterScreenProps, RegisterFormData } from "@/types";
 
 export const RegisterScreen = ({
     onSwitchToLogin,
+    onNeedEmailVerification,
 }: RegisterScreenProps) => {
-    const { register, loading, error } = useAuth();
+    const { register, loading } = useAuth();
     const [formData, setFormData] = useState<RegisterFormData>({
         phone: "",
         password: "",
@@ -65,16 +66,20 @@ export const RegisterScreen = ({
             }
 
             const { confirmPassword, ...payload } = formData;
-            const response = await register(payload);
-            const hasToken =
-                !!response?.accessToken ||
-                !!response?.access_token ||
-                !!response?.token;
-
-            if (!hasToken || response?.pendingVerification) {
-                Alert.alert("Success", "Account created. Please login.");
-                onSwitchToLogin();
-            }
+            await register({
+                ...payload,
+                phone: payload.phone.trim(),
+                email: payload.email.trim(),
+                displayName: payload.displayName.trim(),
+                sendVerificationEmail: true,
+            });
+            Alert.alert("Account created", "Please check your email and enter the OTP.");
+            onNeedEmailVerification?.({
+                email: payload.email.trim(),
+                phone: payload.phone.trim(),
+                displayName: payload.displayName.trim(),
+                shouldSendInitialOtp: false,
+            });
         } catch (submitError: any) {
             setLocalError(submitError.message || "Registration failed");
         }
@@ -134,9 +139,9 @@ export const RegisterScreen = ({
                     secureTextEntry
                     editable={!loading}
                 />
-                {!!(localError || error) && (
+                {!!localError && (
                     <View style={styles.errorBox}>
-                        <Text style={styles.errorText}>{localError || error}</Text>
+                        <Text style={styles.errorText}>{localError}</Text>
                     </View>
                 )}
                 <PrimaryButton

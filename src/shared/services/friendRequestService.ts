@@ -47,10 +47,14 @@ class FriendRequestService {
      * Calls: GET /v1/users/{userId}/public
      */
     private async getUserInfo(userId: string): Promise<User> {
+        if (!userId || userId === "undefined" || userId === "null") {
+            return { id: "", email: "", displayName: "Unknown User", avatar: "" };
+        }
+
         try {
             const response = await api.get(`/users/${userId}/public`);
             // Extract data từ response wrapper
-            return response.data || response;
+            return response.data?.data || response.data || response;
         } catch (error) {
             console.error(`[friendRequestService] Error fetching user ${userId}:`, error);
             throw error;
@@ -172,13 +176,9 @@ class FriendRequestService {
             throw new Error("requestId is required");
         }
 
-        try {
-            console.log(`[friendRequestService] Accepting request ${requestId}...`);
-            const response = await api.patch(`/friend-requests/${requestId}`, {
+        try {            const response = await api.patch(`/friend-requests/${requestId}`, {
                 status: "accepted",
-            });
-            console.log("[friendRequestService] Request accepted successfully");
-            return response.data || response;
+            });            return response.data || response;
         } catch (error: any) {
             console.error("[friendRequestService] Accept error:", error);
             throw new Error(error.message || "Failed to accept friend request");
@@ -194,13 +194,9 @@ class FriendRequestService {
             throw new Error("requestId is required");
         }
 
-        try {
-            console.log(`[friendRequestService] Declining request ${requestId}...`);
-            const response = await api.patch(`/friend-requests/${requestId}`, {
+        try {            const response = await api.patch(`/friend-requests/${requestId}`, {
                 status: "rejected",
-            });
-            console.log("[friendRequestService] Request declined successfully");
-            return response.data || response;
+            });            return response.data || response;
         } catch (error: any) {
             console.error("[friendRequestService] Decline error:", error);
             throw new Error(error.message || "Failed to decline friend request");

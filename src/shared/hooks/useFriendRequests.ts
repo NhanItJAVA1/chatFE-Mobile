@@ -172,19 +172,32 @@ export const useFriendRequests = (): UseFriendRequestsReturn => {
             // Connect socket
             FriendSocketService.connect(token);
 
-            // Handle new friend request - reload all requests to get full details
+            // Handle new friend request - add directly instead of reloading all
             const handleNewRequest = async (
                 notification: FriendRequestNotification
             ): Promise<void> => {
                 try {
-                    // Reload all received requests (page 1)
-                    // This ensures we get the new request with complete sender info
+                    // Fetch only the new request details instead of reloading entire list
                     const result = await friendRequestService.getReceivedRequests(1, 20);
 
-                    setRequests(result.items);
-                    setPagination(result.pagination);
+                    // Find the new request in the result
+                    const newRequestData = result.items.find(
+                        (item) => item._id === notification.data.requestId
+                    );
+
+                    if (newRequestData) {
+                        // Add new request to top of list if not already present
+                        setRequests((prev) => {
+                            const exists = prev.some((r) => r._id === newRequestData._id);
+                            return exists ? prev : [newRequestData, ...prev];
+                        });
+                        setPagination((prev) => ({
+                            ...prev,
+                            total: prev.total + 1,
+                        }));
+                    }
                 } catch (err: unknown) {
-                    // If reload fails, add a placeholder
+                    // If fetch fails, add a placeholder with minimal data
                     const newRequest: FriendRequestTransformed = {
                         _id: notification.data.requestId,
                         senderId: notification.data.fromUserId || "",
@@ -198,7 +211,10 @@ export const useFriendRequests = (): UseFriendRequestsReturn => {
                         createdAt: notification.timestamp,
                     };
 
-                    setRequests((prev) => [newRequest, ...prev]);
+                    setRequests((prev) => {
+                        const exists = prev.some((r) => r._id === newRequest._id);
+                        return exists ? prev : [newRequest, ...prev];
+                    });
                     setPagination((prev) => ({
                         ...prev,
                         total: prev.total + 1,

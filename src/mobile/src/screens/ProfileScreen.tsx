@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import {
     Alert,
+    ActivityIndicator,
     Image,
     Pressable,
     ScrollView,
@@ -12,6 +13,7 @@ import {
 } from "react-native";
 import { useAuth, useMediaUpload } from "../../../shared/hooks";
 import { authService } from "../../../shared/services/authService";
+import { getOrCreateDeviceId, SessionService, type AuthSession } from "../../../shared/services/sessionService";
 import { Avatar, Card, PrimaryButton, TextField } from "../components";
 import { colors } from "../theme";
 import { compressImage } from "../../../shared/utils";
@@ -29,15 +31,34 @@ export const ProfileScreen = () => {
         bio: user?.bio || "",
         avatarUrl: user?.avatarUrl || user?.avatar || null,
     });
+    const [sessions, setSessions] = useState<AuthSession[]>([]);
+    const [sessionsLoading, setSessionsLoading] = useState(false);
+    const [currentDeviceId, setCurrentDeviceId] = useState("");
+
+    const loadSessions = async () => {
+        try {
+            setSessionsLoading(true);
+            const [deviceId, items] = await Promise.all([
+                getOrCreateDeviceId(),
+                SessionService.getSessions(),
+            ]);
+            setCurrentDeviceId(deviceId);
+            setSessions(items);
+        } catch {
+            setSessions([]);
+        } finally {
+            setSessionsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadSessions();
+    }, []);
 
     // Initialize upload hook with callbacks
     const { uploadFile, isUploading, progress, error: uploadError, clearError } = useMediaUpload({
-        onProgress: (event) => {
-            console.log(`[Profile] Upload progress: ${event.percentage.toFixed(0)}%`);
-        },
-        onSuccess: (session) => {
-            console.log("[Profile] Image uploaded successfully:", session.fileId);
-            // Update profile with the uploaded URL
+        onProgress: (event) => { },
+        onSuccess: (session) => {            // Update profile with the uploaded URL
             if (session.presignedUrl) {
                 setEditData((current) => ({
                     ...current,
@@ -91,7 +112,6 @@ export const ProfileScreen = () => {
                 const imageUri = result.assets[0].uri;
                 setSelectedImage(imageUri);
                 setEditData((current) => ({ ...current, avatarUrl: imageUri }));
-                console.log("[Profile] Image selected:", imageUri);
             }
         } catch (error: any) {
             console.error("Failed to pick image:", error);
@@ -104,30 +124,14 @@ export const ProfileScreen = () => {
      */
     const handleUploadImage = async (imageUri: string) => {
         try {
-            setIsCompressing(true);
-
-            // Convert URI to Blob
-            console.log("[Profile] Converting image URI to blob...");
-            const imageBlob = await uriToBlob(imageUri);
+            setIsCompressing(true); const imageBlob = await uriToBlob(imageUri);
 
             // Create File object for upload
             const filename = imageUri.split("/").pop() || "avatar.jpg";
             const file = new File([imageBlob], filename, { type: "image/jpeg" });
-
-            console.log(`[Profile] Compressing image: ${filename}`);
-
             // Compress image: 80% quality, max 1920px
             const { compressedFile } = await compressImage(file, 0.8, 1920);
-
-            console.log(
-                `[Profile] Compressed: ${(file.size / 1024).toFixed(2)}KB → ${(compressedFile.size / 1024).toFixed(2)}KB`
-            );
-
-            setIsCompressing(false);
-
-            // Upload using presigned URL flow
-            console.log("[Profile] Starting upload to S3...");
-            await uploadFile(compressedFile, "IMAGE");
+            setIsCompressing(false); await uploadFile(compressedFile, "IMAGE");
 
         } catch (error: any) {
             setIsCompressing(false);
@@ -138,6 +142,54 @@ export const ProfileScreen = () => {
 
     const handleLogout = async () => {
         await logout();
+    };
+
+    const handleRevokeSession = (deviceId: string) => {
+        if (deviceId === currentDeviceId) {
+            Alert.alert("Đăng xuất thiết bị hiện tại", "Bạn sẽ cần đăng nhập lại trên thiết bị này.", [
+                { text: "Hủy", style: "cancel" },
+                {
+                    text: "Đăng xuất",
+                    style: "destructive",
+                    onPress: logout,
+                },
+            ]);
+            return;
+        }
+
+        Alert.alert("Đăng xuất thiết bị", "Bạn muốn đăng xuất thiết bị này?", [
+            { text: "Hủy", style: "cancel" },
+            {
+                text: "Đăng xuất",
+                style: "destructive",
+                onPress: async () => {
+                    try {
+                        await SessionService.revokeSession(deviceId);
+                        await loadSessions();
+                    } catch (error: any) {
+                        Alert.alert("Lỗi", error?.message || "Không thể đăng xuất thiết bị");
+                    }
+                },
+            },
+        ]);
+    };
+
+    const handleRevokeOtherSessions = () => {
+        Alert.alert("Đăng xuất thiết bị khác", "Thiết bị hiện tại sẽ vẫn được đăng nhập.", [
+            { text: "Hủy", style: "cancel" },
+            {
+                text: "Đăng xuất thiết bị khác",
+                style: "destructive",
+                onPress: async () => {
+                    try {
+                        await SessionService.revokeOtherSessions();
+                        await loadSessions();
+                    } catch (error: any) {
+                        Alert.alert("Lỗi", error?.message || "Không thể đăng xuất thiết bị khác");
+                    }
+                },
+            },
+        ]);
     };
 
     const handleEditChange = (field: keyof EditData, value: string) => {
@@ -156,13 +208,7 @@ export const ProfileScreen = () => {
 
             if (profileData.avatarUrl) {
                 updateData.avatarUrl = profileData.avatarUrl;
-            }
-
-            console.log("[Profile] Saving profile with data:", updateData);
-            await updateProfile(updateData);
-
-            console.log("[Profile] Profile updated successfully");
-            setIsEditing(false);
+            } await updateProfile(updateData); setIsEditing(false);
             setSelectedImage(null);
             Alert.alert("Success", "Profile updated successfully");
         } catch (err: any) {
@@ -403,6 +449,74 @@ export const ProfileScreen = () => {
                 </Pressable>
             </Card>
 
+            <Card style={styles.profileMenuCard}>
+                <View style={styles.deviceHeaderRow}>
+                    <Text style={styles.deviceTitle}>Thiết bị đăng nhập</Text>
+                    <Pressable onPress={loadSessions} hitSlop={8}>
+                        <Ionicons name="refresh" size={18} color={colors.accent} />
+                    </Pressable>
+                </View>
+                {sessionsLoading ? (
+                    <View style={styles.deviceLoadingRow}>
+                        <ActivityIndicator size="small" color={colors.accent} />
+                        <Text style={styles.deviceMutedText}>Đang tải thiết bị...</Text>
+                    </View>
+                ) : sessions.length === 0 ? (
+                    <Text style={styles.deviceMutedText}>Chưa có dữ liệu thiết bị.</Text>
+                ) : (
+                    sessions.map((session, index) => {
+                        const deviceId = session.deviceId || session.id || "";
+                        const platform = session.devicePlatform || session.platform || "";
+                        const location = session.deviceLocation || session.location || "Không rõ vị trí";
+                        const lastActive = session.lastActiveAt || session.lastActive;
+                        const isCurrent = Boolean(session.current || session.isCurrent || (!!deviceId && deviceId === currentDeviceId));
+                        return (
+                            <View key={deviceId || index}>
+                                {index > 0 && <View style={styles.divider} />}
+                                <View style={styles.deviceRow}>
+                                    <View style={styles.profileActionIcon}>
+                                        <Ionicons
+                                            name={platform === "web" || (session.deviceType || "").toLowerCase().includes("web") ? "globe-outline" : "phone-portrait-outline"}
+                                            size={22}
+                                            color="#4f8cff"
+                                        />
+                                    </View>
+                                    <View style={styles.deviceInfo}>
+                                        <View style={styles.deviceNameRow}>
+                                            <Text style={styles.deviceName} numberOfLines={1}>
+                                                {session.displayLabel || platform || "Thiết bị"}
+                                            </Text>
+                                            {isCurrent && <Text style={styles.currentDeviceBadge}>Hiện tại</Text>}
+                                        </View>
+                                        <Text style={styles.deviceMutedText} numberOfLines={1}>
+                                            {location}
+                                            {lastActive ? ` • ${new Date(lastActive).toLocaleString("vi-VN")}` : ""}
+                                        </Text>
+                                    </View>
+                                    {!!deviceId && (
+                                        <Pressable
+                                            style={styles.revokeButton}
+                                            onPress={() => handleRevokeSession(deviceId)}
+                                        >
+                                            <Ionicons name="log-out-outline" size={18} color={colors.danger} />
+                                        </Pressable>
+                                    )}
+                                </View>
+                            </View>
+                        );
+                    })
+                )}
+                {sessions.length > 1 && (
+                    <>
+                        <View style={styles.divider} />
+                        <Pressable style={styles.revokeAllRow} onPress={handleRevokeOtherSessions}>
+                            <Ionicons name="shield-checkmark-outline" size={18} color={colors.danger} />
+                            <Text style={styles.revokeAllText}>Đăng xuất thiết bị khác</Text>
+                        </Pressable>
+                    </>
+                )}
+            </Card>
+
             <Pressable
                 style={styles.logoutButton}
                 onPress={handleLogout}
@@ -417,7 +531,7 @@ export const ProfileScreen = () => {
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: "transparent",
     },
     profileContent: {
         paddingHorizontal: 16,
@@ -436,9 +550,9 @@ const styles = StyleSheet.create({
         width: 52,
         height: 52,
         borderRadius: 26,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceSoftTransparent,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: colors.overlayWhite10,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -446,9 +560,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 18,
         paddingVertical: 10,
         borderRadius: 20,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.surfaceSoftTransparent,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: colors.overlayWhite10,
     },
     profileEditText: {
         color: colors.text,
@@ -578,6 +692,77 @@ const styles = StyleSheet.create({
     logoutText: {
         color: colors.text,
         fontSize: 15,
+        fontWeight: "800",
+    },
+    deviceHeaderRow: {
+        minHeight: 38,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+    deviceTitle: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "800",
+    },
+    deviceLoadingRow: {
+        minHeight: 42,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    deviceRow: {
+        minHeight: 58,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    deviceInfo: {
+        flex: 1,
+        gap: 4,
+    },
+    deviceNameRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    deviceName: {
+        flex: 1,
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "700",
+    },
+    deviceMutedText: {
+        color: colors.textMuted,
+        fontSize: 12,
+    },
+    currentDeviceBadge: {
+        color: colors.textOnAccent,
+        backgroundColor: colors.accent,
+        borderRadius: 999,
+        overflow: "hidden",
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        fontSize: 11,
+        fontWeight: "800",
+    },
+    revokeButton: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(239,68,68,0.12)",
+    },
+    revokeAllRow: {
+        minHeight: 46,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    revokeAllText: {
+        color: colors.danger,
+        fontSize: 14,
         fontWeight: "800",
     },
     pickImageButton: {

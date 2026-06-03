@@ -1,4 +1,5 @@
 import React, { createContext, useEffect, useState, ReactNode } from "react";
+import { DeviceEventEmitter } from "react-native";
 import { authService } from "../services/authService";
 import { updateProfile as updateProfileAPI } from "../services/userService";
 import type { User, AuthContextType, AuthProviderProps } from "@/types";
@@ -25,6 +26,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                     setToken(savedToken);
 
                     try {
+                        const introspection = await authService.introspect(savedToken);
+                        if (!introspection.active) {
+                            await authService.logout();
+                            setToken(null);
+                            setUser(null);
+                            return;
+                        }
+
                         const profileResponse = await authService.getProfile(savedToken);
                         let profile = profileResponse;
 
@@ -33,12 +42,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                         }
 
                         if (!profile.avatarUrl && profile.avatar) {
-                            profile.avatarUrl = profile.avatar;
-                            console.log(
-                                "[AuthContext] Set avatarUrl from avatar:",
-                                profile.avatarUrl
-                            );
-                        }
+                            profile.avatarUrl = profile.avatar;                        }
 
                         setUser(profile);
                         await authService.saveUser(profile);
@@ -48,15 +52,20 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                         }
 
                         console.error(
-                            "[AuthContext] Profile fetch failed during restore, using saved user"
+                            "[AuthContext] Profile fetch failed during restore:",
+                            err.message
                         );
-                        if (savedUser) {
-                            setUser(savedUser);
+
+                        // If token is invalid or user not found, log out instead of falling back
+                        if (err.message?.includes("401") || err.message?.includes("404") || err.message?.includes("403")) {
+                            console.error("[AuthContext] Token invalid or user not found, logging out...");
+                            await authService.logout();
+                            setToken(null);
+                            setUser(null);
+                        } else if (savedUser) {                            setUser(savedUser);
                         }
                     }
-                } else if (savedUser) {
-                    console.log("[AuthContext] No saved token, using saved user");
-                    setUser(savedUser);
+                } else if (savedUser) {                    setUser(savedUser);
                 }
 
                 if (isActive) {
@@ -72,8 +81,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
         restoreSession();
 
+        const logoutSub = DeviceEventEmitter.addListener("forceLogout", () => {            setToken(null);
+            setUser(null);
+        });
+
         return () => {
             isActive = false;
+            logoutSub.remove();
         };
     }, []);
 
@@ -112,49 +126,43 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         }
     };
 
-    const login = async (phone: string, password: string): Promise<User> => {
+    const login = async (phone: string | { phone?: string; email?: string; password?: string }, password?: string): Promise<User> => {
         try {
             setError(null);
             setLoading(true);
-            console.log("[AuthContext] Logging in with phone:", phone);
+            const credentials = typeof phone === "object"
+                ? phone
+                : { phone, password };
+            const loginPhone = credentials.phone?.trim();
+            const loginEmail = credentials.email?.trim();
+            const loginPassword = credentials.password;
+            if ((!loginPhone && !loginEmail) || typeof loginPassword !== "string" || !loginPassword) {
+                throw new Error("Phone/email and password are required");
+            }
 
-            const response = await authService.login({ phone, password });
-            console.log("[AuthContext] Login response:", response);
-
+            const response = await authService.login({
+                ...(loginPhone ? { phone: loginPhone } : {}),
+                ...(loginEmail ? { email: loginEmail } : {}),
+                password: loginPassword,
+            });
             const token =
                 response?.token ||
                 response?.accessToken ||
                 response?.data?.token;
-            console.log(
-                "[AuthContext] Extracted token:",
-                token ? `${token.substring(0, 20)}...` : "missing"
-            );
-
             if (!token) {
                 throw new Error("No token in login response");
             }
 
-            setToken(token);
-
-            const profile = await authService.getProfile(token);
-            console.log(
-                "[AuthContext] Profile JSON:",
-                JSON.stringify(profile, null, 2)
-            );
-            console.log("[AuthContext] Profile keys:", Object.keys(profile || {}));
-
-            if (!profile.avatarUrl && profile.avatar) {
-                profile.avatarUrl = profile.avatar;
-                console.log(
-                    "[AuthContext] Set avatarUrl from avatar:",
-                    profile.avatarUrl
-                );
+            const introspection = await authService.introspect(token);
+            if (!introspection.active) {
+                throw new Error("Access token is not active");
             }
 
-            console.log(
-                "[AuthContext] Final user object:",
-                JSON.stringify(profile, null, 2)
-            );
+            setToken(token);
+
+            const profile = await authService.getProfile(token);            if (!profile.avatarUrl && profile.avatar) {
+                profile.avatarUrl = profile.avatar;            }
+
             await authService.saveUser(profile);
             setUser(profile);
 
@@ -184,28 +192,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     const updateProfile = async (profileData: any): Promise<User> => {
         try {
             setLoading(true);
-            console.log(
-                "[AuthContext] updateProfile called with:",
-                JSON.stringify(profileData, null, 2)
-            );
-
             const currentToken = await authService.getToken();
             if (!currentToken) {
                 throw new Error("Not authenticated - please login again");
             }
 
             const updateResponse = await updateProfileAPI(profileData);
-            console.log(
-                "[AuthContext] updateProfile API response:",
-                JSON.stringify(updateResponse, null, 2)
-            );
-
             const freshProfile = await authService.getProfile(currentToken);
-            console.log(
-                "[AuthContext] Fresh profile after update:",
-                JSON.stringify(freshProfile, null, 2)
-            );
-
             if (!freshProfile.avatarUrl && freshProfile.avatar) {
                 freshProfile.avatarUrl = freshProfile.avatar;
             }
