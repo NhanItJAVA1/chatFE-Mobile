@@ -110,12 +110,6 @@ export class GroupChatService {
             const membersData = Array.isArray(response.data)
                 ? response.data
                 : (Array.isArray(response.data?.data) ? response.data.data : []);
-
-            console.log('[GroupChatService] getGroupMembersWithProfiles start:', {
-                groupId,
-                membersCount: membersData.length,
-            });
-
             // Enrich members with user profile data (name, avatar)
             const enrichedMembers: GroupMember[] = await Promise.all(
                 membersData.map(async (member: any) => {

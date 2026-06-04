@@ -25,9 +25,13 @@ export {
 } from "./friendRequestService";
 export { SocketService } from "./socketService";
 export { FriendSocketService } from "./friendSocket";
+export { callService } from "./callService";
+export { callSocket } from "./callSocket";
 export { ConversationService } from "./conversationService";
+export type { CallSession, CallType } from "./callService";
 export { GroupChatService } from "./groupChatService";
 export { ReminderService } from "./reminderService";
+export { PollService, pollService } from "./pollService";
 export type { Conversation, MessageResponse, MessagePage } from "./conversationService";
 export type {
     MessagePayload,
@@ -74,6 +78,9 @@ export type {
     AiExtractedTask,
     AiReminderSuggestion,
 } from "./aiService";
+export { draftService } from "./draftService";
+export type { DraftMessage } from "./draftService";
+export { playIncomingMessageSound } from "./messageSoundService";
 export {
     requestPresignedUrl,
     uploadToS3,

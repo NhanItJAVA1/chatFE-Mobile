@@ -13,3 +13,8 @@ export { QuotedMessageBlock } from "./QuotedMessageBlock";
 export { PinnedMessagesBar } from "./PinnedMessagesBar";
 export { HighlightableMessage } from "./HighlightableMessage";
 export { AnimatedEmojiMessage, JUMBO_EMOJI_ASSETS } from "./AnimatedEmojiMessage";
+export { PollCard } from "./PollCard";
+export { CreatePollModal } from "./CreatePollModal";
+export { ProfileCardMessage } from "./ProfileCardMessage";
+export { ContactPickerSheet } from "./ContactPickerSheet";
+export { ShareProfileCardSheet } from "./ShareProfileCardSheet";

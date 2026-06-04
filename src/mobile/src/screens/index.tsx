@@ -1,5 +1,7 @@
 export { LoginScreen } from "./LoginScreen";
 export { RegisterScreen } from "./RegisterScreen";
+export { VerifyEmailScreen } from "./VerifyEmailScreen";
+export { ForgotPasswordScreen } from "./ForgotPasswordScreen";
 export { HomeScreen } from "./HomeScreen";
 export { ChatScreen } from "./ChatScreen";
 export { ProfileScreen } from "./ProfileScreen";

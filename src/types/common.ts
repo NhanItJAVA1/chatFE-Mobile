@@ -7,6 +7,8 @@ export type ApiCallOptions = {
     method?: string;
     headers?: Record<string, string>;
     body?: any;
+    skipAuth?: boolean;
+    skipRefresh?: boolean;
     [key: string]: any;
 };
 

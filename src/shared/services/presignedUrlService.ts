@@ -51,24 +51,10 @@ export const requestPresignedUrl = async (
 
         // Validate and normalize expiry time
         const expiresIn = validatePresignedUrlExpiry(payload.expiresIn);
-
-        console.log("[requestPresignedUrl] Requesting presigned URL:", {
-            fileType: payload.fileType,
-            mimeType: payload.mimeType,
-            fileSize: payload.fileSize,
-            expiresIn,
-        });
-
         const response = await api.post("/media/request-upload-url", {
             ...payload,
             expiresIn,
         });
-
-        console.log(
-            "[requestPresignedUrl] Received presigned URL:",
-            response.data.fileId
-        );
-
         // Parse URL to check for signature parameters
         let urlParams: Record<string, string> = {};
         try {
@@ -79,18 +65,6 @@ export const requestPresignedUrl = async (
         } catch (e) {
             console.warn("[requestPresignedUrl] Could not parse URL");
         }
-
-        console.log("[requestPresignedUrl] Presigned URL details:", {
-            fileId: response.data.fileId,
-            hasUrl: !!response.data.presignedUrl,
-            fullUrl: response.data.presignedUrl,
-            hasSignatureParams: Object.keys(urlParams).length > 0,
-            queryParamKeys: Object.keys(urlParams),
-            headerCount: response.data.headers ? Object.keys(response.data.headers).length : 0,
-            headerKeys: response.data.headers ? Object.keys(response.data.headers) : [],
-            allHeaders: response.data.headers,
-        });
-
         return response.data;
     } catch (error: any) {
         console.error("[requestPresignedUrl] Error:", error);
@@ -132,15 +106,6 @@ export const uploadToS3 = async (
         "Content-Type": mimeType,
         ...headers,
     };
-
-    console.log("[uploadToS3] Starting upload to S3", {
-        fileSize: fileBlob.size,
-        mimeType,
-        headerKeys: Object.keys(finalHeaders),
-        retries: config.maxRetries,
-        urlPreview: presignedUrl?.substring(0, 100),
-    });
-
     await retryWithBackoff(
         () => uploadWithProgress(presignedUrl, fileBlob, finalHeaders, onProgress),
         config,
@@ -154,10 +119,7 @@ export const uploadToS3 = async (
                 error: `Retrying... (attempt ${attempt}/${config.maxRetries})`,
             });
         }
-    );
-
-    console.log("[uploadToS3] Successfully uploaded to S3");
-};
+    );};
 
 /**
  * Step 3: Confirm upload with backend
@@ -166,12 +128,7 @@ export const confirmUpload = async (
     payload: ConfirmUploadPayload
 ): Promise<any> => {
     try {
-        console.log("[confirmUpload] Confirming upload:", payload.fileId);
-
         const response = await api.post("/media/confirm-upload", payload);
-
-        console.log("[confirmUpload] Upload confirmed successfully");
-
         return response;
     } catch (error: any) {
         console.error("[confirmUpload] Error:", error);
