@@ -5,10 +5,62 @@ import { PollService } from "../services/pollService";
 import { useAuth } from "./useAuth";
 import { saveMessagesToCache, loadMessagesFromCache } from "../utils/cacheUtils";
 import { useScrollToMessage } from "./useScrollToMessage";
+import { playReminderDueSound } from "../services/messageSoundService";
 import type { AddPollOptionRequest, CreatePollRequest, Poll, VotePollRequest } from "@/types";
 
 const getMessageId = (message: MessagePayload): string => {
-    return message._id || message.id || `${message.senderId}-${message.createdAt}`;
+    return message._id || message.id || message.clientMessageId || `${message.senderId}-${message.createdAt}`;
+};
+
+const makeClientMessageId = (): string => `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+const hasRealMessageId = (message: MessagePayload): boolean => {
+    return !!(message._id || message.id);
+};
+
+const isOptimisticMessage = (message: MessagePayload): boolean => {
+    return !!message.optimistic || message.status === "sending" || message.status === "failed";
+};
+
+const isLikelyServerAckForOptimisticMessage = (
+    optimistic: MessagePayload,
+    incoming: MessagePayload
+): boolean => {
+    if (!isOptimisticMessage(optimistic)) return false;
+    if (optimistic.clientMessageId && optimistic.clientMessageId === incoming.clientMessageId) return true;
+    if (!hasRealMessageId(incoming)) return false;
+    if (optimistic.senderId !== incoming.senderId) return false;
+    if (optimistic.conversationId !== incoming.conversationId) return false;
+    if ((optimistic.text || "").trim() !== (incoming.text || "").trim()) return false;
+
+    const optimisticMediaCount = optimistic.media?.length || 0;
+    const incomingMediaCount = incoming.media?.length || 0;
+    if (optimisticMediaCount !== incomingMediaCount) return false;
+
+    const optimisticTime = Date.parse(optimistic.createdAt || "");
+    const incomingTime = Date.parse(incoming.createdAt || "");
+    if (!Number.isFinite(optimisticTime) || !Number.isFinite(incomingTime)) return true;
+
+    return Math.abs(incomingTime - optimisticTime) < 30000;
+};
+
+const mergeServerMessages = (
+    incoming: MessagePayload[],
+    existing: MessagePayload[]
+): MessagePayload[] => {
+    const matchedIncomingIndexes = new Set<number>();
+    const withoutMatchedOptimistic = existing.filter((message) => {
+        const matchIndex = incoming.findIndex((incomingMessage, index) =>
+            !matchedIncomingIndexes.has(index) &&
+            isLikelyServerAckForOptimisticMessage(message, incomingMessage)
+        );
+
+        if (matchIndex === -1) return true;
+        matchedIncomingIndexes.add(matchIndex);
+        return false;
+    });
+
+    return mergeUniqueMessages(incoming, withoutMatchedOptimistic);
 };
 
 const getMessageTimestamp = (message: MessagePayload): number => {
@@ -605,7 +657,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     const messagesStateRef = useRef(state);
 
     const getMessageId = useCallback((message: MessagePayload): string => {
-        return message._id || message.id || `${message.senderId}-${message.createdAt}`;
+        return message._id || message.id || message.clientMessageId || `${message.senderId}-${message.createdAt}`;
     }, []);
 
     // Update ref when state changes
@@ -952,34 +1004,134 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
      */
     const sendMessage = useCallback(
         async (text: string, media?: any[]) => {
-            if (!state.conversation || !text.trim()) {
+            const trimmedText = text.trim();
+            if (!state.conversation || (!trimmedText && (!media || media.length === 0))) {
                 return;
             }
 
-            setState((prev) => ({ ...prev, isSending: true, error: null }));
+            const conversationId = state.conversation._id || state.conversation.id;
+            const clientMessageId = makeClientMessageId();
+            const now = new Date().toISOString();
+            const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+            const optimisticMessage: MessagePayload = {
+                id: clientMessageId,
+                clientMessageId,
+                conversationId,
+                senderId: currentUserId,
+                senderName: user?.displayName || (user as any)?.name || "Bạn",
+                senderAvatar: (user as any)?.avatarUrl || (user as any)?.avatar || "",
+                text: trimmedText,
+                media: media || [],
+                reactions: [],
+                status: "sending",
+                createdAt: now,
+                updatedAt: now,
+                type: media?.length ? "image" : "text",
+                optimistic: true,
+            };
+
+            setState((prev) => {
+                const newMessages = collapsePollMessages(attachPollsToMessages(
+                    enrichMessagesWithQuotedData(mergeUniqueMessages([optimisticMessage], prev.messages)),
+                    prev.polls
+                ));
+
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+                    saveMessagesToCache(convId, newMessages).catch((cacheError) => {
+                        console.error("[useGroupChatMessage] Failed to save optimistic message to cache:", cacheError);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    error: null,
+                };
+            });
 
             try {
                 stopTyping();
 
                 const messages = await SocketService.sendMessage(
-                    state.conversation._id || state.conversation.id,
-                    text.trim(),
+                    conversationId,
+                    trimmedText,
                     media
                 );
 
-                updateStateAndCache({
-                    messages: mergeUniqueMessages(messages, state.messages),
-                    isSending: false,
+                setState((prev) => {
+                    const acknowledgedMessages = messages.length > 0
+                        ? messages.map((message) => ({ ...message, clientMessageId, optimistic: false }))
+                        : [{ ...optimisticMessage, status: "sent" as const, optimistic: false }];
+                    const merged = mergeServerMessages(acknowledgedMessages, prev.messages);
+                    const newMessages = collapsePollMessages(attachPollsToMessages(
+                        enrichMessagesWithQuotedData(merged),
+                        prev.polls
+                    ));
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages: newMessages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, newMessages).catch((cacheError) => {
+                            console.error("[useGroupChatMessage] Failed to save sent message to cache:", cacheError);
+                        });
+                    }
+
+                    return {
+                        ...prev,
+                        messages: newMessages,
+                        isSending: false,
+                    };
                 });
             } catch (error: any) {
-                setState((prev) => ({
-                    ...prev,
-                    error: error.message || "Failed to send message",
-                    isSending: false,
-                }));
+                setState((prev) => {
+                    const newMessages = prev.messages.map((message) =>
+                        message.clientMessageId === clientMessageId
+                            ? {
+                                ...message,
+                                status: "failed" as const,
+                                optimistic: true,
+                                sendError: error.message || "Failed to send message",
+                                updatedAt: new Date().toISOString(),
+                            }
+                            : message
+                    );
+
+                    if (prev.conversation) {
+                        const convId = prev.conversation._id || prev.conversation.id;
+                        conversationCache.set(convId, {
+                            conversation: prev.conversation,
+                            messages: newMessages,
+                            hasMoreMessages: prev.hasMoreMessages,
+                            nextCursor: prev.nextCursor,
+                        });
+                        saveMessagesToCache(convId, newMessages).catch((cacheError) => {
+                            console.error("[useGroupChatMessage] Failed to save failed message to cache:", cacheError);
+                        });
+                    }
+
+                    return {
+                        ...prev,
+                        messages: newMessages,
+                        error: error.message || "Failed to send message",
+                        isSending: false,
+                    };
+                });
             }
         },
-        [state.conversation, state.messages, updateStateAndCache]
+        [state.conversation, state.messages, state.polls, updateStateAndCache, user]
     );
 
     /**
@@ -1340,32 +1492,111 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
      * Send quoted/reply message
      */
     const sendQuotedMessage = useCallback(async (quotedMessageId: string, text: string, media?: any[]) => {
+        const trimmedText = text.trim();
+        const clientMessageId = makeClientMessageId();
+
         try {
-            if (quotedMessageId.startsWith("temp-")) throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
+            if (quotedMessageId.startsWith("temp-") || quotedMessageId.startsWith("client-")) {
+                throw new Error("Vui lòng đợi tin nhắn được gửi thành công");
+            }
             if (!state.conversation) {
                 throw new Error("No conversation loaded");
             }
 
-            if (!text.trim() && (!media || media.length === 0)) {
+            if (!trimmedText && (!media || media.length === 0)) {
                 throw new Error("Message cannot be empty");
             }
 
             const conversationId = state.conversation._id || state.conversation.id;
-            setState((prev) => ({ ...prev, isSending: true }));
+            const now = new Date().toISOString();
+            const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+            const quotedMessage = state.messages.find((message) => getMessageId(message) === quotedMessageId);
+            const optimisticMessage: MessagePayload = {
+                id: clientMessageId,
+                clientMessageId,
+                conversationId,
+                senderId: currentUserId,
+                senderName: user?.displayName || (user as any)?.name || "Bạn",
+                senderAvatar: (user as any)?.avatarUrl || (user as any)?.avatar || "",
+                text: trimmedText,
+                media: media || [],
+                reactions: [],
+                status: "sending",
+                createdAt: now,
+                updatedAt: now,
+                type: media?.length ? "image" : "text",
+                quotedMessageId,
+                quotedMessage: quotedMessage
+                    ? {
+                        _id: quotedMessage._id,
+                        id: quotedMessage.id,
+                        text: quotedMessage.text,
+                        senderId: quotedMessage.senderId,
+                        senderName: quotedMessage.senderName,
+                        type: quotedMessage.type,
+                        media: quotedMessage.media,
+                    }
+                    : undefined,
+                quotedMessagePreview: quotedMessage?.text,
+                quotedMessageSenderId: quotedMessage?.senderId,
+                quotedMessageSenderName: quotedMessage?.senderName,
+                optimistic: true,
+            };
+
+            setState((prev) => {
+                const merged = mergeUniqueMessages([optimisticMessage], prev.messages);
+                const newMessages = collapsePollMessages(attachPollsToMessages(
+                    enrichMessagesWithQuotedData(merged),
+                    prev.polls
+                ));
+
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+                    saveMessagesToCache(convId, newMessages).catch((error) => {
+                        console.error('[useGroupChatMessage] Failed to save optimistic quoted message to cache:', error);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    replyingTo: null,
+                    error: null,
+                };
+            });
+
             const messages = await SocketService.sendQuotedMessage(
                 conversationId,
                 quotedMessageId,
-                text.trim(),
+                trimmedText,
                 media
             );
 
             setState((prev) => {
-                const merged = mergeUniqueMessages(messages || [], prev.messages);
-                const newMessages = enrichMessagesWithQuotedData(merged);
+                const acknowledgedMessages = (messages?.length ? messages : [{ ...optimisticMessage, status: "sent" as const }])
+                    .map((message) => ({ ...message, clientMessageId, optimistic: false }));
+                const merged = mergeServerMessages(acknowledgedMessages, prev.messages);
+                const newMessages = collapsePollMessages(attachPollsToMessages(
+                    enrichMessagesWithQuotedData(merged),
+                    prev.polls
+                ));
 
                 // Save to cache
                 if (prev.conversation) {
                     const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
                     saveMessagesToCache(convId, newMessages).catch((error) => {
                         console.error('[useGroupChatMessage] Failed to save quoted message to cache:', error);
                     });
@@ -1379,13 +1610,41 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 };
             });
         } catch (error: any) {
-            setState((prev) => ({
-                ...prev,
-                isSending: false,
-                error: error.message || "Failed to send quoted message",
-            }));
+            setState((prev) => {
+                const newMessages = prev.messages.map((message) =>
+                    message.clientMessageId === clientMessageId
+                        ? {
+                            ...message,
+                            status: "failed" as const,
+                            optimistic: true,
+                            sendError: error.message || "Failed to send quoted message",
+                            updatedAt: new Date().toISOString(),
+                        }
+                        : message
+                );
+
+                if (prev.conversation) {
+                    const convId = prev.conversation._id || prev.conversation.id;
+                    conversationCache.set(convId, {
+                        conversation: prev.conversation,
+                        messages: newMessages,
+                        hasMoreMessages: prev.hasMoreMessages,
+                        nextCursor: prev.nextCursor,
+                    });
+                    saveMessagesToCache(convId, newMessages).catch((cacheError) => {
+                        console.error('[useGroupChatMessage] Failed to save failed quoted message to cache:', cacheError);
+                    });
+                }
+
+                return {
+                    ...prev,
+                    messages: newMessages,
+                    isSending: false,
+                    error: error.message || "Failed to send quoted message",
+                };
+            });
         }
-    }, [state.conversation]);
+    }, [getMessageId, state.conversation, state.messages, user]);
 
     /**
      * Set message to reply to
@@ -1518,11 +1777,12 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 // Setup socket listeners for group messages
                 SocketService.onMessage((message: MessagePayload) => {
                     if ((message.conversationId === conversationId || message.conversationId === groupId) && messagesStateRef.current) {
-                        const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
-                    const enriched = collapsePollMessages(attachPollsToMessages(
-                        enrichMessagesWithQuotedData(merged),
-                        messagesStateRef.current.polls
-                    ));                        updateStateAndCache({ messages: enriched });
+                        const merged = mergeServerMessages([message], messagesStateRef.current.messages);
+                        const enriched = collapsePollMessages(attachPollsToMessages(
+                            enrichMessagesWithQuotedData(merged),
+                            messagesStateRef.current.polls
+                        ));
+                        updateStateAndCache({ messages: enriched });
                     }
                 });
 
@@ -1548,7 +1808,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                             )
                             : isDeletedEvent
                                 ? messagesStateRef.current.messages
-                                : mergeUniqueMessages([message], messagesStateRef.current.messages);
+                                : mergeServerMessages([message], messagesStateRef.current.messages);
 
                     // Re-enrich in case quoted data was updated
                     const enriched = collapsePollMessages(attachPollsToMessages(
@@ -1669,12 +1929,37 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                         return;
                     }
 
-                    if (messagesStateRef.current) {                        const merged = mergeUniqueMessages([message], messagesStateRef.current.messages);
+                    if (messagesStateRef.current) {
+                        const merged = mergeServerMessages([message], messagesStateRef.current.messages);
                         const enriched = collapsePollMessages(attachPollsToMessages(
                             enrichMessagesWithQuotedData(merged),
                             messagesStateRef.current.polls
                         ));
                         updateStateAndCache({ messages: enriched });
+                    }
+                });
+
+                SocketService.onReminderEvents((eventName, data) => {
+                    const incomingConvId = String(
+                        data?.conversationId ||
+                        data?.reminder?.conversationId ||
+                        data?.message?.conversationId ||
+                        data?.systemMessage?.conversationId ||
+                        data?.groupId ||
+                        ""
+                    );
+                    if (incomingConvId && incomingConvId !== String(conversationId) && incomingConvId !== String(groupId)) {
+                        return;
+                    }
+
+                    const reminder = data?.reminder;
+                    if (reminder) {
+                        updateReminderBubble(reminder);
+                    }
+
+                    const eventKey = eventName.toLowerCase();
+                    if (eventKey.includes("reminder_due") || eventKey.includes("reminder:due")) {
+                        playReminderDueSound().catch(() => { });
                     }
                 });
 
@@ -1837,8 +2122,9 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             SocketService.offPinnedMessage();
             SocketService.offMessageQuoted();
             SocketService.offPollEvent();
+            SocketService.offReminderEvents();
         };
-    }, [groupId, token, user?.id, user?._id, updateStateAndCache, upsertPollInState, removePollFromState]);
+    }, [groupId, token, user?.id, user?._id, updateStateAndCache, updateReminderBubble, upsertPollInState, removePollFromState]);
 
     // Keep the scroll-index map in sync whenever messages change
     useEffect(() => {

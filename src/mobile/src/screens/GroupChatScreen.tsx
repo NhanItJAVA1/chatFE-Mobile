@@ -48,6 +48,16 @@ import { colors, assets } from "../theme";
 import { buildMessageActionSheetOptions, type MessageActionButton } from "../../../shared/utils";
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"];
+const SEND_BURST_WINDOW_MS = 4000;
+const SEND_BURST_LIMIT = 10;
+const SEND_BURST_DELAY_MS = 2000;
+const SAME_MESSAGE_LIMIT = 5;
+const SAME_MESSAGE_DELAY_MS = 3000;
+const AI_ACTION_COOLDOWN_MS = 10000;
+const SMART_REPLY_COOLDOWN_MS = 4000;
+
+const normalizeRateLimitText = (text: string): string => text.trim().replace(/\s+/g, " ").toLowerCase();
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Helper function to generate unique asset ID - matches ChatScreen implementation
@@ -156,6 +166,22 @@ const getReminderStatusLabel = (status?: GroupReminderStatus): string => {
     if (status === "done") return "done";
     if (status === "cancelled") return "cancelled";
     return "active";
+};
+
+const getMessageStatusLabel = (status?: string): string => {
+    switch (status) {
+        case "sending":
+            return "Đang gửi";
+        case "failed":
+            return "Lỗi";
+        case "sent":
+        case "delivered":
+            return "✓";
+        case "seen":
+            return "✓✓";
+        default:
+            return "";
+    }
 };
 
 const getReminderFromMessage = (message: any): GroupReminder | null => {
@@ -436,6 +462,17 @@ const GroupMessageBubble: React.FC<{
                             />
                             <View style={[styles.jumboEmojiTimePill, isOwn ? styles.jumboEmojiTimePillOwn : styles.jumboEmojiTimePillOther]}>
                                 <Text style={styles.messageTime}>{timeText}</Text>
+                                {isOwn && getMessageStatusLabel(message.status) ? (
+                                    <Text style={[
+                                        styles.messageStatusText,
+                                        (message.status === "sent" || message.status === "delivered") && styles.sentStatus,
+                                        message.status === "seen" && styles.seenStatus,
+                                        message.status === "sending" && styles.sendingStatus,
+                                        message.status === "failed" && styles.failedStatus,
+                                    ]}>
+                                        {getMessageStatusLabel(message.status)}
+                                    </Text>
+                                ) : null}
                             </View>
                             {renderReactionSummary()}
                             {renderQuickReactionButton()}
@@ -462,7 +499,20 @@ const GroupMessageBubble: React.FC<{
                             <Text style={[styles.messageText, isOwn ? styles.messageTextOwn : styles.messageTextOther]}>
                                 {trimmedText}
                             </Text>
-                            <Text style={styles.messageTime}>{timeText}</Text>
+                            <View style={styles.messageMetaRow}>
+                                <Text style={styles.messageTime}>{timeText}</Text>
+                                {isOwn && getMessageStatusLabel(message.status) ? (
+                                    <Text style={[
+                                        styles.messageStatusText,
+                                        (message.status === "sent" || message.status === "delivered") && styles.sentStatus,
+                                        message.status === "seen" && styles.seenStatus,
+                                        message.status === "sending" && styles.sendingStatus,
+                                        message.status === "failed" && styles.failedStatus,
+                                    ]}>
+                                        {getMessageStatusLabel(message.status)}
+                                    </Text>
+                                ) : null}
+                            </View>
                             {renderReactionSummary()}
                             {renderQuickReactionButton()}
                         </View>
@@ -666,6 +716,7 @@ export const GroupChatScreen: React.FC<{
         const [aiTasks, setAiTasks] = useState<AiExtractTasksResponse | null>(null);
         const [smartReplies, setSmartReplies] = useState<string[]>([]);
         const [smartReplyHiddenFor, setSmartReplyHiddenFor] = useState<string | null>(null);
+        const [showBotSuggestion, setShowBotSuggestion] = useState(false);
         const [toneLoading, setToneLoading] = useState<AiTone | null>(null);
         const [previousDraft, setPreviousDraft] = useState<string | null>(null);
         const [showMuteDialog, setShowMuteDialog] = useState(false);
@@ -679,7 +730,10 @@ export const GroupChatScreen: React.FC<{
         // Refs
         // flatListRef comes from useGroupChatMessage → useScrollToMessage (enables scrollToMessage)
         const imageViewerScrollRef = useRef<FlatList>(null);
+        const messageInputRef = useRef<TextInput>(null);
         const actionsRef = useRef(chatActions);
+        const sendRateLimitRef = useRef({ timestamps: [] as number[], lastText: "", sameTextCount: 0 });
+        const aiRateLimitRef = useRef<Record<string, number>>({});
         const kickedOutRef = useRef(false);
         const currentMemberMuteUntil = useMemo(() => {
             const currentMember = groupState.members?.find((member: any) => {
@@ -716,11 +770,59 @@ export const GroupChatScreen: React.FC<{
             onBackPressRef.current = onBackPress;
         }, [onBackPress]);
 
+        const canUseAiAction = useCallback((key: string, notify = true, cooldownMs = AI_ACTION_COOLDOWN_MS) => {
+            const now = Date.now();
+            const lastAt = aiRateLimitRef.current[key] || 0;
+            const remainingMs = cooldownMs - (now - lastAt);
+            if (remainingMs > 0) {
+                if (notify) {
+                    Alert.alert("AI", `Chờ ${Math.ceil(remainingMs / 1000)} giây rồi thử lại nhé.`);
+                }
+                return false;
+            }
+
+            aiRateLimitRef.current[key] = now;
+            return true;
+        }, []);
+
+        const getSendDelayMs = useCallback((text: string, mediaCount: number) => {
+            const now = Date.now();
+            const normalizedText = normalizeRateLimitText(text);
+            const prev = sendRateLimitRef.current;
+            const timestamps = [...prev.timestamps.filter((time) => now - time <= SEND_BURST_WINDOW_MS), now];
+            const sameTextCount = mediaCount === 0 && normalizedText && normalizedText === prev.lastText
+                ? prev.sameTextCount + 1
+                : normalizedText
+                    ? 1
+                    : 0;
+
+            sendRateLimitRef.current = {
+                timestamps,
+                lastText: normalizedText || prev.lastText,
+                sameTextCount,
+            };
+
+            if (sameTextCount >= SAME_MESSAGE_LIMIT) {
+                return SAME_MESSAGE_DELAY_MS;
+            }
+
+            if (timestamps.length >= SEND_BURST_LIMIT) {
+                return SEND_BURST_DELAY_MS;
+            }
+
+            return 0;
+        }, []);
+
         useEffect(() => {
             let isActive = true;
 
             const loadSmartReplies = async () => {
                 if (!aiSmartReplyEnabled || !shouldShowSmartReplies) {
+                    setSmartReplies([]);
+                    return;
+                }
+
+                if (!canUseAiAction(`smart-reply:${groupId}`, false, SMART_REPLY_COOLDOWN_MS)) {
                     setSmartReplies([]);
                     return;
                 }
@@ -742,7 +844,7 @@ export const GroupChatScreen: React.FC<{
             return () => {
                 isActive = false;
             };
-        }, [aiSmartReplyEnabled, groupId, latestMessageKey, shouldShowSmartReplies]);
+        }, [aiSmartReplyEnabled, canUseAiAction, groupId, latestMessageKey, shouldShowSmartReplies]);
 
         useEffect(() => {
             if (!groupId || !token) {
@@ -1422,9 +1524,16 @@ export const GroupChatScreen: React.FC<{
             const trimmedText = messageText.trim();
 
             if (!hasSendableContent) return;
+            const sendDelayMs = getSendDelayMs(trimmedText, draftMedia.length);
+            const shouldShowSendingState = draftMedia.length > 0;
 
             try {
-                setIsSending(true);
+                if (shouldShowSendingState) {
+                    setIsSending(true);
+                }
+                if (sendDelayMs > 0) {
+                    await wait(sendDelayMs);
+                }
 
                 // If replying to a message, send as quoted message
                 if (chatState.replyingTo) {
@@ -1434,15 +1543,17 @@ export const GroupChatScreen: React.FC<{
                             await chatActions.sendQuotedMessage(quotedMessageId, trimmedText || "", draftMedia);
                             await clearDraft();
                         } else if (trimmedText) {
-                            await chatActions.sendQuotedMessage(quotedMessageId, trimmedText);
+                            const sendPromise = chatActions.sendQuotedMessage(quotedMessageId, trimmedText);
                             await clearDraft();
+                            await sendPromise;
                         }
                     }
                 } else {
                     // Send text message normally
                     if (trimmedText) {
-                        await chatActions.sendMessage(trimmedText);
+                        const sendPromise = chatActions.sendMessage(trimmedText);
                         await clearDraft();
+                        await sendPromise;
                     }
 
                     // Send media
@@ -1457,19 +1568,50 @@ export const GroupChatScreen: React.FC<{
             } catch (err: any) {
                 Alert.alert("Lỗi", err.message || "Failed to send message");
             } finally {
-                setIsSending(false);
+                if (shouldShowSendingState) {
+                    setIsSending(false);
+                }
             }
-        }, [messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia, scrollToLatestMessage, chatState.replyingTo, clearDraft]);
+        }, [getSendDelayMs, messageText, draftMedia, hasSendableContent, chatActions, sendDraftMedia, scrollToLatestMessage, chatState.replyingTo, clearDraft]);
 
         const handleInputChange = useCallback((text: string) => {
             setMessageText(text);
+            const currentToken = text.split(/\s/).pop() || "";
+            setShowBotSuggestion(currentToken.startsWith("@") && "@bot".startsWith(currentToken.toLowerCase()));
             if (text.trim()) {
                 chatActions.handleTyping();
             }
-        }, [chatActions]);
+        }, [chatActions, setMessageText]);
+
+        const insertBotMention = useCallback((prefix = "@bot ") => {
+            const parts = messageText.split(/(\s+)/);
+            let replaced = false;
+            for (let index = parts.length - 1; index >= 0; index -= 1) {
+                if (parts[index].startsWith("@")) {
+                    parts[index] = prefix.trimEnd();
+                    replaced = true;
+                    break;
+                }
+            }
+
+            setMessageText(`${replaced ? parts.join("") : `${messageText}${messageText.endsWith(" ") || !messageText ? "" : " "}${prefix.trimEnd()}`} `);
+            setShowBotSuggestion(false);
+            requestAnimationFrame(() => messageInputRef.current?.focus());
+        }, [messageText, setMessageText]);
+
+        const handleCreateSchedulePrompt = useCallback(() => {
+            setShowMediaMenu(false);
+            setMessageText(`${messageText}${messageText.endsWith(" ") || !messageText ? "" : " "}@bot tạo lịch `);
+            setShowBotSuggestion(false);
+            requestAnimationFrame(() => messageInputRef.current?.focus());
+        }, [messageText, setMessageText]);
 
         const openAiPanel = useCallback(async (mode: AiPanelMode) => {
             if (!groupId) return;
+
+            if ((mode !== "search" || aiSearchQuery.trim()) && !canUseAiAction(`panel:${mode}`)) {
+                return;
+            }
 
             setAiPanelMode(mode);
             setShowAiPanel(true);
@@ -1488,12 +1630,16 @@ export const GroupChatScreen: React.FC<{
             } finally {
                 setAiLoading(false);
             }
-        }, [aiSearchQuery, groupId]);
+        }, [aiSearchQuery, canUseAiAction, groupId]);
 
         const handleToneAdjust = useCallback(async (tone: AiTone) => {
             const text = messageText.trim();
             if (!text) {
                 Alert.alert("AI", "Nhập tin nhắn trước khi chỉnh giọng văn.");
+                return;
+            }
+
+            if (!canUseAiAction(`tone:${tone}:${normalizeRateLimitText(text)}`)) {
                 return;
             }
 
@@ -1507,7 +1653,7 @@ export const GroupChatScreen: React.FC<{
             } finally {
                 setToneLoading(null);
             }
-        }, [messageText]);
+        }, [canUseAiAction, messageText]);
 
         const showToneMenu = useCallback(() => {
             setShowTonePicker(true);
@@ -2363,12 +2509,25 @@ export const GroupChatScreen: React.FC<{
                                             </Text>
                                         );
                                     })()}
-                                    <Text style={styles.messageTime}>
-                                        {new Date(item.createdAt).toLocaleTimeString(
-                                            "vi-VN",
-                                            { hour: "2-digit", minute: "2-digit" }
-                                        )}
-                                    </Text>
+                                    <View style={styles.messageMetaRow}>
+                                        <Text style={styles.messageTime}>
+                                            {new Date(item.createdAt).toLocaleTimeString(
+                                                "vi-VN",
+                                                { hour: "2-digit", minute: "2-digit" }
+                                            )}
+                                        </Text>
+                                        {isOwn && getMessageStatusLabel(item.status) ? (
+                                            <Text style={[
+                                                styles.messageStatusText,
+                                                (item.status === "sent" || item.status === "delivered") && styles.sentStatus,
+                                                item.status === "seen" && styles.seenStatus,
+                                                item.status === "sending" && styles.sendingStatus,
+                                                item.status === "failed" && styles.failedStatus,
+                                            ]}>
+                                                {getMessageStatusLabel(item.status)}
+                                            </Text>
+                                        ) : null}
+                                    </View>
                                     {reactionGroups.length > 0 && (
                                         <View style={[styles.reactionRow, isOwn ? styles.reactionRowOwn : styles.reactionRowOther]}>
                                             <Pressable
@@ -2836,6 +2995,13 @@ export const GroupChatScreen: React.FC<{
                             <Ionicons name="person-circle-outline" size={24} color={colors.accent} />
                             <Text style={styles.mediaMenuItemText}>Chia sẻ liên hệ</Text>
                         </Pressable>
+                        <Pressable
+                            style={styles.mediaMenuItem}
+                            onPress={handleCreateSchedulePrompt}
+                        >
+                            <Ionicons name="calendar-outline" size={24} color={colors.accentStrong} />
+                            <Text style={styles.mediaMenuItemText}>Tạo lịch</Text>
+                        </Pressable>
                     </View>
                 )}
 
@@ -2875,6 +3041,13 @@ export const GroupChatScreen: React.FC<{
                         </Pressable>
                     </View>
                 )}
+                {showBotSuggestion && (
+                    <Pressable style={styles.botSuggestionBar} onPress={() => insertBotMention()}>
+                        <Ionicons name="sparkles" size={16} color={colors.accentStrong} />
+                        <Text style={styles.botSuggestionText}>bot</Text>
+                        <Text style={styles.botSuggestionHint}>@bot</Text>
+                    </Pressable>
+                )}
                 {previousDraft !== null && (
                     <View style={styles.aiUndoBar}>
                         <Text style={styles.aiUndoText}>AI đã chỉnh sửa bản nháp</Text>
@@ -2897,6 +3070,7 @@ export const GroupChatScreen: React.FC<{
                     </Pressable>
                     <View style={styles.composerInputWrap}>
                         <TextInput
+                            ref={messageInputRef}
                             placeholder="Tin nhắn"
                             placeholderTextColor={colors.textMuted}
                             style={styles.composerInput}
@@ -3541,6 +3715,34 @@ const styles = StyleSheet.create({
         color: colors.overlayWhite75,
         marginTop: 6,
     },
+    messageMetaRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 6,
+        marginTop: 6,
+    },
+    messageStatusText: {
+        fontSize: 10,
+        color: colors.overlayWhite75,
+        fontWeight: "700",
+    },
+    sentStatus: {
+        color: colors.textOnAccent,
+        fontSize: 12,
+        fontWeight: "900",
+    },
+    seenStatus: {
+        color: colors.success,
+        fontSize: 12,
+        fontWeight: "900",
+    },
+    sendingStatus: {
+        color: colors.overlayWhite75,
+    },
+    failedStatus: {
+        color: colors.dangerSoft,
+    },
     reactionRow: {
         position: "absolute",
         left: 0,
@@ -3903,6 +4105,29 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: colors.surface,
+    },
+    botSuggestionBar: {
+        marginHorizontal: 12,
+        marginTop: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: colors.accentStrong,
+        backgroundColor: "rgba(63,140,255,0.16)",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    botSuggestionText: {
+        color: colors.accentStrong,
+        fontSize: 14,
+        fontWeight: "900",
+    },
+    botSuggestionHint: {
+        color: colors.text,
+        fontSize: 13,
+        fontWeight: "700",
     },
     aiUndoBar: {
         flexDirection: "row",

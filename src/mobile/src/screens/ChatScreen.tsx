@@ -70,6 +70,16 @@ const MUTE_OPTIONS: Array<{ key: MuteOptionKey; label: string }> = [
 ];
 
 const FOREVER_MUTE_UNTIL = "9999-12-31T00:00:00.000Z";
+const SEND_BURST_WINDOW_MS = 4000;
+const SEND_BURST_LIMIT = 10;
+const SEND_BURST_DELAY_MS = 2000;
+const SAME_MESSAGE_LIMIT = 5;
+const SAME_MESSAGE_DELAY_MS = 3000;
+const AI_ACTION_COOLDOWN_MS = 10000;
+const SMART_REPLY_COOLDOWN_MS = 4000;
+
+const normalizeRateLimitText = (text: string): string => text.trim().replace(/\s+/g, " ").toLowerCase();
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getNextEightAmIso = (): string => {
   const now = new Date();
@@ -143,7 +153,7 @@ const MessageBubble: React.FC<{
       case "sent":
         return "✓";
       case "delivered":
-        return "✓✓";
+        return "✓";
       case "seen":
         return "✓✓";
       default:
@@ -315,6 +325,7 @@ const MessageBubble: React.FC<{
             {isOwn && (
               <Text style={[
                 styles.bubbleTime,
+                (message.status === "sent" || message.status === "delivered") && styles.sentStatus,
                 message.status === "seen" && styles.seenStatus,
                 message.status === "sending" && styles.sendingStatus,
                 message.status === "failed" && styles.failedStatus,
@@ -386,6 +397,7 @@ const MessageBubble: React.FC<{
             {isOwn && (
               <Text style={[
                 styles.bubbleTime,
+                (message.status === "sent" || message.status === "delivered") && styles.sentStatus,
                 message.status === "seen" && styles.seenStatus,
                 message.status === "sending" && styles.sendingStatus,
                 message.status === "failed" && styles.failedStatus,
@@ -570,7 +582,7 @@ const ImageGalleryBubble: React.FC<{
       case "sent":
         return "✓";
       case "delivered":
-        return "✓✓";
+        return "✓";
       case "seen":
         return "✓✓";
       default:
@@ -623,6 +635,7 @@ const ImageGalleryBubble: React.FC<{
           {isOwn && (
             <Text style={[
               styles.bubbleTime,
+              (lastMessage.status === "sent" || lastMessage.status === "delivered") && styles.sentStatus,
               lastMessage.status === "seen" && styles.seenStatus,
               lastMessage.status === "sending" && styles.sendingStatus,
               lastMessage.status === "failed" && styles.failedStatus,
@@ -700,6 +713,7 @@ export const ChatScreen = ({
   const [aiTasks, setAiTasks] = React.useState<AiExtractTasksResponse | null>(null);
   const [smartReplies, setSmartReplies] = React.useState<string[]>([]);
   const [smartReplyHiddenFor, setSmartReplyHiddenFor] = React.useState<string | null>(null);
+  const [showBotSuggestion, setShowBotSuggestion] = React.useState(false);
   const [toneLoading, setToneLoading] = React.useState<AiTone | null>(null);
   const [previousDraft, setPreviousDraft] = React.useState<string | null>(null);
   const [translatedMessages, setTranslatedMessages] = React.useState<Record<string, AiTranslateResponse>>({});
@@ -715,7 +729,10 @@ export const ChatScreen = ({
   const [isBlockedByThem, setIsBlockedByThem] = React.useState(false);
   const [blockLoading, setBlockLoading] = React.useState(false);
   const imageViewerScrollRef = useRef<FlatList>(null);
+  const messageInputRef = useRef<TextInput>(null);
   const actionsRef = useRef<any>(null);
+  const sendRateLimitRef = useRef({ timestamps: [] as number[], lastText: "", sameTextCount: 0 });
+  const aiRateLimitRef = useRef<Record<string, number>>({});
   const recordingRef = useRef<Audio.Recording | null>(null);
   const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cancelAudioRef = useRef(false);
@@ -968,11 +985,59 @@ export const ChatScreen = ({
     }); return map;
   }, [messages]);
 
+  const canUseAiAction = useCallback((key: string, notify = true, cooldownMs = AI_ACTION_COOLDOWN_MS) => {
+    const now = Date.now();
+    const lastAt = aiRateLimitRef.current[key] || 0;
+    const remainingMs = cooldownMs - (now - lastAt);
+    if (remainingMs > 0) {
+      if (notify) {
+        Alert.alert("AI", `Chờ ${Math.ceil(remainingMs / 1000)} giây rồi thử lại nhé.`);
+      }
+      return false;
+    }
+
+    aiRateLimitRef.current[key] = now;
+    return true;
+  }, []);
+
+  const getSendDelayMs = useCallback((text: string, mediaCount: number) => {
+    const now = Date.now();
+    const normalizedText = normalizeRateLimitText(text);
+    const prev = sendRateLimitRef.current;
+    const timestamps = [...prev.timestamps.filter((time) => now - time <= SEND_BURST_WINDOW_MS), now];
+    const sameTextCount = mediaCount === 0 && normalizedText && normalizedText === prev.lastText
+      ? prev.sameTextCount + 1
+      : normalizedText
+        ? 1
+        : 0;
+
+    sendRateLimitRef.current = {
+      timestamps,
+      lastText: normalizedText || prev.lastText,
+      sameTextCount,
+    };
+
+    if (sameTextCount >= SAME_MESSAGE_LIMIT) {
+      return SAME_MESSAGE_DELAY_MS;
+    }
+
+    if (timestamps.length >= SEND_BURST_LIMIT) {
+      return SEND_BURST_DELAY_MS;
+    }
+
+    return 0;
+  }, []);
+
   useEffect(() => {
     let isActive = true;
 
     const loadSmartReplies = async () => {
       if (!aiSmartReplyEnabled || !shouldShowSmartReplies) {
+        setSmartReplies([]);
+        return;
+      }
+
+      if (!canUseAiAction(`smart-reply:${conversationId}`, false, SMART_REPLY_COOLDOWN_MS)) {
         setSmartReplies([]);
         return;
       }
@@ -994,7 +1059,7 @@ export const ChatScreen = ({
     return () => {
       isActive = false;
     };
-  }, [aiSmartReplyEnabled, conversationId, latestMessageKey, shouldShowSmartReplies]);
+  }, [aiSmartReplyEnabled, canUseAiAction, conversationId, latestMessageKey, shouldShowSmartReplies]);
 
   // Auto-mark messages as seen when new messages arrive
   // Auto mark as seen handled by handleViewableItemsChanged callback
@@ -1564,6 +1629,10 @@ export const ChatScreen = ({
     const trimmedText = messageText.trim();
 
     if (!hasSendableContent || !actionsRef.current) return;
+    const sendDelayMs = getSendDelayMs(trimmedText, draftMedia.length);
+    if (sendDelayMs > 0) {
+      await wait(sendDelayMs);
+    }
 
     if (draftMedia.length > 0) {
       // If replying to a message, send as quoted message
@@ -1598,22 +1667,51 @@ export const ChatScreen = ({
       await clearDraft();
       await sendPromise;
     }
-  }, [clearDraft, draftMedia.length, hasSendableContent, messageText, sendDraftMedia, state.replyingTo]);
+  }, [clearDraft, draftMedia.length, getSendDelayMs, hasSendableContent, messageText, sendDraftMedia, state.replyingTo]);
 
   /**
    * Handle text input (typing indicator)
    */
   const handleTextChange = useCallback((text: string) => {
     setMessageText(text);
+    const currentToken = text.split(/\s/).pop() || "";
+    setShowBotSuggestion(currentToken.startsWith("@") && "@bot".startsWith(currentToken.toLowerCase()));
     if (text.trim() && actionsRef.current) {
       actionsRef.current.handleTyping();
     }
-  }, []);
+  }, [setMessageText]);
+
+  const insertBotMention = useCallback((prefix = "@bot ") => {
+    const parts = messageText.split(/(\s+)/);
+    let replaced = false;
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      if (parts[index].startsWith("@")) {
+        parts[index] = prefix.trimEnd();
+        replaced = true;
+        break;
+      }
+    }
+
+    setMessageText(`${replaced ? parts.join("") : `${messageText}${messageText.endsWith(" ") || !messageText ? "" : " "}${prefix.trimEnd()}`} `);
+    setShowBotSuggestion(false);
+    requestAnimationFrame(() => messageInputRef.current?.focus());
+  }, [messageText, setMessageText]);
+
+  const handleCreateSchedulePrompt = useCallback(() => {
+    setShowMediaMenu(false);
+    setMessageText(`${messageText}${messageText.endsWith(" ") || !messageText ? "" : " "}@bot tạo lịch `);
+    setShowBotSuggestion(false);
+    requestAnimationFrame(() => messageInputRef.current?.focus());
+  }, [messageText, setMessageText]);
 
   const openAiPanel = useCallback(
     async (mode: AiPanelMode) => {
       if (!conversationId) {
         Alert.alert("AI", "Chưa có cuộc trò chuyện để phân tích.");
+        return;
+      }
+
+      if ((mode !== "search" || aiSearchQuery.trim()) && !canUseAiAction(`panel:${mode}`)) {
         return;
       }
 
@@ -1638,7 +1736,7 @@ export const ChatScreen = ({
         setAiLoading(false);
       }
     },
-    [aiSearchQuery, conversationId]
+    [aiSearchQuery, canUseAiAction, conversationId]
   );
 
   const handleSmartSearch = useCallback(async () => {
@@ -1658,6 +1756,10 @@ export const ChatScreen = ({
         return;
       }
 
+      if (!canUseAiAction(`tone:${tone}:${normalizeRateLimitText(text)}`)) {
+        return;
+      }
+
       try {
         setToneLoading(tone);
         setPreviousDraft(messageText);
@@ -1669,7 +1771,7 @@ export const ChatScreen = ({
         setToneLoading(null);
       }
     },
-    [messageText]
+    [canUseAiAction, messageText]
   );
 
   const showToneMenu = useCallback(() => {
@@ -2365,6 +2467,13 @@ export const ChatScreen = ({
           </Pressable>
         </View>
       )}
+      {showBotSuggestion && (
+        <Pressable style={styles.botSuggestionBar} onPress={() => insertBotMention()}>
+          <Ionicons name="sparkles" size={16} color={colors.accentStrong} />
+          <Text style={styles.botSuggestionText}>bot</Text>
+          <Text style={styles.botSuggestionHint}>@bot</Text>
+        </Pressable>
+      )}
       {previousDraft !== null && (
         <View style={styles.aiUndoBar}>
           <Text style={styles.aiUndoText}>AI đã chỉnh sửa bản nháp</Text>
@@ -2400,6 +2509,7 @@ export const ChatScreen = ({
         </Pressable>
         <View style={styles.composerInputWrap}>
           <TextInput
+            ref={messageInputRef}
             placeholder="Tin nhắn"
             placeholderTextColor={colors.textMuted}
             style={styles.composerInput}
@@ -2994,6 +3104,11 @@ export const ChatScreen = ({
               <Text style={styles.mediaMenuButtonText}>Chia sẻ liên hệ</Text>
             </Pressable>
 
+            <Pressable style={styles.mediaMenuButton} onPress={handleCreateSchedulePrompt}>
+              <Ionicons name="calendar-outline" size={24} color={colors.accentStrong} />
+              <Text style={styles.mediaMenuButtonText}>Tạo lịch</Text>
+            </Pressable>
+
             <Pressable style={styles.mediaMenuCloseButton} onPress={() => setShowMediaMenu(false)}>
               <Text style={styles.mediaMenuCloseText}>Hủy</Text>
             </Pressable>
@@ -3398,8 +3513,15 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "800",
   },
+  sentStatus: {
+    color: colors.textOnAccent,
+    fontSize: 12,
+    fontWeight: "900",
+  },
   seenStatus: {
     color: "#4CAF50",
+    fontSize: 12,
+    fontWeight: "900",
   },
   sendingStatus: {
     color: colors.overlayWhite75,
@@ -3535,6 +3657,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.surface,
+  },
+  botSuggestionBar: {
+    marginHorizontal: 12,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accentStrong,
+    backgroundColor: "rgba(63,140,255,0.16)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  botSuggestionText: {
+    color: colors.accentStrong,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  botSuggestionHint: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700",
   },
   aiUndoBar: {
     flexDirection: "row",

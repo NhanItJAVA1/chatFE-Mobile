@@ -2,13 +2,21 @@ import React, { useRef } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { colors } from "../theme";
-import type { BottomTabBarProps, TabItem } from "@/types";
+import type { TabItem } from "@/types";
+
+type BottomTabBarProps = {
+    activeTab: string;
+    onChangeTab: (tab: string) => void;
+    onSearchPress?: () => void;
+    friendRequestCount?: number;
+};
 
 export const BottomTabBar = ({
     activeTab,
     onChangeTab,
+    onSearchPress,
     friendRequestCount = 0
-}) => {
+}: BottomTabBarProps) => {
     const items: TabItem[] = [
         { key: "addFriend", label: "Thêm bạn", icon: "person-add-outline" },
         { key: "requests", label: "Lời mời", icon: "notifications-outline" },
@@ -99,14 +107,14 @@ export const BottomTabBar = ({
                 })}
             </View>
             <Pressable
-                onPress={() => onChangeTab("addFriend")}
+                onPress={onSearchPress}
                 style={styles.searchButton}
                 hitSlop={8}
             >
                 <Ionicons
                     name="search"
                     size={23}
-                    color={activeTab === "addFriend" ? colors.accent : colors.text}
+                    color={colors.text}
                 />
             </Pressable>
         </View>
