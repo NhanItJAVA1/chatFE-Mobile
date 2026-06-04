@@ -712,6 +712,7 @@ export const ChatScreen = ({
   const [isFriend, setIsFriend] = React.useState(false);
   const [friendshipStatus, setFriendshipStatus] = React.useState<string>("none");
   const [isBlockedByMe, setIsBlockedByMe] = React.useState(false);
+  const [isBlockedByThem, setIsBlockedByThem] = React.useState(false);
   const [blockLoading, setBlockLoading] = React.useState(false);
   const imageViewerScrollRef = useRef<FlatList>(null);
   const actionsRef = useRef<any>(null);
@@ -737,21 +738,36 @@ export const ChatScreen = ({
   useEffect(() => {
     if (!friendId || !token || isSelfChat) {
       setIsBlockedByMe(false);
+      setIsBlockedByThem(false);
       return;
     }
 
     let mounted = true;
     BlockService.checkBlockStatus(friendId)
       .then((status) => {
-        if (mounted) setIsBlockedByMe(status.isBlocked);
+        if (!mounted) return;
+        setIsBlockedByMe(status.isBlocked);
+        if (status.isBlocked) {
+          setIsBlockedByThem(false);
+        }
       })
       .catch(() => { });
 
     BlockService.connect(token);
+    BlockService.onBlocked((data: any) => {
+      const blockedBy = String(data?.data?.blockedBy || data?.blockedBy || "");
+      if (blockedBy === friendId) {
+        setIsBlockedByThem(true);
+      }
+    });
+
     BlockService.onUnblocked((data: any) => {
       const unblockedBy = String(data?.data?.unblockedBy || data?.unblockedBy || "");
       if (unblockedBy === friendId) {
-        setIsBlockedByMe(false);
+        setIsBlockedByThem(false);
+        actionsRef.current?.retryLoadConversation?.().catch((retryError: any) => {
+          console.warn("[ChatScreen] Failed to reload conversation after remote unblock:", retryError?.message || retryError);
+        });
       }
     });
 
@@ -768,7 +784,7 @@ export const ChatScreen = ({
       return;
     }
 
-    if (isBlockedByMe) {
+    if (isBlockedByMe || isBlockedByThem) {
       setIsFriend(false);
       setFriendshipStatus("none");
       return;
@@ -791,7 +807,7 @@ export const ChatScreen = ({
       .catch((error) => {
         if (!mounted) return;
         console.warn("[ChatScreen] Failed to check friendship status:", error?.message || error);
-        if (isBlockedByMe) {
+        if (isBlockedByMe || isBlockedByThem) {
           setIsFriend(false);
           setFriendshipStatus("none");
         }
@@ -800,7 +816,7 @@ export const ChatScreen = ({
     return () => {
       mounted = false;
     };
-  }, [friendId, isSelfChat, chatUser?.relationship, isBlockedByMe]);
+  }, [friendId, isSelfChat, chatUser?.relationship, isBlockedByMe, isBlockedByThem]);
 
   // Keep actions ref in sync
   React.useEffect(() => {
@@ -881,13 +897,14 @@ export const ChatScreen = ({
     !!latestMessage?.text &&
     latestMessage.senderId !== currentUserId &&
     smartReplyHiddenFor !== latestMessageKey;
-  const isBlockedChatError = String(error || "").toLowerCase().includes("blocked") || isBlockedByMe;
+  const hasBlockedChatError = String(error || "").toLowerCase().includes("blocked");
+  const isBlockedChatError = hasBlockedChatError || isBlockedByMe || isBlockedByThem;
 
   React.useEffect(() => {
-    if (!isSelfChat && String(error || "").toLowerCase().includes("blocked")) {
-      setIsBlockedByMe(true);
+    if (!isSelfChat && hasBlockedChatError && !isBlockedByMe) {
+      setIsBlockedByThem(true);
     }
-  }, [error, isSelfChat]);
+  }, [hasBlockedChatError, isBlockedByMe, isSelfChat]);
 
   const searchTargetHandledRef = useRef<string | null>(null);
 
@@ -1827,6 +1844,7 @@ export const ChatScreen = ({
                 await BlockService.blockUser(chatUser.id!);
                 setIsFriend(false);
                 setFriendshipStatus("none");
+                setIsBlockedByThem(false);
               } else {
                 await BlockService.unblockUser(chatUser.id!);
               }
@@ -2363,7 +2381,11 @@ export const ChatScreen = ({
       {isBlockedChatError && (
         <View style={styles.blockBanner}>
           <Ionicons name="ban-outline" size={18} color={colors.danger} />
-          <Text style={styles.blockBannerText}>Bạn đã chặn người dùng này. Bỏ chặn để tiếp tục nhắn tin.</Text>
+          <Text style={styles.blockBannerText}>
+            {isBlockedByMe
+              ? "Bạn đã chặn người dùng này. Bỏ chặn để tiếp tục nhắn tin."
+              : "Người dùng này đã chặn bạn. Bạn chưa thể gửi tin nhắn."}
+          </Text>
         </View>
       )}
       <View style={styles.messageComposer}>

@@ -49,6 +49,7 @@ export type SectionTitleProps = {
 export type BottomTabBarProps = {
     activeTab: string;
     onChangeTab: (tab: string) => void;
+    onSearchPress?: () => void;
     friendRequestCount?: number;
 };
 

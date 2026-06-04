@@ -7,11 +7,12 @@ import type { BottomTabBarProps, TabItem } from "@/types";
 export const BottomTabBar = ({
     activeTab,
     onChangeTab,
+    onSearchPress,
     friendRequestCount = 0,
 }: BottomTabBarProps) => {
     const items: TabItem[] = [
-        { key: "addFriend", label: "Tìm kiếm", icon: "search-outline" },
-        { key: "requests", label: "Lời mời", icon: "person-add-outline" },
+        { key: "addFriend", label: "Danh bạ", icon: "person-circle-outline" },
+        { key: "requests", label: "Lời mời", icon: "notifications-outline" },
         { key: "home", label: "Chat", icon: "chatbubbles" },
         { key: "profile", label: "Cài đặt", icon: "settings-outline" },
     ];
@@ -98,6 +99,17 @@ export const BottomTabBar = ({
                     );
                 })}
             </View>
+            <Pressable
+                onPress={onSearchPress}
+                style={styles.searchButton}
+                hitSlop={8}
+            >
+                <Ionicons
+                    name="search"
+                    size={23}
+                    color={colors.text}
+                />
+            </Pressable>
         </View>
     );
 };
@@ -108,13 +120,14 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 10,
-        paddingHorizontal: 28,
+        paddingHorizontal: 18,
         paddingBottom: 0,
         paddingTop: 0,
         backgroundColor: "transparent",
         borderTopWidth: 0,
         flexDirection: "row",
         alignItems: "center",
+        gap: 10,
     },
     tabBar: {
         flex: 1,
@@ -125,6 +138,21 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         gap: 4,
         borderRadius: 32,
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.34,
+        shadowRadius: 14,
+        elevation: 8,
+    },
+    searchButton: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(30, 30, 30, 0.9)",
         borderWidth: 1,
         borderColor: colors.overlayWhite18,
         shadowColor: "#000000",

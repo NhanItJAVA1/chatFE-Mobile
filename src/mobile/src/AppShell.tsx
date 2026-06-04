@@ -180,6 +180,7 @@ const MainShell = () => {
     const [currentRouteName, setCurrentRouteName] = useState<keyof RootStackParamList>("Main");
     const [messageNotification, setMessageNotification] = useState<MessageNotification | null>(null);
     const [aiSmartReplyEnabled, setAiSmartReplyEnabled] = useState(false);
+    const [homeSearchRequestId, setHomeSearchRequestId] = useState(0);
     const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const { isAuthenticated, token, user } = useAuth();
     const {
@@ -496,6 +497,7 @@ const MainShell = () => {
                 }}
                 aiSmartReplyEnabled={aiSmartReplyEnabled}
                 onToggleAiSmartReply={handleToggleAiSmartReply}
+                searchRequestId={homeSearchRequestId}
             />
         );
     };
@@ -635,6 +637,10 @@ const MainShell = () => {
                 <BottomTabBar
                     activeTab={activeTab}
                     onChangeTab={(tab) => setActiveTab(tab as TabKey)}
+                    onSearchPress={() => {
+                        setActiveTab("home");
+                        setHomeSearchRequestId((value) => value + 1);
+                    }}
                     friendRequestCount={requests.length}
                 />
             )}

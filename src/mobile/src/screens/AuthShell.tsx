@@ -1,6 +1,6 @@
 import React, { ReactNode } from "react";
-import { Ionicons } from "@expo/vector-icons";
 import {
+    Image,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Card } from "../components/Card";
-import { colors, gradients } from "../theme";
+import { assets, colors, gradients } from "../theme";
 
 type AuthShellProps = {
     children: ReactNode;
@@ -37,7 +37,7 @@ export const AuthShell = ({
                 keyboardShouldPersistTaps="handled"
             >
                 <View style={styles.authBadge}>
-                    <Ionicons name="paper-plane" size={16} color={colors.text} />
+                    <Image source={assets.logo} style={styles.authLogo} />
                     <Text style={styles.authBadgeText}>ChatChit</Text>
                 </View>
                 <Text style={styles.authTitle}>{title}</Text>
@@ -93,6 +93,12 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         borderWidth: 1,
         borderColor: "rgba(255,255,255,0.12)",
+    },
+    authLogo: {
+        width: 24,
+        height: 24,
+        borderRadius: 8,
+        backgroundColor: colors.white,
     },
     authBadgeText: {
         color: colors.text,

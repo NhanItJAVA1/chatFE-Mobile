@@ -55,6 +55,7 @@ type Gradients = {
 
 type Assets = {
     chatBackground: any;
+    logo: any;
 };
 
 export const colors: Colors = {
@@ -114,4 +115,5 @@ export const gradients: Gradients = {
 
 export const assets: Assets = {
     chatBackground: require("../../shared/background/telegram-background.png"),
+    logo: require("../../shared/background/logo.jpg"),
 };

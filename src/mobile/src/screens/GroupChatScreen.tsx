@@ -28,10 +28,9 @@ import { useAuth } from "../../../shared/hooks";
 import { useCall } from "../../../shared/context";
 import { GroupChatService } from "../../../shared/services/groupChatService";
 import { ConversationService, type MuteConversationOptions } from "../../../shared/services/conversationService";
-import { ReminderService, SocketService } from "../../../shared/services";
-import type { GroupReminder, GroupReminderRepeatRule, GroupReminderStatus, ReminderEventPayload } from "../../../shared/services/socketService";
 import { callService, type CallSession } from "../../../shared/services/callService";
 import { SocketService } from "../../../shared/services";
+import type { GroupReminder, GroupReminderStatus } from "../../../shared/services/socketService";
 import chatMediaService from "../../../shared/services/chatMediaService";
 import {
     aiService,
@@ -84,15 +83,6 @@ const detectDraftMediaKind = (mimeType?: string, type?: string): "image" | "vide
 const GALLERY_GROUP_WINDOW_MS = 5000;
 type AiPanelMode = "summary" | "search" | "tasks";
 type MuteOptionKey = "1h" | "4h" | "8am" | "forever";
-type ReminderFilter = "all" | GroupReminderStatus;
-
-const DEFAULT_REMINDER_FORM = {
-    title: "",
-    description: "",
-    remindAtText: "",
-    repeatRule: "none" as GroupReminderRepeatRule,
-    notifyBeforeMinutes: "0",
-};
 
 const MUTE_OPTIONS: Array<{ key: MuteOptionKey; label: string }> = [
     { key: "1h", label: "Trong 1 giờ" },
@@ -162,41 +152,6 @@ const formatReminderDate = (iso?: string): string => {
     });
 };
 
-const parseReminderDateInput = (value: string): string | null => {
-    const trimmed = value.trim();
-    if (!trimmed) {
-        return null;
-    }
-
-    const direct = new Date(trimmed);
-    if (!Number.isNaN(direct.getTime())) {
-        return direct.toISOString();
-    }
-
-    const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
-    if (!match) {
-        return null;
-    }
-
-    const [, year, month, day, hour, minute] = match;
-    const localDate = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), 0, 0);
-    return Number.isNaN(localDate.getTime()) ? null : localDate.toISOString();
-};
-
-const reminderToInputDate = (iso?: string): string => {
-    if (!iso) {
-        return "";
-    }
-
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) {
-        return "";
-    }
-
-    const pad = (num: number) => String(num).padStart(2, "0");
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-};
-
 const getReminderStatusLabel = (status?: GroupReminderStatus): string => {
     if (status === "done") return "done";
     if (status === "cancelled") return "cancelled";
@@ -226,35 +181,12 @@ const getReminderFromMessage = (message: any): GroupReminder | null => {
     };
 };
 
-const sortReminders = (items: GroupReminder[]): GroupReminder[] => {
-    return [...items].sort((left, right) => {
-        if (!!left.pinned !== !!right.pinned) {
-            return left.pinned ? -1 : 1;
-        }
-
-        return new Date(left.remindAt || 0).getTime() - new Date(right.remindAt || 0).getTime();
-    });
-};
-
-const renderBotMentionText = (text: string, baseStyle: any, botStyle: any) => {
-    const parts = text.split(/(@bot)/gi);
-    return (
-        <Text style={baseStyle}>
-            {parts.map((part, index) => (
-                part.toLowerCase() === "@bot"
-                    ? <Text key={`${part}-${index}`} style={botStyle}>{part}</Text>
-                    : <Text key={`${part}-${index}`}>{part}</Text>
-            ))}
-        </Text>
-    );
-};
-
 const ReminderBubble = ({ reminder, isOwn }: { reminder: GroupReminder; isOwn: boolean }) => {
     const status = getReminderStatusLabel(reminder.status);
     const statusColor =
         status === "done" ? colors.success :
-        status === "cancelled" ? "#f5b84b" :
-        colors.accentStrong;
+            status === "cancelled" ? "#f5b84b" :
+                colors.accentStrong;
     const date = reminder.remindAt ? new Date(reminder.remindAt) : null;
     const day = date && !Number.isNaN(date.getTime()) ? String(date.getDate()).padStart(2, "0") : "--";
     const month = date && !Number.isNaN(date.getTime()) ? `THÁNG ${date.getMonth() + 1}` : "THÁNG";
@@ -285,6 +217,7 @@ const ReminderBubble = ({ reminder, isOwn }: { reminder: GroupReminder; isOwn: b
         </View>
     );
 };
+
 const GroupMessageBubble: React.FC<{
     message: any;
     isOwn: boolean;
@@ -656,83 +589,6 @@ export const GroupChatScreen: React.FC<{
     onBackPress?: () => void;
     onSettingsPress?: () => void;
     onAddMembersPress?: () => void;
-}> = ({ route, navigation, onBackPress, onSettingsPress, onAddMembersPress }) => {
-    const { groupId } = route.params || {};
-    const authContext = useAuth();
-    const token = authContext.token;
-    const { user } = authContext;
-    const {
-        state: chatState,
-        actions: chatActions,
-        flatListRef,
-        highlightedMessageId,
-    } = useGroupChatMessage(groupId, token || "");
-
-    // Highlight state is managed inside useScrollToMessage (via useGroupChatMessage)
-    const { state: groupState, actions: groupActions } = useGroupChat();
-    const currentUserId = user?.id || (user as any)?._id || (user as any)?.userId || "";
-
-    // Local state
-    const [messageText, setMessageText] = useState("");
-    const [isSending, setIsSending] = useState(false);
-    const [showMediaMenu, setShowMediaMenu] = useState(false);
-    const [draftMedia, setDraftMedia] = useState<DraftMediaAsset[]>([]);
-    const [uploading, setUploading] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState(0);
-    const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
-    const [showForwardDialog, setShowForwardDialog] = useState(false);
-    const [forwardMessageIds, setForwardMessageIds] = useState<string[]>([]);
-    const [showEditDialog, setShowEditDialog] = useState(false);
-    const [editText, setEditText] = useState("");
-    const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
-    const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-    const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
-    const [showAiQuickMenu, setShowAiQuickMenu] = useState(false);
-    const [showTonePicker, setShowTonePicker] = useState(false);
-    const [showAiPanel, setShowAiPanel] = useState(false);
-    const [aiPanelMode, setAiPanelMode] = useState<AiPanelMode>("summary");
-    const [aiLoading, setAiLoading] = useState(false);
-    const [aiSummary, setAiSummary] = useState<AiSummarizeResponse | null>(null);
-    const [aiSearchQuery, setAiSearchQuery] = useState("");
-    const [aiSearchResult, setAiSearchResult] = useState<AiSmartSearchResponse | null>(null);
-    const [aiTasks, setAiTasks] = useState<AiExtractTasksResponse | null>(null);
-    const [toneLoading, setToneLoading] = useState<AiTone | null>(null);
-    const [previousDraft, setPreviousDraft] = useState<string | null>(null);
-    const [showMuteDialog, setShowMuteDialog] = useState(false);
-    const [selectedMuteOption, setSelectedMuteOption] = useState<MuteOptionKey>("1h");
-    const [muteLoading, setMuteLoading] = useState(false);
-    const [localMuteUntil, setLocalMuteUntil] = useState<string | null>(null);
-    const [showReminderPanel, setShowReminderPanel] = useState(false);
-    const [reminders, setReminders] = useState<GroupReminder[]>([]);
-    const [reminderFilter, setReminderFilter] = useState<ReminderFilter>("active");
-    const [reminderLoading, setReminderLoading] = useState(false);
-    const [reminderSaving, setReminderSaving] = useState(false);
-    const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
-    const [reminderForm, setReminderForm] = useState(DEFAULT_REMINDER_FORM);
-    const [showBotSuggestion, setShowBotSuggestion] = useState(false);
-
-    // Refs
-    // flatListRef comes from useGroupChatMessage → useScrollToMessage (enables scrollToMessage)
-    const imageViewerScrollRef = useRef<FlatList>(null);
-    const actionsRef = useRef(chatActions);
-    const kickedOutRef = useRef(false);
-    const currentMemberMuteUntil = useMemo(() => {
-        const currentMember = groupState.members?.find((member: any) => {
-            const memberUserId = member?.userId || member?._id || member?.id || "";
-            return String(memberUserId) === String(currentUserId);
-        });
-
-        return (currentMember as any)?.muteUntil || null;
-    }, [currentUserId, groupState.members]);
-    const groupMuteUntil = localMuteUntil || currentMemberMuteUntil;
-    const isGroupMuted = isMuteUntilActive(groupMuteUntil);
-    const filteredReminders = useMemo(() => {
-        const filtered = reminderFilter === "all"
-            ? reminders
-            : reminders.filter((reminder) => (reminder.status || "active") === reminderFilter);
-
-        return sortReminders(filtered);
-    }, [reminderFilter, reminders]);
     onOpenPrivateChat?: (user: any) => void;
     aiSmartReplyEnabled?: boolean;
 }> = ({
@@ -881,133 +737,6 @@ export const GroupChatScreen: React.FC<{
                 }
             };
 
-    const upsertReminder = useCallback((reminder?: GroupReminder | null) => {
-        if (!reminder?.id) {
-            return;
-        }
-
-        setReminders((prev) => {
-            const next = prev.some((item) => item.id === reminder.id)
-                ? prev.map((item) => item.id === reminder.id ? { ...item, ...reminder } : item)
-                : [reminder, ...prev];
-            return sortReminders(next);
-        });
-
-        chatActions.updateReminderBubble?.(reminder);
-    }, [chatActions]);
-
-    const loadReminders = useCallback(async () => {
-        if (!groupId) {
-            return;
-        }
-
-        try {
-            setReminderLoading(true);
-            const data = await ReminderService.listGroupReminders(String(groupId));
-            setReminders(sortReminders(data));
-        } catch (error: any) {
-            Alert.alert("Nhắc hẹn", error?.message || "Không thể tải danh sách nhắc hẹn.");
-        } finally {
-            setReminderLoading(false);
-        }
-    }, [groupId]);
-
-    const resetReminderForm = useCallback(() => {
-        setEditingReminderId(null);
-        setReminderForm(DEFAULT_REMINDER_FORM);
-    }, []);
-
-    const openCreateReminderPanel = useCallback(() => {
-        resetReminderForm();
-        setShowReminderPanel(true);
-        loadReminders();
-    }, [loadReminders, resetReminderForm]);
-
-    const openEditReminder = useCallback((reminder: GroupReminder) => {
-        setEditingReminderId(reminder.id);
-        setReminderForm({
-            title: reminder.title || "",
-            description: reminder.description || "",
-            remindAtText: reminderToInputDate(reminder.remindAt),
-            repeatRule: reminder.repeatRule || "none",
-            notifyBeforeMinutes: String(reminder.notifyBeforeMinutes || 0),
-        });
-    }, []);
-
-    const submitReminder = useCallback(async () => {
-        const title = reminderForm.title.trim();
-        if (!title) {
-            Alert.alert("Nhắc hẹn", "Nhập tiêu đề nhắc hẹn.");
-            return;
-        }
-
-        const remindAt = parseReminderDateInput(reminderForm.remindAtText);
-        if (!remindAt) {
-            Alert.alert("Nhắc hẹn", "Thời gian cần đúng dạng YYYY-MM-DD HH:mm.");
-            return;
-        }
-
-        const notifyBeforeMinutes = Number(reminderForm.notifyBeforeMinutes || 0);
-        if (Number.isNaN(notifyBeforeMinutes) || notifyBeforeMinutes < 0) {
-            Alert.alert("Nhắc hẹn", "Số phút báo trước không hợp lệ.");
-            return;
-        }
-
-        try {
-            setReminderSaving(true);
-            const payload = {
-                conversationId: String(groupId),
-                title,
-                description: reminderForm.description.trim() || undefined,
-                remindAt,
-                repeatRule: reminderForm.repeatRule,
-                notifyBeforeMinutes,
-            };
-
-            const reminder = editingReminderId
-                ? await SocketService.updateReminder({ ...payload, reminderId: editingReminderId })
-                : await SocketService.createReminder(payload);
-
-            upsertReminder(reminder);
-            resetReminderForm();
-            Alert.alert("Nhắc hẹn", editingReminderId ? "Đã cập nhật nhắc hẹn." : "Đã tạo nhắc hẹn.");
-        } catch (error: any) {
-            Alert.alert("Nhắc hẹn", error?.message || "Không thể lưu nhắc hẹn.");
-        } finally {
-            setReminderSaving(false);
-        }
-    }, [editingReminderId, groupId, reminderForm, resetReminderForm, upsertReminder]);
-
-    const cancelReminder = useCallback(async (reminder: GroupReminder) => {
-        try {
-            setReminderSaving(true);
-            const updated = await SocketService.deleteReminder(String(groupId), reminder.id);
-            upsertReminder(updated || { ...reminder, status: "cancelled" });
-        } catch (error: any) {
-            Alert.alert("Nhắc hẹn", error?.message || "Không thể hủy nhắc hẹn.");
-        } finally {
-            setReminderSaving(false);
-        }
-    }, [groupId, upsertReminder]);
-
-    const togglePinReminder = useCallback(async (reminder: GroupReminder) => {
-        try {
-            setReminderSaving(true);
-            const updated = reminder.pinned
-                ? await SocketService.unpinReminder(reminder.id)
-                : await SocketService.pinReminder(reminder.id);
-            upsertReminder(updated);
-        } catch (error: any) {
-            Alert.alert("Nhắc hẹn", error?.message || "Không thể cập nhật ghim.");
-        } finally {
-            setReminderSaving(false);
-        }
-    }, [upsertReminder]);
-
-    // Update actionsRef when chatActions changes
-    useEffect(() => {
-        actionsRef.current = chatActions;
-    }, [chatActions]);
             loadSmartReplies();
 
             return () => {
@@ -1015,98 +744,6 @@ export const GroupChatScreen: React.FC<{
             };
         }, [aiSmartReplyEnabled, groupId, latestMessageKey, shouldShowSmartReplies]);
 
-    useEffect(() => {
-        if (groupId && token) {
-            loadReminders();
-        }
-    }, [groupId, loadReminders, token]);
-
-    useEffect(() => {
-        if (!groupId || !token) {
-            return;
-        }
-
-        if (!SocketService.isConnected()) {
-            SocketService.connect(token);
-        }
-
-        const sameConversation = (conversationId?: string) => String(conversationId || "") === String(groupId);
-
-        const handleReminderEvent = (eventName: string, payload: ReminderEventPayload) => {
-            if (!sameConversation(payload?.conversationId)) {
-                return;
-            }
-
-            const incomingMessage = payload.systemMessage || payload.message;
-            if (incomingMessage) {
-                chatActions.addMessages?.([incomingMessage]);
-            }
-
-            if (payload.reminder) {
-                upsertReminder(payload.reminder);
-            } else if (eventName.includes("deleted") && payload.reminderId) {
-                setReminders((prev) =>
-                    prev.map((item) =>
-                        item.id === payload.reminderId ? { ...item, status: "cancelled" } : item
-                    )
-                );
-            } else {
-                loadReminders();
-            }
-        };
-
-        SocketService.onReminderEvents(handleReminderEvent);
-        SocketService.onReminderAgentResult((payload) => {
-            if (!sameConversation(payload?.conversationId)) {
-                return;
-            }
-
-            if (payload.message) {
-                chatActions.addMessages?.([payload.message]);
-            }
-
-            if (payload.reminder) {
-                upsertReminder(payload.reminder);
-            }
-
-            Alert.alert("AI Reminder", `AI đã tạo reminder: ${payload.reminder?.title || payload.title || "Nhắc hẹn"}`);
-        });
-        SocketService.onReminderAgentError((payload) => {
-            if (!sameConversation(payload?.conversationId)) {
-                return;
-            }
-
-            Alert.alert("AI Reminder", payload.reason || "AI chưa đủ thông tin để tạo reminder.");
-        });
-
-        return () => {
-            SocketService.offReminderEvents();
-            SocketService.offReminderAgentResult();
-            SocketService.offReminderAgentError();
-        };
-    }, [chatActions, groupId, loadReminders, token, upsertReminder]);
-
-    useEffect(() => {
-        if (allViewerImages.length > 0 && selectedImageIndex > 0 && imageViewerScrollRef.current) {
-            setTimeout(() => {
-                (imageViewerScrollRef.current as any)?.scrollToIndex({
-                    index: selectedImageIndex,
-                    animated: false,
-                });
-            }, 100);
-        }
-    }, [allViewerImages.length, selectedImageIndex]);
-
-    // Mark messages as seen when they come into view
-    useEffect(() => {
-        if (chatState.messages.length > 0) {
-            const messageIds = chatState.messages
-                .filter((msg) => msg.senderId !== user?.id)
-                .map((msg) => msg._id || msg.id)
-                .filter(Boolean);
-
-            if (messageIds.length > 0) {
-                chatActions.markAsSeen?.(messageIds);
         useEffect(() => {
             if (!groupId || !token) {
                 return;
@@ -1555,46 +1192,6 @@ export const GroupChatScreen: React.FC<{
                     type: ["audio/*"],
                 });
 
-    const handleInputChange = useCallback((text: string) => {
-        setMessageText(text);
-        const currentToken = text.split(/\s/).pop() || "";
-        setShowBotSuggestion(currentToken.startsWith("@") && "@bot".startsWith(currentToken.toLowerCase()));
-        if (text.trim()) {
-            chatActions.handleTyping();
-        }
-    }, [chatActions]);
-
-    const insertBotMention = useCallback(() => {
-        setMessageText((prev) => {
-            const parts = prev.split(/(\s+)/);
-            let replaced = false;
-            for (let index = parts.length - 1; index >= 0; index -= 1) {
-                if (parts[index].startsWith("@")) {
-                    parts[index] = "@bot";
-                    replaced = true;
-                    break;
-                }
-            }
-
-            return `${replaced ? parts.join("") : `${prev}${prev.endsWith(" ") || !prev ? "" : " "}@bot`} `;
-        });
-        setShowBotSuggestion(false);
-    }, []);
-
-    const openAiPanel = useCallback(async (mode: AiPanelMode) => {
-        if (!groupId) return;
-
-        setAiPanelMode(mode);
-        setShowAiPanel(true);
-        setAiLoading(true);
-
-        try {
-            if (mode === "summary") {
-                setAiSummary(await aiService.summarize(groupId, 100));
-            } else if (mode === "tasks") {
-                setAiTasks(await aiService.extractTasks(groupId, 100));
-            } else if (aiSearchQuery.trim()) {
-                setAiSearchResult(await aiService.smartSearch(aiSearchQuery.trim(), groupId));
                 if (result.canceled) {
                     return;
                 }
@@ -1856,6 +1453,7 @@ export const GroupChatScreen: React.FC<{
                 }
 
                 scrollToLatestMessage(true);
+                setPreviousDraft(null);
             } catch (err: any) {
                 Alert.alert("Lỗi", err.message || "Failed to send message");
             } finally {
@@ -1870,32 +1468,6 @@ export const GroupChatScreen: React.FC<{
             }
         }, [chatActions]);
 
-            const reminder = item.type === "reminder" || item.reminderId || item.reminder
-                ? getReminderFromMessage(item)
-                : null;
-            if (reminder) {
-                const isOwnReminder = item.senderId === user?.id;
-                return (
-                    <View style={[
-                        styles.messageBubbleRow,
-                        isOwnReminder ? styles.outgoingRow : styles.incomingRow,
-                    ]}>
-                        {!isOwnReminder && (
-                            <Avatar
-                                label="R"
-                                size={32}
-                                backgroundColor={colors.accentStrong}
-                            />
-                        )}
-                        <ReminderBubble reminder={reminder} isOwn={isOwnReminder} />
-                    </View>
-                );
-            }
-
-            // Resolve quoted message: use existing quotedMessage OR lookup by quotedMessageId
-            const resolvedQuotedMessage = item.quotedMessage ||
-                (item.quotedMessageId && messageMap[item.quotedMessageId]) ||
-                null;
         const openAiPanel = useCallback(async (mode: AiPanelMode) => {
             if (!groupId) return;
 
@@ -1972,78 +1544,6 @@ export const GroupChatScreen: React.FC<{
                 return;
             }
 
-                        {/* Text Message Bubble */}
-                        {hasText && (
-                            <View
-                                style={[
-                                    styles.messageBubble,
-                                    isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
-                                ]}
-                            >
-                                {!isOwn && (
-                                    <View style={styles.senderNameRow}>
-                                        <Text style={styles.senderName}>
-                                            {senderName}
-                                        </Text>
-                                        {roleIcon && (
-                                            <Text style={styles.roleIcon}>{roleIcon}</Text>
-                                        )}
-                                    </View>
-                                )}
-                                {/* Quoted message block if this is a reply */}
-                                {(() => {
-                                    const hasQuoted = resolvedQuotedMessage || item.quotedMessageId;
-                                    // if (hasQuoted) {
-                                    //     console.log('[GroupMessageBubble] Message has quoted content:', {
-                                    //         hasResolvedQuotedMessage: !!resolvedQuotedMessage,
-                                    //         hasQuotedMessageId: !!item.quotedMessageId,
-                                    //         quotedMessageData: resolvedQuotedMessage,
-                                    //     });
-                                    // }
-                                    return resolvedQuotedMessage ? (
-                                        <QuotedMessageBlock
-                                            quotedMessage={resolvedQuotedMessage}
-                                            isOwn={isOwn}
-                                            onPress={async () => {
-                                                const msgId = item.quotedMessageId;
-                                                if (msgId && chatActions.scrollToMessage) {
-                                                    const success = await chatActions.scrollToMessage(msgId);
-                                                    if (!success) {
-                                                        Alert.alert("Thông báo", "Không tìm thấy tin nhắn gốc hoặc tin nhắn đã quá cũ");
-                                                    }
-                                                }
-                                            }}
-                                        />
-                                    ) : null;
-                                })()}
-                                {(() => {
-                                    const trimmedText = item.text ? item.text.trim() : "";
-                                    const isJumboEmoji = !!JUMBO_EMOJI_ASSETS[trimmedText] && item.text.replace(/\s+/g, "") === trimmedText;
-                                    const isNewMsg = item.createdAt
-                                      ? new Date().getTime() - new Date(item.createdAt).getTime() < 5000
-                                      : false;
-
-                                    return isJumboEmoji ? (
-                                      <AnimatedEmojiMessage emoji={trimmedText} isNew={isNewMsg} isMine={isOwn} />
-                                    ) : (
-                                      renderBotMentionText(
-                                        item.text,
-                                        [
-                                          styles.messageText,
-                                          isOwn ? styles.messageTextOwn : styles.messageTextOther,
-                                        ],
-                                        styles.botMentionText
-                                      )
-                                    );
-                                  })()}
-                                <Text style={styles.messageTime}>
-                                    {new Date(item.createdAt).toLocaleTimeString(
-                                        "vi-VN",
-                                        { hour: "2-digit", minute: "2-digit" }
-                                    )}
-                                </Text>
-                            </View>
-                        )}
             try {
                 setMuteLoading(true);
                 await ConversationService.unmuteConversation(String(groupId));
@@ -2236,24 +1736,6 @@ export const GroupChatScreen: React.FC<{
                 return;
             }
 
-    return (
-        <KeyboardAvoidingView
-            style={styles.screen}
-            behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}
-            keyboardVerticalOffset={Platform.select({
-                ios: 60,
-                android: 76 + (StatusBar.currentHeight || 0),
-                default: 0,
-            })}
-        >
-            {/* Header */}
-            <View style={styles.chatHeaderWrap}>
-                <Pressable
-                    style={styles.backButton}
-                    onPress={onBackPress}
-                >
-                    <Ionicons name="chevron-back" size={24} color={colors.text} />
-                </Pressable>
             if (activeGroupCall?.callId) {
                 await joinActiveCall(activeGroupCall, "GROUP");
                 setActiveGroupCall(null);
@@ -2276,47 +1758,6 @@ export const GroupChatScreen: React.FC<{
                     message.media.some((media: any) => detectDraftMediaKind(media?.mimetype, media?.mediaType) === "image")
             );
 
-                <View style={styles.chatHeaderCard}>
-                    <Text
-                        style={styles.chatHeaderTitle}
-                        numberOfLines={1}
-                    >
-                        {groupState.group?.name || "Nhóm"}
-                    </Text>
-                    <Text style={styles.chatHeaderSubtitle}>
-                        {chatState.typingUsers.size > 0
-                            ? `${Array.from(chatState.typingUsers).length} đang gõ...`
-                            : `${groupState.members?.length || 0} thành viên`}
-                    </Text>
-                </View>
-                <View style={styles.headerIconGroup}>
-                    <Pressable
-                        style={styles.headerIconButton}
-                        onPress={showAiMenu}
-                        hitSlop={8}
-                    >
-                        <Ionicons name="sparkles" size={22} color={colors.accentStrong} />
-                    </Pressable>
-                    <Pressable
-                        style={styles.headerIconButton}
-                        onPress={openCreateReminderPanel}
-                        hitSlop={8}
-                    >
-                        <Ionicons name="calendar-outline" size={24} color={colors.text} />
-                    </Pressable>
-                    <Pressable
-                        style={styles.headerIconButton}
-                        onPress={handleMuteButtonPress}
-                        disabled={muteLoading}
-                        hitSlop={8}
-                    >
-                        {muteLoading ? (
-                            <ActivityIndicator size="small" color={colors.text} />
-                        ) : (
-                            <Ionicons
-                                name={isGroupMuted ? "notifications-off-outline" : "notifications-outline"}
-                                size={24}
-                                color={isGroupMuted ? colors.accentStrong : colors.text}
             const allImages = userMessagesWithImages
                 .flatMap((message) =>
                     (message.media || [])
@@ -2426,155 +1867,35 @@ export const GroupChatScreen: React.FC<{
                     );
                 }
 
-            <Modal visible={showReminderPanel} transparent animationType="slide" onRequestClose={() => setShowReminderPanel(false)}>
-                <Pressable style={styles.reminderPanelOverlay} onPress={() => setShowReminderPanel(false)}>
-                    <Pressable style={styles.reminderPanel} onPress={(event) => event.stopPropagation()}>
-                        <View style={styles.reminderPanelHeader}>
-                            <View style={styles.aiPanelTitleRow}>
-                                <Ionicons name="calendar-outline" size={20} color={colors.accentStrong} />
-                                <Text style={styles.aiPanelTitle}>Nhắc hẹn nhóm</Text>
-                            </View>
-                            <Pressable onPress={() => setShowReminderPanel(false)}>
-                                <Ionicons name="close" size={24} color={colors.text} />
-                            </Pressable>
-                        </View>
+                const reminder = itemType === "reminder" || item.reminderId || item.reminder
+                    ? getReminderFromMessage(item)
+                    : null;
+                if (reminder) {
+                    const messageId = item._id || item.id || reminder.messageId || reminder.id;
+                    const isHighlighted = !!messageId && messageId === highlightedMessageId;
+                    const isOwnReminder = String(item.senderId || reminder.createdBy || "") === String(currentUserId);
 
-                        <View style={styles.reminderForm}>
-                            <TextInput
-                                style={styles.reminderInput}
-                                placeholder="Tiêu đề"
-                                placeholderTextColor={colors.textMuted}
-                                value={reminderForm.title}
-                                onChangeText={(title) => setReminderForm((prev) => ({ ...prev, title }))}
-                            />
-                            <TextInput
-                                style={[styles.reminderInput, styles.reminderDescriptionInput]}
-                                placeholder="Mô tả"
-                                placeholderTextColor={colors.textMuted}
-                                value={reminderForm.description}
-                                onChangeText={(description) => setReminderForm((prev) => ({ ...prev, description }))}
-                                multiline
-                            />
-                            <TextInput
-                                style={styles.reminderInput}
-                                placeholder="YYYY-MM-DD HH:mm"
-                                placeholderTextColor={colors.textMuted}
-                                value={reminderForm.remindAtText}
-                                onChangeText={(remindAtText) => setReminderForm((prev) => ({ ...prev, remindAtText }))}
-                            />
-                            <View style={styles.reminderRepeatRow}>
-                                {(["none", "daily", "weekly", "monthly"] as GroupReminderRepeatRule[]).map((rule) => {
-                                    const selected = reminderForm.repeatRule === rule;
-                                    return (
-                                        <Pressable
-                                            key={rule}
-                                            style={[styles.reminderRepeatChip, selected && styles.reminderRepeatChipActive]}
-                                            onPress={() => setReminderForm((prev) => ({ ...prev, repeatRule: rule }))}
-                                        >
-                                            <Text style={[styles.reminderRepeatText, selected && styles.reminderRepeatTextActive]}>
-                                                {rule}
-                                            </Text>
-                                        </Pressable>
-                                    );
-                                })}
-                            </View>
-                            <TextInput
-                                style={styles.reminderInput}
-                                placeholder="Báo trước bao nhiêu phút"
-                                placeholderTextColor={colors.textMuted}
-                                keyboardType="numeric"
-                                value={reminderForm.notifyBeforeMinutes}
-                                onChangeText={(notifyBeforeMinutes) => setReminderForm((prev) => ({ ...prev, notifyBeforeMinutes }))}
-                            />
-                            <View style={styles.reminderFormActions}>
-                                {editingReminderId ? (
-                                    <Pressable style={styles.reminderSecondaryButton} onPress={resetReminderForm}>
-                                        <Text style={styles.reminderSecondaryButtonText}>Tạo mới</Text>
-                                    </Pressable>
-                                ) : null}
-                                <Pressable style={styles.reminderPrimaryButton} onPress={submitReminder} disabled={reminderSaving}>
-                                    {reminderSaving ? (
-                                        <ActivityIndicator size="small" color={colors.textOnAccent} />
-                                    ) : (
-                                        <Text style={styles.reminderPrimaryButtonText}>
-                                            {editingReminderId ? "Lưu" : "Tạo reminder"}
-                                        </Text>
-                                    )}
-                                </Pressable>
-                            </View>
-                        </View>
+                    return (
+                        <HighlightableMessage
+                            isHighlighted={isHighlighted}
+                            style={[
+                                styles.messageBubbleRow,
+                                isOwnReminder ? styles.outgoingRow : styles.incomingRow,
+                                isHighlighted && styles.messageHighlighted,
+                            ]}
+                        >
+                            {!isOwnReminder && (
+                                <Avatar
+                                    label="R"
+                                    size={32}
+                                    backgroundColor={colors.accentStrong}
+                                />
+                            )}
+                            <ReminderBubble reminder={reminder} isOwn={isOwnReminder} />
+                        </HighlightableMessage>
+                    );
+                }
 
-                        <View style={styles.reminderFilterRow}>
-                            {(["all", "active", "done", "cancelled"] as ReminderFilter[]).map((filter) => {
-                                const selected = reminderFilter === filter;
-                                return (
-                                    <Pressable
-                                        key={filter}
-                                        style={[styles.reminderFilterChip, selected && styles.reminderFilterChipActive]}
-                                        onPress={() => setReminderFilter(filter)}
-                                    >
-                                        <Text style={[styles.reminderFilterText, selected && styles.reminderFilterTextActive]}>{filter}</Text>
-                                    </Pressable>
-                                );
-                            })}
-                        </View>
-
-                        {reminderLoading ? (
-                            <View style={styles.reminderLoadingBox}>
-                                <ActivityIndicator color={colors.accentStrong} />
-                            </View>
-                        ) : (
-                            <ScrollView style={styles.reminderList} contentContainerStyle={styles.reminderListContent}>
-                                {filteredReminders.length === 0 ? (
-                                    <Text style={styles.reminderEmptyText}>Chưa có nhắc hẹn phù hợp.</Text>
-                                ) : (
-                                    filteredReminders.map((reminder) => (
-                                        <View key={reminder.id} style={styles.reminderListItem}>
-                                            <ReminderBubble reminder={reminder} isOwn={false} />
-                                            <View style={styles.reminderItemActions}>
-                                                <Pressable style={styles.reminderIconAction} onPress={() => openEditReminder(reminder)}>
-                                                    <Ionicons name="create-outline" size={18} color={colors.text} />
-                                                </Pressable>
-                                                <Pressable style={styles.reminderIconAction} onPress={() => togglePinReminder(reminder)}>
-                                                    <Ionicons name={reminder.pinned ? "pin" : "pin-outline"} size={18} color={colors.accentStrong} />
-                                                </Pressable>
-                                                <Pressable style={styles.reminderIconAction} onPress={() => cancelReminder(reminder)}>
-                                                    <Ionicons name="close-circle-outline" size={18} color={colors.dangerSoft} />
-                                                </Pressable>
-                                            </View>
-                                        </View>
-                                    ))
-                                )}
-                            </ScrollView>
-                        )}
-                    </Pressable>
-                </Pressable>
-            </Modal>
-
-            {/* Loading state */}
-            {chatState.isLoading && chatState.messages.length === 0 && (
-                <View style={styles.centerContainer}>
-                    <ActivityIndicator size="large" color={colors.text} />
-                    <Text style={styles.loadingText}>Đang tải tin nhắn...</Text>
-                </View>
-            )}
-
-            {/* Messages List */}
-            {!chatState.isLoading && (
-                <ImageBackground
-                    source={assets.chatBackground}
-                    style={styles.chatBackground}
-                    resizeMode="cover"
-                >
-                    {/* Pinned Message Header */}
-                    {chatState.pinnedMessages.length > 0 && (
-                        <PinnedMessageHeader
-                            pinnedMessage={chatState.pinnedMessages[chatState.pinnedMessageIndex] || null}
-                            pinnedIndex={chatState.pinnedMessageIndex}
-                            pinnedTotal={chatState.pinnedMessages.length}
-                            onNavigate={(direction) => {
-                                if (chatActions.navigatePinnedMessages) {
-                                    chatActions.navigatePinnedMessages(direction);
                 // Check if it's a system/activity message
                 if (
                     item.isSystemMessage ||
@@ -3472,50 +2793,6 @@ export const GroupChatScreen: React.FC<{
                         }
                     }}
                 />
-            )}
-            {previousDraft !== null && (
-                <View style={styles.aiUndoBar}>
-                    <Text style={styles.aiUndoText}>AI đã chỉnh sửa bản nháp</Text>
-                    <Pressable onPress={() => { setMessageText(previousDraft); setPreviousDraft(null); }}>
-                        <Text style={styles.aiUndoAction}>Hoàn tác</Text>
-                    </Pressable>
-                </View>
-            )}
-            {showBotSuggestion && (
-                <Pressable style={styles.botSuggestionBar} onPress={insertBotMention}>
-                    <Ionicons name="sparkles" size={16} color={colors.accentStrong} />
-                    <Text style={styles.botSuggestionText}>@bot</Text>
-                    <Text style={styles.botSuggestionHint}>AI tạo reminder từ tin nhắn</Text>
-                </Pressable>
-            )}
-            {messageText.toLowerCase().includes("@bot") && (
-                <View style={styles.botActiveChip}>
-                    <Ionicons name="sparkles" size={14} color={colors.accentStrong} />
-                    <Text style={styles.botActiveText}>Đang gọi @bot agent</Text>
-                </View>
-            )}
-            <View style={styles.messageComposer}>
-                <Pressable
-                    style={styles.composerIconButton}
-                    onPress={() => setShowMediaMenu(!showMediaMenu)}
-                    disabled={uploading}
-                >
-                    <Ionicons
-                        name="attach-outline"
-                        size={24}
-                        color={uploading ? colors.textMuted : colors.text}
-                    />
-                </Pressable>
-                <View style={styles.composerInputWrap}>
-                    <TextInput
-                        placeholder="Tin nhắn"
-                        placeholderTextColor={colors.textMuted}
-                        style={styles.composerInput}
-                        value={messageText}
-                        onChangeText={handleInputChange}
-                        multiline
-                        maxLength={1000}
-                        editable={!isSending && !uploading}
 
                 {/* Media Menu */}
                 {showMediaMenu && !showVoiceRecorder && (
@@ -3581,7 +2858,14 @@ export const GroupChatScreen: React.FC<{
                             contentContainerStyle={styles.aiSmartReplyContent}
                         >
                             {smartReplies.map((reply) => (
-                                <Pressable key={reply} style={styles.aiSmartReplyChip} onPress={() => setMessageText(reply)}>
+                                <Pressable
+                                    key={reply}
+                                    style={styles.aiSmartReplyChip}
+                                    onPress={() => {
+                                        setMessageText(reply);
+                                        setPreviousDraft(null);
+                                    }}
+                                >
                                     <Text style={styles.aiSmartReplyText}>{reply}</Text>
                                 </Pressable>
                             ))}
@@ -4408,6 +3692,7 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: "700",
     },
+
     reminderBubble: {
         maxWidth: 360,
         minWidth: 280,
@@ -4637,50 +3922,6 @@ const styles = StyleSheet.create({
         color: colors.accentStrong,
         fontSize: 12,
         fontWeight: "700",
-    },
-    botSuggestionBar: {
-        marginHorizontal: 12,
-        marginTop: 8,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: colors.accentStrong,
-        backgroundColor: "rgba(63,140,255,0.16)",
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    },
-    botSuggestionText: {
-        color: colors.accentStrong,
-        fontSize: 14,
-        fontWeight: "900",
-    },
-    botSuggestionHint: {
-        color: colors.text,
-        fontSize: 13,
-        fontWeight: "700",
-    },
-    botActiveChip: {
-        marginHorizontal: 12,
-        marginTop: 8,
-        alignSelf: "flex-start",
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 6,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 14,
-        backgroundColor: "rgba(63,140,255,0.16)",
-    },
-    botActiveText: {
-        color: colors.text,
-        fontSize: 12,
-        fontWeight: "800",
-    },
-    botMentionText: {
-        color: colors.accentStrong,
-        fontWeight: "900",
     },
     composerActionButton: {
         width: 44,
@@ -4962,172 +4203,6 @@ const styles = StyleSheet.create({
         color: colors.textOnAccent,
         fontSize: 15,
         fontWeight: "800",
-    },
-    reminderPanelOverlay: {
-        flex: 1,
-        justifyContent: "flex-end",
-        backgroundColor: "rgba(0, 0, 0, 0.5)",
-    },
-    reminderPanel: {
-        maxHeight: "88%",
-        borderTopLeftRadius: 18,
-        borderTopRightRadius: 18,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.background,
-        padding: 16,
-    },
-    reminderPanelHeader: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginBottom: 12,
-    },
-    reminderForm: {
-        gap: 8,
-        paddingBottom: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.border,
-    },
-    reminderInput: {
-        minHeight: 42,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: colors.border,
-        paddingHorizontal: 12,
-        paddingVertical: 9,
-        color: colors.text,
-        backgroundColor: colors.surface,
-    },
-    reminderDescriptionInput: {
-        minHeight: 64,
-        textAlignVertical: "top",
-    },
-    reminderRepeatRow: {
-        flexDirection: "row",
-        flexWrap: "wrap",
-        gap: 8,
-    },
-    reminderRepeatChip: {
-        paddingHorizontal: 10,
-        paddingVertical: 7,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.surface,
-    },
-    reminderRepeatChipActive: {
-        borderColor: colors.accentStrong,
-        backgroundColor: "rgba(63,140,255,0.18)",
-    },
-    reminderRepeatText: {
-        color: colors.textMuted,
-        fontSize: 12,
-        fontWeight: "800",
-    },
-    reminderRepeatTextActive: {
-        color: colors.text,
-    },
-    reminderFormActions: {
-        flexDirection: "row",
-        justifyContent: "flex-end",
-        gap: 10,
-    },
-    reminderPrimaryButton: {
-        minHeight: 40,
-        minWidth: 110,
-        borderRadius: 10,
-        alignItems: "center",
-        justifyContent: "center",
-        paddingHorizontal: 14,
-        backgroundColor: colors.accentStrong,
-    },
-    reminderPrimaryButtonText: {
-        color: colors.textOnAccent,
-        fontSize: 14,
-        fontWeight: "900",
-    },
-    reminderSecondaryButton: {
-        minHeight: 40,
-        borderRadius: 10,
-        alignItems: "center",
-        justifyContent: "center",
-        paddingHorizontal: 14,
-        backgroundColor: colors.surface,
-        borderWidth: 1,
-        borderColor: colors.border,
-    },
-    reminderSecondaryButtonText: {
-        color: colors.text,
-        fontSize: 14,
-        fontWeight: "800",
-    },
-    reminderFilterRow: {
-        flexDirection: "row",
-        flexWrap: "wrap",
-        gap: 8,
-        paddingVertical: 12,
-    },
-    reminderFilterChip: {
-        paddingHorizontal: 10,
-        paddingVertical: 7,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.surface,
-    },
-    reminderFilterChipActive: {
-        borderColor: colors.accentStrong,
-        backgroundColor: "rgba(63,140,255,0.18)",
-    },
-    reminderFilterText: {
-        color: colors.textMuted,
-        fontSize: 12,
-        fontWeight: "800",
-    },
-    reminderFilterTextActive: {
-        color: colors.text,
-    },
-    reminderLoadingBox: {
-        minHeight: 120,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    reminderList: {
-        maxHeight: 320,
-    },
-    reminderListContent: {
-        gap: 10,
-        paddingBottom: 12,
-    },
-    reminderEmptyText: {
-        color: colors.textMuted,
-        fontSize: 13,
-        textAlign: "center",
-        paddingVertical: 24,
-    },
-    reminderListItem: {
-        gap: 8,
-        padding: 10,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.surfaceSoft,
-    },
-    reminderItemActions: {
-        flexDirection: "row",
-        justifyContent: "flex-end",
-        gap: 8,
-    },
-    reminderIconAction: {
-        width: 34,
-        height: 34,
-        borderRadius: 17,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: colors.surface,
-        borderWidth: 1,
-        borderColor: colors.border,
     },
     aiPanel: {
         maxHeight: "78%",
