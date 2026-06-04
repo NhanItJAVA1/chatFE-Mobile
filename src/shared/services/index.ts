@@ -27,8 +27,21 @@ export { SocketService } from "./socketService";
 export { FriendSocketService } from "./friendSocket";
 export { ConversationService } from "./conversationService";
 export { GroupChatService } from "./groupChatService";
+export { ReminderService } from "./reminderService";
 export type { Conversation, MessageResponse, MessagePage } from "./conversationService";
-export type { MessagePayload, TypingData, SeenData } from "./socketService";
+export type {
+    MessagePayload,
+    TypingData,
+    SeenData,
+    GroupEventData,
+    GroupMemberEvent,
+    GroupAdminEvent,
+    GroupOwnerTransferEvent,
+    GroupReminder,
+    GroupReminderRepeatRule,
+    GroupReminderStatus,
+    ReminderEventPayload,
+} from "./socketService";
 export {
     getProfile,
     updateProfile,

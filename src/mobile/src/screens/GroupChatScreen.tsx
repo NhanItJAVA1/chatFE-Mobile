@@ -26,7 +26,8 @@ import { useGroupChat } from "../../../shared/hooks/useGroupChat";
 import { useAuth } from "../../../shared/hooks";
 import { GroupChatService } from "../../../shared/services/groupChatService";
 import { ConversationService, type MuteConversationOptions } from "../../../shared/services/conversationService";
-import { SocketService } from "../../../shared/services";
+import { ReminderService, SocketService } from "../../../shared/services";
+import type { GroupReminder, GroupReminderRepeatRule, GroupReminderStatus, ReminderEventPayload } from "../../../shared/services/socketService";
 import chatMediaService from "../../../shared/services/chatMediaService";
 import {
     aiService,
@@ -76,6 +77,15 @@ const detectDraftMediaKind = (mimeType?: string, type?: string): "image" | "vide
 const GALLERY_GROUP_WINDOW_MS = 5000;
 type AiPanelMode = "summary" | "search" | "tasks";
 type MuteOptionKey = "1h" | "4h" | "8am" | "forever";
+type ReminderFilter = "all" | GroupReminderStatus;
+
+const DEFAULT_REMINDER_FORM = {
+    title: "",
+    description: "",
+    remindAtText: "",
+    repeatRule: "none" as GroupReminderRepeatRule,
+    notifyBeforeMinutes: "0",
+};
 
 const MUTE_OPTIONS: Array<{ key: MuteOptionKey; label: string }> = [
     { key: "1h", label: "Trong 1 giờ" },
@@ -124,6 +134,149 @@ const isMuteUntilActive = (muteUntil?: string | null): boolean => {
 
     const mutedUntilMs = new Date(muteUntil).getTime();
     return !Number.isNaN(mutedUntilMs) && mutedUntilMs > Date.now();
+};
+
+const formatReminderDate = (iso?: string): string => {
+    if (!iso) {
+        return "Chưa có thời gian";
+    }
+
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) {
+        return "Thời gian không hợp lệ";
+    }
+
+    return date.toLocaleString("vi-VN", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+};
+
+const parseReminderDateInput = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    const direct = new Date(trimmed);
+    if (!Number.isNaN(direct.getTime())) {
+        return direct.toISOString();
+    }
+
+    const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
+    if (!match) {
+        return null;
+    }
+
+    const [, year, month, day, hour, minute] = match;
+    const localDate = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), 0, 0);
+    return Number.isNaN(localDate.getTime()) ? null : localDate.toISOString();
+};
+
+const reminderToInputDate = (iso?: string): string => {
+    if (!iso) {
+        return "";
+    }
+
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) {
+        return "";
+    }
+
+    const pad = (num: number) => String(num).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const getReminderStatusLabel = (status?: GroupReminderStatus): string => {
+    if (status === "done") return "done";
+    if (status === "cancelled") return "cancelled";
+    return "active";
+};
+
+const getReminderFromMessage = (message: any): GroupReminder | null => {
+    if (message?.reminder) {
+        return message.reminder;
+    }
+
+    const remindAt = message?.remindAt || message?.metadata?.remindAt;
+    return {
+        id: message?.reminderId || message?.metadata?.reminderId || message?.id || message?._id || "",
+        conversationId: message?.conversationId || "",
+        messageId: message?.id || message?._id,
+        title: message?.title || message?.metadata?.title || message?.text || "Nhắc hẹn",
+        description: message?.description || message?.metadata?.description || "",
+        remindAt: remindAt || "",
+        repeatRule: message?.repeatRule || message?.metadata?.repeatRule || "none",
+        notifyBeforeMinutes: message?.notifyBeforeMinutes || message?.metadata?.notifyBeforeMinutes || 0,
+        status: message?.status || message?.metadata?.status || "active",
+        pinned: !!(message?.pinned || message?.metadata?.pinned),
+        createdBy: message?.senderId || "",
+        createdAt: message?.createdAt || new Date().toISOString(),
+        updatedAt: message?.updatedAt || message?.createdAt || new Date().toISOString(),
+    };
+};
+
+const sortReminders = (items: GroupReminder[]): GroupReminder[] => {
+    return [...items].sort((left, right) => {
+        if (!!left.pinned !== !!right.pinned) {
+            return left.pinned ? -1 : 1;
+        }
+
+        return new Date(left.remindAt || 0).getTime() - new Date(right.remindAt || 0).getTime();
+    });
+};
+
+const renderBotMentionText = (text: string, baseStyle: any, botStyle: any) => {
+    const parts = text.split(/(@bot)/gi);
+    return (
+        <Text style={baseStyle}>
+            {parts.map((part, index) => (
+                part.toLowerCase() === "@bot"
+                    ? <Text key={`${part}-${index}`} style={botStyle}>{part}</Text>
+                    : <Text key={`${part}-${index}`}>{part}</Text>
+            ))}
+        </Text>
+    );
+};
+
+const ReminderBubble = ({ reminder, isOwn }: { reminder: GroupReminder; isOwn: boolean }) => {
+    const status = getReminderStatusLabel(reminder.status);
+    const statusColor =
+        status === "done" ? colors.success :
+        status === "cancelled" ? "#f5b84b" :
+        colors.accentStrong;
+    const date = reminder.remindAt ? new Date(reminder.remindAt) : null;
+    const day = date && !Number.isNaN(date.getTime()) ? String(date.getDate()).padStart(2, "0") : "--";
+    const month = date && !Number.isNaN(date.getTime()) ? `THÁNG ${date.getMonth() + 1}` : "THÁNG";
+
+    return (
+        <View style={[styles.reminderBubble, isOwn ? styles.reminderBubbleOwn : styles.reminderBubbleOther]}>
+            <View style={[styles.reminderAccent, { backgroundColor: statusColor }]} />
+            <View style={styles.reminderDateBox}>
+                <Text style={styles.reminderDateMonth}>{month}</Text>
+                <Text style={styles.reminderDateDay}>{day}</Text>
+            </View>
+            <View style={styles.reminderContent}>
+                <View style={styles.reminderTitleRow}>
+                    <Ionicons name="notifications-outline" size={13} color={colors.textMuted} />
+                    <Text style={styles.reminderKind}>Group reminder</Text>
+                    <Text style={[styles.reminderStatus, { color: statusColor }]}>{status}</Text>
+                    {reminder.pinned ? <Ionicons name="pin" size={13} color={colors.accentStrong} /> : null}
+                </View>
+                <Text style={styles.reminderCardTitle} numberOfLines={2}>{reminder.title}</Text>
+                {reminder.description ? (
+                    <Text style={styles.reminderCardDescription} numberOfLines={2}>{reminder.description}</Text>
+                ) : null}
+                <View style={styles.reminderMetaRow}>
+                    <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.reminderMetaText}>{formatReminderDate(reminder.remindAt)}</Text>
+                </View>
+            </View>
+        </View>
+    );
 };
 
 const getMessageCreatedAtMs = (message: any): number => {
@@ -267,6 +420,14 @@ export const GroupChatScreen: React.FC<{
     const [selectedMuteOption, setSelectedMuteOption] = useState<MuteOptionKey>("1h");
     const [muteLoading, setMuteLoading] = useState(false);
     const [localMuteUntil, setLocalMuteUntil] = useState<string | null>(null);
+    const [showReminderPanel, setShowReminderPanel] = useState(false);
+    const [reminders, setReminders] = useState<GroupReminder[]>([]);
+    const [reminderFilter, setReminderFilter] = useState<ReminderFilter>("active");
+    const [reminderLoading, setReminderLoading] = useState(false);
+    const [reminderSaving, setReminderSaving] = useState(false);
+    const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
+    const [reminderForm, setReminderForm] = useState(DEFAULT_REMINDER_FORM);
+    const [showBotSuggestion, setShowBotSuggestion] = useState(false);
 
     // Refs
     // flatListRef comes from useGroupChatMessage → useScrollToMessage (enables scrollToMessage)
@@ -283,11 +444,141 @@ export const GroupChatScreen: React.FC<{
     }, [currentUserId, groupState.members]);
     const groupMuteUntil = localMuteUntil || currentMemberMuteUntil;
     const isGroupMuted = isMuteUntilActive(groupMuteUntil);
+    const filteredReminders = useMemo(() => {
+        const filtered = reminderFilter === "all"
+            ? reminders
+            : reminders.filter((reminder) => (reminder.status || "active") === reminderFilter);
+
+        return sortReminders(filtered);
+    }, [reminderFilter, reminders]);
 
     const scrollToLatestMessage = useCallback((animated = true) => {
         // For inverted FlatList, latest message is at offset 0.
         flatListRef.current?.scrollToOffset({ offset: 0, animated });
     }, []);
+
+    const upsertReminder = useCallback((reminder?: GroupReminder | null) => {
+        if (!reminder?.id) {
+            return;
+        }
+
+        setReminders((prev) => {
+            const next = prev.some((item) => item.id === reminder.id)
+                ? prev.map((item) => item.id === reminder.id ? { ...item, ...reminder } : item)
+                : [reminder, ...prev];
+            return sortReminders(next);
+        });
+
+        chatActions.updateReminderBubble?.(reminder);
+    }, [chatActions]);
+
+    const loadReminders = useCallback(async () => {
+        if (!groupId) {
+            return;
+        }
+
+        try {
+            setReminderLoading(true);
+            const data = await ReminderService.listGroupReminders(String(groupId));
+            setReminders(sortReminders(data));
+        } catch (error: any) {
+            Alert.alert("Nhắc hẹn", error?.message || "Không thể tải danh sách nhắc hẹn.");
+        } finally {
+            setReminderLoading(false);
+        }
+    }, [groupId]);
+
+    const resetReminderForm = useCallback(() => {
+        setEditingReminderId(null);
+        setReminderForm(DEFAULT_REMINDER_FORM);
+    }, []);
+
+    const openCreateReminderPanel = useCallback(() => {
+        resetReminderForm();
+        setShowReminderPanel(true);
+        loadReminders();
+    }, [loadReminders, resetReminderForm]);
+
+    const openEditReminder = useCallback((reminder: GroupReminder) => {
+        setEditingReminderId(reminder.id);
+        setReminderForm({
+            title: reminder.title || "",
+            description: reminder.description || "",
+            remindAtText: reminderToInputDate(reminder.remindAt),
+            repeatRule: reminder.repeatRule || "none",
+            notifyBeforeMinutes: String(reminder.notifyBeforeMinutes || 0),
+        });
+    }, []);
+
+    const submitReminder = useCallback(async () => {
+        const title = reminderForm.title.trim();
+        if (!title) {
+            Alert.alert("Nhắc hẹn", "Nhập tiêu đề nhắc hẹn.");
+            return;
+        }
+
+        const remindAt = parseReminderDateInput(reminderForm.remindAtText);
+        if (!remindAt) {
+            Alert.alert("Nhắc hẹn", "Thời gian cần đúng dạng YYYY-MM-DD HH:mm.");
+            return;
+        }
+
+        const notifyBeforeMinutes = Number(reminderForm.notifyBeforeMinutes || 0);
+        if (Number.isNaN(notifyBeforeMinutes) || notifyBeforeMinutes < 0) {
+            Alert.alert("Nhắc hẹn", "Số phút báo trước không hợp lệ.");
+            return;
+        }
+
+        try {
+            setReminderSaving(true);
+            const payload = {
+                conversationId: String(groupId),
+                title,
+                description: reminderForm.description.trim() || undefined,
+                remindAt,
+                repeatRule: reminderForm.repeatRule,
+                notifyBeforeMinutes,
+            };
+
+            const reminder = editingReminderId
+                ? await SocketService.updateReminder({ ...payload, reminderId: editingReminderId })
+                : await SocketService.createReminder(payload);
+
+            upsertReminder(reminder);
+            resetReminderForm();
+            Alert.alert("Nhắc hẹn", editingReminderId ? "Đã cập nhật nhắc hẹn." : "Đã tạo nhắc hẹn.");
+        } catch (error: any) {
+            Alert.alert("Nhắc hẹn", error?.message || "Không thể lưu nhắc hẹn.");
+        } finally {
+            setReminderSaving(false);
+        }
+    }, [editingReminderId, groupId, reminderForm, resetReminderForm, upsertReminder]);
+
+    const cancelReminder = useCallback(async (reminder: GroupReminder) => {
+        try {
+            setReminderSaving(true);
+            const updated = await SocketService.deleteReminder(String(groupId), reminder.id);
+            upsertReminder(updated || { ...reminder, status: "cancelled" });
+        } catch (error: any) {
+            Alert.alert("Nhắc hẹn", error?.message || "Không thể hủy nhắc hẹn.");
+        } finally {
+            setReminderSaving(false);
+        }
+    }, [groupId, upsertReminder]);
+
+    const togglePinReminder = useCallback(async (reminder: GroupReminder) => {
+        try {
+            setReminderSaving(true);
+            const updated = reminder.pinned
+                ? await SocketService.unpinReminder(reminder.id)
+                : await SocketService.pinReminder(reminder.id);
+            upsertReminder(updated);
+        } catch (error: any) {
+            Alert.alert("Nhắc hẹn", error?.message || "Không thể cập nhật ghim.");
+        } finally {
+            setReminderSaving(false);
+        }
+    }, [upsertReminder]);
 
     // Update actionsRef when chatActions changes
     useEffect(() => {
@@ -298,6 +589,77 @@ export const GroupChatScreen: React.FC<{
     useEffect(() => {
         loadGroupData();
     }, [groupId]);
+
+    useEffect(() => {
+        if (groupId && token) {
+            loadReminders();
+        }
+    }, [groupId, loadReminders, token]);
+
+    useEffect(() => {
+        if (!groupId || !token) {
+            return;
+        }
+
+        if (!SocketService.isConnected()) {
+            SocketService.connect(token);
+        }
+
+        const sameConversation = (conversationId?: string) => String(conversationId || "") === String(groupId);
+
+        const handleReminderEvent = (eventName: string, payload: ReminderEventPayload) => {
+            if (!sameConversation(payload?.conversationId)) {
+                return;
+            }
+
+            const incomingMessage = payload.systemMessage || payload.message;
+            if (incomingMessage) {
+                chatActions.addMessages?.([incomingMessage]);
+            }
+
+            if (payload.reminder) {
+                upsertReminder(payload.reminder);
+            } else if (eventName.includes("deleted") && payload.reminderId) {
+                setReminders((prev) =>
+                    prev.map((item) =>
+                        item.id === payload.reminderId ? { ...item, status: "cancelled" } : item
+                    )
+                );
+            } else {
+                loadReminders();
+            }
+        };
+
+        SocketService.onReminderEvents(handleReminderEvent);
+        SocketService.onReminderAgentResult((payload) => {
+            if (!sameConversation(payload?.conversationId)) {
+                return;
+            }
+
+            if (payload.message) {
+                chatActions.addMessages?.([payload.message]);
+            }
+
+            if (payload.reminder) {
+                upsertReminder(payload.reminder);
+            }
+
+            Alert.alert("AI Reminder", `AI đã tạo reminder: ${payload.reminder?.title || payload.title || "Nhắc hẹn"}`);
+        });
+        SocketService.onReminderAgentError((payload) => {
+            if (!sameConversation(payload?.conversationId)) {
+                return;
+            }
+
+            Alert.alert("AI Reminder", payload.reason || "AI chưa đủ thông tin để tạo reminder.");
+        });
+
+        return () => {
+            SocketService.offReminderEvents();
+            SocketService.offReminderAgentResult();
+            SocketService.offReminderAgentError();
+        };
+    }, [chatActions, groupId, loadReminders, token, upsertReminder]);
 
     useEffect(() => {
         if (allViewerImages.length > 0 && selectedImageIndex > 0 && imageViewerScrollRef.current) {
@@ -881,10 +1243,29 @@ export const GroupChatScreen: React.FC<{
 
     const handleInputChange = useCallback((text: string) => {
         setMessageText(text);
+        const currentToken = text.split(/\s/).pop() || "";
+        setShowBotSuggestion(currentToken.startsWith("@") && "@bot".startsWith(currentToken.toLowerCase()));
         if (text.trim()) {
             chatActions.handleTyping();
         }
     }, [chatActions]);
+
+    const insertBotMention = useCallback(() => {
+        setMessageText((prev) => {
+            const parts = prev.split(/(\s+)/);
+            let replaced = false;
+            for (let index = parts.length - 1; index >= 0; index -= 1) {
+                if (parts[index].startsWith("@")) {
+                    parts[index] = "@bot";
+                    replaced = true;
+                    break;
+                }
+            }
+
+            return `${replaced ? parts.join("") : `${prev}${prev.endsWith(" ") || !prev ? "" : " "}@bot`} `;
+        });
+        setShowBotSuggestion(false);
+    }, []);
 
     const openAiPanel = useCallback(async (mode: AiPanelMode) => {
         if (!groupId) return;
@@ -1167,6 +1548,28 @@ export const GroupChatScreen: React.FC<{
                 return <SystemMessageBubble text={item.text} />;
             }
 
+            const reminder = item.type === "reminder" || item.reminderId || item.reminder
+                ? getReminderFromMessage(item)
+                : null;
+            if (reminder) {
+                const isOwnReminder = item.senderId === user?.id;
+                return (
+                    <View style={[
+                        styles.messageBubbleRow,
+                        isOwnReminder ? styles.outgoingRow : styles.incomingRow,
+                    ]}>
+                        {!isOwnReminder && (
+                            <Avatar
+                                label="R"
+                                size={32}
+                                backgroundColor={colors.accentStrong}
+                            />
+                        )}
+                        <ReminderBubble reminder={reminder} isOwn={isOwnReminder} />
+                    </View>
+                );
+            }
+
             // Resolve quoted message: use existing quotedMessage OR lookup by quotedMessageId
             const resolvedQuotedMessage = item.quotedMessage ||
                 (item.quotedMessageId && messageMap[item.quotedMessageId]) ||
@@ -1347,12 +1750,14 @@ export const GroupChatScreen: React.FC<{
                                     return isJumboEmoji ? (
                                       <AnimatedEmojiMessage emoji={trimmedText} isNew={isNewMsg} isMine={isOwn} />
                                     ) : (
-                                      <Text style={[
-                                        styles.messageText,
-                                        isOwn ? styles.messageTextOwn : styles.messageTextOther,
-                                      ]}>
-                                        {item.text}
-                                      </Text>
+                                      renderBotMentionText(
+                                        item.text,
+                                        [
+                                          styles.messageText,
+                                          isOwn ? styles.messageTextOwn : styles.messageTextOther,
+                                        ],
+                                        styles.botMentionText
+                                      )
                                     );
                                   })()}
                                 <Text style={styles.messageTime}>
@@ -1426,7 +1831,7 @@ export const GroupChatScreen: React.FC<{
     return (
         <KeyboardAvoidingView
             style={styles.screen}
-            behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
+            behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}
             keyboardVerticalOffset={Platform.select({
                 ios: 60,
                 android: 76 + (StatusBar.currentHeight || 0),
@@ -1470,6 +1875,13 @@ export const GroupChatScreen: React.FC<{
                         hitSlop={8}
                     >
                         <Ionicons name="sparkles" size={22} color={colors.accentStrong} />
+                    </Pressable>
+                    <Pressable
+                        style={styles.headerIconButton}
+                        onPress={openCreateReminderPanel}
+                        hitSlop={8}
+                    >
+                        <Ionicons name="calendar-outline" size={24} color={colors.text} />
                     </Pressable>
                     <Pressable
                         style={styles.headerIconButton}
@@ -1553,6 +1965,131 @@ export const GroupChatScreen: React.FC<{
                                 )}
                             </Pressable>
                         </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            <Modal visible={showReminderPanel} transparent animationType="slide" onRequestClose={() => setShowReminderPanel(false)}>
+                <Pressable style={styles.reminderPanelOverlay} onPress={() => setShowReminderPanel(false)}>
+                    <Pressable style={styles.reminderPanel} onPress={(event) => event.stopPropagation()}>
+                        <View style={styles.reminderPanelHeader}>
+                            <View style={styles.aiPanelTitleRow}>
+                                <Ionicons name="calendar-outline" size={20} color={colors.accentStrong} />
+                                <Text style={styles.aiPanelTitle}>Nhắc hẹn nhóm</Text>
+                            </View>
+                            <Pressable onPress={() => setShowReminderPanel(false)}>
+                                <Ionicons name="close" size={24} color={colors.text} />
+                            </Pressable>
+                        </View>
+
+                        <View style={styles.reminderForm}>
+                            <TextInput
+                                style={styles.reminderInput}
+                                placeholder="Tiêu đề"
+                                placeholderTextColor={colors.textMuted}
+                                value={reminderForm.title}
+                                onChangeText={(title) => setReminderForm((prev) => ({ ...prev, title }))}
+                            />
+                            <TextInput
+                                style={[styles.reminderInput, styles.reminderDescriptionInput]}
+                                placeholder="Mô tả"
+                                placeholderTextColor={colors.textMuted}
+                                value={reminderForm.description}
+                                onChangeText={(description) => setReminderForm((prev) => ({ ...prev, description }))}
+                                multiline
+                            />
+                            <TextInput
+                                style={styles.reminderInput}
+                                placeholder="YYYY-MM-DD HH:mm"
+                                placeholderTextColor={colors.textMuted}
+                                value={reminderForm.remindAtText}
+                                onChangeText={(remindAtText) => setReminderForm((prev) => ({ ...prev, remindAtText }))}
+                            />
+                            <View style={styles.reminderRepeatRow}>
+                                {(["none", "daily", "weekly", "monthly"] as GroupReminderRepeatRule[]).map((rule) => {
+                                    const selected = reminderForm.repeatRule === rule;
+                                    return (
+                                        <Pressable
+                                            key={rule}
+                                            style={[styles.reminderRepeatChip, selected && styles.reminderRepeatChipActive]}
+                                            onPress={() => setReminderForm((prev) => ({ ...prev, repeatRule: rule }))}
+                                        >
+                                            <Text style={[styles.reminderRepeatText, selected && styles.reminderRepeatTextActive]}>
+                                                {rule}
+                                            </Text>
+                                        </Pressable>
+                                    );
+                                })}
+                            </View>
+                            <TextInput
+                                style={styles.reminderInput}
+                                placeholder="Báo trước bao nhiêu phút"
+                                placeholderTextColor={colors.textMuted}
+                                keyboardType="numeric"
+                                value={reminderForm.notifyBeforeMinutes}
+                                onChangeText={(notifyBeforeMinutes) => setReminderForm((prev) => ({ ...prev, notifyBeforeMinutes }))}
+                            />
+                            <View style={styles.reminderFormActions}>
+                                {editingReminderId ? (
+                                    <Pressable style={styles.reminderSecondaryButton} onPress={resetReminderForm}>
+                                        <Text style={styles.reminderSecondaryButtonText}>Tạo mới</Text>
+                                    </Pressable>
+                                ) : null}
+                                <Pressable style={styles.reminderPrimaryButton} onPress={submitReminder} disabled={reminderSaving}>
+                                    {reminderSaving ? (
+                                        <ActivityIndicator size="small" color={colors.textOnAccent} />
+                                    ) : (
+                                        <Text style={styles.reminderPrimaryButtonText}>
+                                            {editingReminderId ? "Lưu" : "Tạo reminder"}
+                                        </Text>
+                                    )}
+                                </Pressable>
+                            </View>
+                        </View>
+
+                        <View style={styles.reminderFilterRow}>
+                            {(["all", "active", "done", "cancelled"] as ReminderFilter[]).map((filter) => {
+                                const selected = reminderFilter === filter;
+                                return (
+                                    <Pressable
+                                        key={filter}
+                                        style={[styles.reminderFilterChip, selected && styles.reminderFilterChipActive]}
+                                        onPress={() => setReminderFilter(filter)}
+                                    >
+                                        <Text style={[styles.reminderFilterText, selected && styles.reminderFilterTextActive]}>{filter}</Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+
+                        {reminderLoading ? (
+                            <View style={styles.reminderLoadingBox}>
+                                <ActivityIndicator color={colors.accentStrong} />
+                            </View>
+                        ) : (
+                            <ScrollView style={styles.reminderList} contentContainerStyle={styles.reminderListContent}>
+                                {filteredReminders.length === 0 ? (
+                                    <Text style={styles.reminderEmptyText}>Chưa có nhắc hẹn phù hợp.</Text>
+                                ) : (
+                                    filteredReminders.map((reminder) => (
+                                        <View key={reminder.id} style={styles.reminderListItem}>
+                                            <ReminderBubble reminder={reminder} isOwn={false} />
+                                            <View style={styles.reminderItemActions}>
+                                                <Pressable style={styles.reminderIconAction} onPress={() => openEditReminder(reminder)}>
+                                                    <Ionicons name="create-outline" size={18} color={colors.text} />
+                                                </Pressable>
+                                                <Pressable style={styles.reminderIconAction} onPress={() => togglePinReminder(reminder)}>
+                                                    <Ionicons name={reminder.pinned ? "pin" : "pin-outline"} size={18} color={colors.accentStrong} />
+                                                </Pressable>
+                                                <Pressable style={styles.reminderIconAction} onPress={() => cancelReminder(reminder)}>
+                                                    <Ionicons name="close-circle-outline" size={18} color={colors.dangerSoft} />
+                                                </Pressable>
+                                            </View>
+                                        </View>
+                                    ))
+                                )}
+                            </ScrollView>
+                        )}
                     </Pressable>
                 </Pressable>
             </Modal>
@@ -1779,6 +2316,19 @@ export const GroupChatScreen: React.FC<{
                     <Pressable onPress={() => { setMessageText(previousDraft); setPreviousDraft(null); }}>
                         <Text style={styles.aiUndoAction}>Hoàn tác</Text>
                     </Pressable>
+                </View>
+            )}
+            {showBotSuggestion && (
+                <Pressable style={styles.botSuggestionBar} onPress={insertBotMention}>
+                    <Ionicons name="sparkles" size={16} color={colors.accentStrong} />
+                    <Text style={styles.botSuggestionText}>@bot</Text>
+                    <Text style={styles.botSuggestionHint}>AI tạo reminder từ tin nhắn</Text>
+                </Pressable>
+            )}
+            {messageText.toLowerCase().includes("@bot") && (
+                <View style={styles.botActiveChip}>
+                    <Ionicons name="sparkles" size={14} color={colors.accentStrong} />
+                    <Text style={styles.botActiveText}>Đang gọi @bot agent</Text>
                 </View>
             )}
             <View style={styles.messageComposer}>
@@ -2313,6 +2863,96 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: "700",
     },
+    reminderBubble: {
+        maxWidth: 360,
+        minWidth: 280,
+        flexDirection: "row",
+        gap: 10,
+        padding: 10,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceElevated,
+        position: "relative",
+        overflow: "hidden",
+    },
+    reminderBubbleOwn: {
+        alignSelf: "flex-end",
+    },
+    reminderBubbleOther: {
+        alignSelf: "flex-start",
+    },
+    reminderAccent: {
+        position: "absolute",
+        left: 0,
+        top: 0,
+        bottom: 0,
+        width: 5,
+    },
+    reminderDateBox: {
+        width: 52,
+        height: 58,
+        borderRadius: 8,
+        overflow: "hidden",
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.background,
+        alignItems: "center",
+    },
+    reminderDateMonth: {
+        width: "100%",
+        paddingVertical: 3,
+        textAlign: "center",
+        fontSize: 9,
+        fontWeight: "800",
+        color: colors.textOnAccent,
+        backgroundColor: colors.accentStrong,
+    },
+    reminderDateDay: {
+        flex: 1,
+        textAlignVertical: "center",
+        color: colors.text,
+        fontSize: 20,
+        fontWeight: "900",
+    },
+    reminderContent: {
+        flex: 1,
+        gap: 4,
+    },
+    reminderTitleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+    reminderKind: {
+        color: colors.textMuted,
+        fontSize: 11,
+        fontWeight: "700",
+    },
+    reminderStatus: {
+        fontSize: 11,
+        fontWeight: "900",
+    },
+    reminderCardTitle: {
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: "900",
+    },
+    reminderCardDescription: {
+        color: colors.textSoft,
+        fontSize: 12,
+        lineHeight: 17,
+    },
+    reminderMetaRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+    reminderMetaText: {
+        color: colors.textMuted,
+        fontSize: 12,
+        fontWeight: "700",
+    },
 
     // System message
     systemMessageContainer: {
@@ -2416,6 +3056,50 @@ const styles = StyleSheet.create({
         color: colors.accentStrong,
         fontSize: 12,
         fontWeight: "700",
+    },
+    botSuggestionBar: {
+        marginHorizontal: 12,
+        marginTop: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: colors.accentStrong,
+        backgroundColor: "rgba(63,140,255,0.16)",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    botSuggestionText: {
+        color: colors.accentStrong,
+        fontSize: 14,
+        fontWeight: "900",
+    },
+    botSuggestionHint: {
+        color: colors.text,
+        fontSize: 13,
+        fontWeight: "700",
+    },
+    botActiveChip: {
+        marginHorizontal: 12,
+        marginTop: 8,
+        alignSelf: "flex-start",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 14,
+        backgroundColor: "rgba(63,140,255,0.16)",
+    },
+    botActiveText: {
+        color: colors.text,
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    botMentionText: {
+        color: colors.accentStrong,
+        fontWeight: "900",
     },
     composerActionButton: {
         width: 44,
@@ -2697,6 +3381,172 @@ const styles = StyleSheet.create({
         color: colors.textOnAccent,
         fontSize: 15,
         fontWeight: "800",
+    },
+    reminderPanelOverlay: {
+        flex: 1,
+        justifyContent: "flex-end",
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+    },
+    reminderPanel: {
+        maxHeight: "88%",
+        borderTopLeftRadius: 18,
+        borderTopRightRadius: 18,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.background,
+        padding: 16,
+    },
+    reminderPanelHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 12,
+    },
+    reminderForm: {
+        gap: 8,
+        paddingBottom: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    reminderInput: {
+        minHeight: 42,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+        paddingHorizontal: 12,
+        paddingVertical: 9,
+        color: colors.text,
+        backgroundColor: colors.surface,
+    },
+    reminderDescriptionInput: {
+        minHeight: 64,
+        textAlignVertical: "top",
+    },
+    reminderRepeatRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 8,
+    },
+    reminderRepeatChip: {
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+    },
+    reminderRepeatChipActive: {
+        borderColor: colors.accentStrong,
+        backgroundColor: "rgba(63,140,255,0.18)",
+    },
+    reminderRepeatText: {
+        color: colors.textMuted,
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    reminderRepeatTextActive: {
+        color: colors.text,
+    },
+    reminderFormActions: {
+        flexDirection: "row",
+        justifyContent: "flex-end",
+        gap: 10,
+    },
+    reminderPrimaryButton: {
+        minHeight: 40,
+        minWidth: 110,
+        borderRadius: 10,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 14,
+        backgroundColor: colors.accentStrong,
+    },
+    reminderPrimaryButtonText: {
+        color: colors.textOnAccent,
+        fontSize: 14,
+        fontWeight: "900",
+    },
+    reminderSecondaryButton: {
+        minHeight: 40,
+        borderRadius: 10,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 14,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    reminderSecondaryButtonText: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "800",
+    },
+    reminderFilterRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 8,
+        paddingVertical: 12,
+    },
+    reminderFilterChip: {
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+    },
+    reminderFilterChipActive: {
+        borderColor: colors.accentStrong,
+        backgroundColor: "rgba(63,140,255,0.18)",
+    },
+    reminderFilterText: {
+        color: colors.textMuted,
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    reminderFilterTextActive: {
+        color: colors.text,
+    },
+    reminderLoadingBox: {
+        minHeight: 120,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    reminderList: {
+        maxHeight: 320,
+    },
+    reminderListContent: {
+        gap: 10,
+        paddingBottom: 12,
+    },
+    reminderEmptyText: {
+        color: colors.textMuted,
+        fontSize: 13,
+        textAlign: "center",
+        paddingVertical: 24,
+    },
+    reminderListItem: {
+        gap: 8,
+        padding: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceSoft,
+    },
+    reminderItemActions: {
+        flexDirection: "row",
+        justifyContent: "flex-end",
+        gap: 8,
+    },
+    reminderIconAction: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
     },
     aiPanel: {
         maxHeight: "78%",

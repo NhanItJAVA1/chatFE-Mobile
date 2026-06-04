@@ -1705,7 +1705,7 @@ export const ChatScreen = ({ onBackPress, chatUser = null }: ChatScreenProps) =>
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
+      behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}
       keyboardVerticalOffset={Platform.select({
         ios: 60,
         android: 76 + (StatusBar.currentHeight || 0),

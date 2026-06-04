@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ConversationService, Conversation } from "../services/conversationService";
-import { SocketService, MessagePayload, TypingData } from "../services/socketService";
+import { SocketService, MessagePayload, TypingData, type GroupReminder } from "../services/socketService";
 import { useAuth } from "./useAuth";
 import { saveMessagesToCache, loadMessagesFromCache } from "../utils/cacheUtils";
 import { useScrollToMessage } from "./useScrollToMessage";
@@ -230,6 +230,7 @@ export interface UseChatMessageActions {
     unpinMessage: (messageId: string) => Promise<void>;
     navigatePinnedMessages: (direction: "prev" | "next") => void;
     setReplyingTo: (message: MessagePayload | null) => void;
+    updateReminderBubble: (reminder: GroupReminder) => void;
     retryLoadConversation: () => Promise<void>;
     /** Scroll the FlatList to the given message and briefly highlight it */
     scrollToMessage: (messageId: string) => Promise<boolean>;
@@ -483,6 +484,56 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             return newState;
         });
     }, [buildMessageIndexMap]);
+
+    const updateReminderBubble = useCallback((reminder: GroupReminder) => {
+        if (!reminder?.id) {
+            return;
+        }
+
+        setState((prev) => {
+            const messages = prev.messages.map((message) => {
+                const sameReminder =
+                    message.reminderId === reminder.id ||
+                    message.reminder?.id === reminder.id ||
+                    message.id === reminder.messageId ||
+                    message._id === reminder.messageId;
+
+                if (!sameReminder) {
+                    return message;
+                }
+
+                return {
+                    ...message,
+                    reminderId: message.reminderId || reminder.id,
+                    reminder: {
+                        ...(message.reminder || {}),
+                        ...reminder,
+                    },
+                };
+            });
+
+            const newState = {
+                ...prev,
+                messages,
+            };
+
+            if (prev.conversation) {
+                const conversationId = prev.conversation._id || prev.conversation.id;
+                conversationCache.set(conversationId, {
+                    conversation: prev.conversation,
+                    messages,
+                    hasMoreMessages: prev.hasMoreMessages,
+                    nextCursor: prev.nextCursor,
+                });
+
+                saveMessagesToCache(conversationId, messages).catch((error) => {
+                    console.error("[useGroupChatMessage] Failed to save messages after reminder update:", error);
+                });
+            }
+
+            return newState;
+        });
+    }, []);
 
     // Keep scroll-index map fresh whenever messages change
     useEffect(() => {
@@ -1195,6 +1246,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             unpinMessage,
             navigatePinnedMessages,
             setReplyingTo,
+            updateReminderBubble,
             retryLoadConversation,
             scrollToMessage,
         },
