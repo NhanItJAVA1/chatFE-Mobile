@@ -7,11 +7,10 @@ import type { BottomTabBarProps, TabItem } from "@/types";
 export const BottomTabBar = ({
     activeTab,
     onChangeTab,
-    onSearchPress,
-    friendRequestCount = 0,
-}: BottomTabBarProps) => {
+    friendRequestCount = 0
+}) => {
     const items: TabItem[] = [
-        { key: "addFriend", label: "Danh bạ", icon: "person-circle-outline" },
+        { key: "addFriend", label: "Thêm bạn", icon: "person-add-outline" },
         { key: "requests", label: "Lời mời", icon: "notifications-outline" },
         { key: "home", label: "Chat", icon: "chatbubbles" },
         { key: "profile", label: "Cài đặt", icon: "settings-outline" },
@@ -100,14 +99,14 @@ export const BottomTabBar = ({
                 })}
             </View>
             <Pressable
-                onPress={onSearchPress}
+                onPress={() => onChangeTab("addFriend")}
                 style={styles.searchButton}
                 hitSlop={8}
             >
                 <Ionicons
                     name="search"
                     size={23}
-                    color={colors.text}
+                    color={activeTab === "addFriend" ? colors.accent : colors.text}
                 />
             </Pressable>
         </View>
