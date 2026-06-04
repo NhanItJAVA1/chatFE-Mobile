@@ -31,7 +31,7 @@ export interface MessagePayload {
     status: "sending" | "sent" | "delivered" | "seen" | "failed";
     createdAt: string;
     updatedAt: string;
-    type?: "text" | "image" | "file" | "link" | "system" | "poll" | "profile_card";
+    type?: "text" | "image" | "file" | "link" | "system" | "reminder" | "poll" | "profile_card";
     messageType?: string;
     profileCardUserId?: string;
     profileCard?: {
@@ -51,6 +51,11 @@ export interface MessagePayload {
     deletedForUserIds?: string[];
     deletedBy?: string;
     deletedAt?: string;
+    reminderId?: string;
+    reminder?: GroupReminder;
+    metadata?: Record<string, any>;
+    systemAction?: string;
+    systemRefId?: string;
     isForwarded?: boolean;
     forwarded?: boolean;
     forwardedFrom?: any;
@@ -89,6 +94,40 @@ export interface SeenData {
     conversationId: string;
     userId: string;
     lastSeenMessageId: string;
+}
+
+export type GroupReminderStatus = "active" | "done" | "cancelled";
+export type GroupReminderRepeatRule = "none" | "daily" | "weekly" | "monthly";
+
+export interface GroupReminder {
+    id: string;
+    conversationId: string;
+    messageId?: string;
+    title: string;
+    description?: string;
+    remindAt: string;
+    repeatRule?: GroupReminderRepeatRule;
+    notifyBeforeMinutes?: number;
+    nextNotifyAt?: string;
+    lastNotifiedAt?: string;
+    status?: GroupReminderStatus;
+    pinned?: boolean;
+    pinnedAt?: string;
+    pinnedBy?: string;
+    createdBy: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface ReminderEventPayload {
+    conversationId: string;
+    reminderId?: string;
+    reminder?: GroupReminder;
+    message?: MessagePayload;
+    systemMessage?: MessagePayload;
+    reason?: string;
+    title?: string;
+    [key: string]: any;
 }
 
 // ============================================================================
@@ -1306,6 +1345,124 @@ export class SocketService {
         this.offRegisteredListeners("poll:vote");
     }
 
+    private static async emitReminderAction(eventName: string, payload: Record<string, any>): Promise<GroupReminder> {
+        if (!this.socket?.connected) {
+            await this.waitForConnection(5000);
+        }
+
+        return new Promise((resolve, reject) => {
+            if (!this.socket) {
+                reject(new Error("Socket not connected"));
+                return;
+            }
+
+            this.socket.emit(eventName, payload, (response: any) => {
+                if (response?.success) {
+                    resolve(response.reminder);
+                    return;
+                }
+
+                reject(new Error(response?.error || `Failed to ${eventName}`));
+            });
+        });
+    }
+
+    static createReminder(payload: {
+        conversationId: string;
+        title: string;
+        description?: string;
+        remindAt: string;
+        repeatRule?: GroupReminderRepeatRule;
+        notifyBeforeMinutes?: number;
+    }): Promise<GroupReminder> {
+        return this.emitReminderAction("createReminder", payload);
+    }
+
+    static updateReminder(payload: {
+        conversationId?: string;
+        reminderId: string;
+        title?: string;
+        description?: string | null;
+        remindAt?: string;
+        repeatRule?: GroupReminderRepeatRule;
+        notifyBeforeMinutes?: number;
+        status?: GroupReminderStatus;
+    }): Promise<GroupReminder> {
+        return this.emitReminderAction("updateReminder", payload);
+    }
+
+    static deleteReminder(conversationId: string, reminderId: string): Promise<GroupReminder> {
+        return this.emitReminderAction("deleteReminder", { conversationId, reminderId });
+    }
+
+    static pinReminder(reminderId: string): Promise<GroupReminder> {
+        return this.emitReminderAction("pinReminder", { reminderId });
+    }
+
+    static unpinReminder(reminderId: string): Promise<GroupReminder> {
+        return this.emitReminderAction("unpinReminder", { reminderId });
+    }
+
+    static onReminderEvents(callback: (eventName: string, data: ReminderEventPayload) => void): void {
+        if (!this.socket) return;
+
+        const eventNames = [
+            "group:reminder_created",
+            "group:reminder_updated",
+            "group:reminder_deleted",
+            "group:reminder_pinned",
+            "group:reminder_unpinned",
+            "group:reminder_due",
+            "group:reminder:created",
+            "group:reminder:updated",
+            "group:reminder:deleted",
+            "group:reminder:pinned",
+            "group:reminder:unpinned",
+            "group:reminder:due",
+        ];
+
+        eventNames.forEach((eventName) => {
+            this.socket?.on(eventName, (data: any) => callback(eventName, data));
+        });
+    }
+
+    static offReminderEvents(): void {
+        if (!this.socket) return;
+
+        [
+            "group:reminder_created",
+            "group:reminder_updated",
+            "group:reminder_deleted",
+            "group:reminder_pinned",
+            "group:reminder_unpinned",
+            "group:reminder_due",
+            "group:reminder:created",
+            "group:reminder:updated",
+            "group:reminder:deleted",
+            "group:reminder:pinned",
+            "group:reminder:unpinned",
+            "group:reminder:due",
+        ].forEach((eventName) => this.socket?.off(eventName));
+    }
+
+    static onReminderAgentResult(callback: (data: ReminderEventPayload) => void): void {
+        if (!this.socket) return;
+        this.socket.on("ai:reminder_agent:result", callback);
+    }
+
+    static offReminderAgentResult(): void {
+        this.socket?.off("ai:reminder_agent:result");
+    }
+
+    static onReminderAgentError(callback: (data: ReminderEventPayload) => void): void {
+        if (!this.socket) return;
+        this.socket.on("ai:reminder_agent:error", callback);
+    }
+
+    static offReminderAgentError(): void {
+        this.socket?.off("ai:reminder_agent:error");
+    }
+
     /**
      * Clean up all group event listeners
      */
@@ -1322,6 +1479,9 @@ export class SocketService {
         this.offGroupDissolved();
         this.offPollNew();
         this.offPollVote();
+        this.offReminderEvents();
+        this.offReminderAgentResult();
+        this.offReminderAgentError();
     }
 
     /**
