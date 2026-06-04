@@ -50,6 +50,7 @@ interface HomeScreenProps {
     aiSmartReplyEnabled?: boolean;
     onToggleAiSmartReply?: (enabled: boolean) => void;
     searchRequestId?: number;
+    closeSearchRequestId?: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -158,6 +159,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     aiSmartReplyEnabled = false,
     onToggleAiSmartReply,
     searchRequestId = 0,
+    closeSearchRequestId = 0,
 }) => {
     const { user, token } = useAuth();
     const [query, setQuery] = useState("");
@@ -195,6 +197,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         setShowArchivedView(false);
         setIsSearchMode(true);
     }, [searchRequestId]);
+
+    useEffect(() => {
+        if (!closeSearchRequestId) return;
+        closeSearchMode();
+    }, [closeSearchRequestId]);
 
     useEffect(() => {
         homeConversationListCache = conversations;
