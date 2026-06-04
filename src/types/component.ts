@@ -6,6 +6,8 @@
 import { ReactNode } from "react";
 import { ViewStyle, TextInputProps } from "react-native";
 
+import type { GroupReminder } from "../shared/services/socketService";
+
 // Avatar Component
 export type AvatarProps = {
     label: string;
@@ -65,6 +67,7 @@ export type ChatScreenProps = {
     chatUser?: any;
     onOpenPrivateChat?: (user: any) => void;
     onConversationReady?: (conversationId: string) => void;
+    onOpenReminderList?: (conversationId: string, initialReminders?: GroupReminder[]) => void;
 };
 
 // FriendRequestsScreen Component

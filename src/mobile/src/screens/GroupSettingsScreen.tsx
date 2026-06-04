@@ -412,6 +412,23 @@ export const GroupSettingsScreen: React.FC<{
         setShowMuteDialog(true);
     }, [handleUnmuteConversation, isGroupMuted]);
 
+    const handleOpenReminderList = useCallback(() => {
+        if (!groupId) {
+            Alert.alert("Lịch hẹn", "Chưa có nhóm để xem lịch hẹn.");
+            return;
+        }
+
+        if (typeof navigation?.openReminderList === "function") {
+            navigation.openReminderList(String(groupId));
+            return;
+        }
+
+        navigation?.navigate?.("ReminderList", {
+            conversationId: String(groupId),
+            title: "Lịch hẹn nhóm",
+        });
+    }, [groupId, navigation]);
+
     const handleMemberPress = (memberId: string) => {
         setSelectedMemberId(memberId);
         setShowMemberActions(true);
@@ -1080,6 +1097,13 @@ export const GroupSettingsScreen: React.FC<{
                             <Text style={styles.settingsButtonText}>Thêm thành viên</Text>
                         </Pressable>
                     )}
+                    <Pressable
+                        style={styles.settingsButton}
+                        onPress={handleOpenReminderList}
+                    >
+                        <Ionicons name="calendar-number-outline" size={18} color={colors.text} />
+                        <Text style={styles.settingsButtonText}>Lịch hẹn</Text>
+                    </Pressable>
                 </View>
 
                 {/* Edit Group Name Modal */}

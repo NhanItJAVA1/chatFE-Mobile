@@ -16,6 +16,7 @@ import {
     Dimensions,
     ImageBackground,
     StatusBar,
+    Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -41,6 +42,7 @@ import {
 } from "../../../shared/services/aiService";
 import profileCardService from "../../../shared/services/profileCardService";
 import { Avatar, ForwardDialog, VoiceRecorder, PinnedMessageHeader, ReplyPreview, QuotedMessageBlock, HighlightableMessage, AnimatedEmojiMessage, PollCard, CreatePollModal, ProfileCardMessage, ContactPickerSheet } from "../components";
+import MessageActionBar, { type MessageActionAnchor } from "../components/MessageActionBar";
 import { JUMBO_EMOJI_ASSETS } from "../components/AnimatedEmojiMessage";
 import { SystemMessageBubble } from "../components/SystemMessageBubble";
 import MediaMessage from "../components/MediaMessage";
@@ -244,6 +246,116 @@ const ReminderBubble = ({ reminder, isOwn }: { reminder: GroupReminder; isOwn: b
     );
 };
 
+type FanMenuAction = {
+    key: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    color: string;
+    onPress: () => void;
+};
+
+const FAN_ICON_SIZE = 42;
+const FAN_ACTION_OFFSETS = [
+    { x: -76, y: 18 },
+    { x: -42, y: -34 },
+    { x: 22, y: -34 },
+];
+
+const GroupAvatarFanMenu = ({
+    actions,
+    onDismiss,
+}: {
+    actions: FanMenuAction[];
+    onDismiss: () => void;
+}) => {
+    const animatedValues = useRef<Animated.Value[]>([]);
+
+    if (animatedValues.current.length !== actions.length) {
+        animatedValues.current = actions.map((_, index) => animatedValues.current[index] || new Animated.Value(0));
+    }
+
+    useEffect(() => {
+        Animated.stagger(
+            28,
+            animatedValues.current.map((value, index) =>
+                Animated.spring(value, {
+                    toValue: 1,
+                    delay: index * 16,
+                    friction: 8,
+                    tension: 95,
+                    useNativeDriver: true,
+                }),
+            ),
+        ).start();
+    }, [actions.length]);
+
+    const close = useCallback((afterClose?: () => void) => {
+        Animated.stagger(
+            14,
+            [...animatedValues.current].reverse().map((value) =>
+                Animated.timing(value, {
+                    toValue: 0,
+                    duration: 150,
+                    useNativeDriver: true,
+                }),
+            ),
+        ).start(() => {
+            onDismiss();
+            afterClose?.();
+        });
+    }, [onDismiss]);
+
+    return (
+        <View style={styles.avatarFanOverlay} pointerEvents="box-none">
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => close()} />
+            <View style={styles.avatarFanMenu}>
+                {actions.map((action, index) => {
+                    const progress = animatedValues.current[index];
+                    const offset = FAN_ACTION_OFFSETS[index] || FAN_ACTION_OFFSETS[FAN_ACTION_OFFSETS.length - 1];
+
+                    return (
+                        <Animated.View
+                            key={action.key}
+                            style={[
+                                styles.avatarFanActionWrap,
+                                {
+                                    opacity: progress,
+                                    transform: [
+                                        {
+                                            translateX: progress.interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: [0, offset.x],
+                                            }),
+                                        },
+                                        {
+                                            translateY: progress.interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: [0, offset.y],
+                                            }),
+                                        },
+                                        {
+                                            scale: progress.interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: [0.8, 1],
+                                            }),
+                                        },
+                                    ],
+                                },
+                            ]}
+                        >
+                            <Pressable
+                                style={styles.avatarFanAction}
+                                onPress={() => close(action.onPress)}
+                            >
+                                <Ionicons name={action.icon} size={20} color={action.color} />
+                            </Pressable>
+                        </Animated.View>
+                    );
+                })}
+            </View>
+        </View>
+    );
+};
+
 const GroupMessageBubble: React.FC<{
     message: any;
     isOwn: boolean;
@@ -252,7 +364,7 @@ const GroupMessageBubble: React.FC<{
     senderInitials: string;
     senderAvatar?: string;
     roleIcon?: string | null;
-    onLongPress?: () => void;
+    onLongPress?: (event?: any) => void;
     onPressQuoted?: (quotedMessageId: string) => void;
     onToggleReaction?: (emoji: string, selected: boolean) => void;
     onClearMyReactions?: () => void;
@@ -688,6 +800,8 @@ export const GroupChatScreen: React.FC<{
         // Local state
         const [isSending, setIsSending] = useState(false);
         const [showMediaMenu, setShowMediaMenu] = useState(false);
+        const [mediaMenuAnchor, setMediaMenuAnchor] = useState<MessageActionAnchor | null>(null);
+        const [isClosingMediaMenu, setIsClosingMediaMenu] = useState(false);
         const [showContactPicker, setShowContactPicker] = useState(false);
         const [profileCardSendingUserId, setProfileCardSendingUserId] = useState<string | null>(null);
         const [profileCardSentUserIds, setProfileCardSentUserIds] = useState<Set<string>>(new Set());
@@ -696,12 +810,15 @@ export const GroupChatScreen: React.FC<{
         const [uploadProgress, setUploadProgress] = useState(0);
         const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
         const [showForwardDialog, setShowForwardDialog] = useState(false);
+        const [showAvatarFanMenu, setShowAvatarFanMenu] = useState(false);
         const [forwardMessageIds, setForwardMessageIds] = useState<string[]>([]);
         const [showEditDialog, setShowEditDialog] = useState(false);
         const [editText, setEditText] = useState("");
         const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
         const [actionMenuMessage, setActionMenuMessage] = useState<any | null>(null);
         const [actionMenuButtons, setActionMenuButtons] = useState<MessageActionButton[]>([]);
+        const [actionMenuAnchor, setActionMenuAnchor] = useState<MessageActionAnchor | null>(null);
+        const [isClosingActionMenu, setIsClosingActionMenu] = useState(false);
         const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
         const [selectedImageIndex, setSelectedImageIndex] = useState(0);
         const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
@@ -1724,9 +1841,83 @@ export const GroupChatScreen: React.FC<{
         }, []);
 
         const closeActionMenu = useCallback(() => {
+            if (!actionMenuMessage) return;
+            setIsClosingActionMenu(true);
+        }, [actionMenuMessage]);
+
+        const clearActionMenu = useCallback(() => {
             setActionMenuMessage(null);
             setActionMenuButtons([]);
+            setActionMenuAnchor(null);
+            setIsClosingActionMenu(false);
         }, []);
+
+        const getActionAnchorFromEvent = useCallback((event: any): MessageActionAnchor => {
+            const nativeEvent = event?.nativeEvent || {};
+            const pageX = Number(nativeEvent.pageX);
+            const pageY = Number(nativeEvent.pageY);
+
+            return {
+                x: Number.isFinite(pageX) ? pageX - 20 : Dimensions.get("window").width / 2 - 20,
+                y: Number.isFinite(pageY) ? pageY - 20 : Dimensions.get("window").height / 2,
+                width: 40,
+                height: 40,
+            };
+        }, []);
+
+        const closeMediaMenu = useCallback(() => {
+            if (!showMediaMenu) return;
+            setIsClosingMediaMenu(true);
+        }, [showMediaMenu]);
+
+        const clearMediaMenu = useCallback(() => {
+            setShowMediaMenu(false);
+            setMediaMenuAnchor(null);
+            setIsClosingMediaMenu(false);
+        }, []);
+
+        const handleOpenMediaMenu = useCallback((event: any) => {
+            if (showMediaMenu) {
+                closeMediaMenu();
+                return;
+            }
+
+            setMediaMenuAnchor(getActionAnchorFromEvent(event));
+            setIsClosingMediaMenu(false);
+            setShowMediaMenu(true);
+        }, [closeMediaMenu, getActionAnchorFromEvent, showMediaMenu]);
+
+        const mediaMenuButtons = useMemo<MessageActionButton[]>(() => [
+            { text: "Thư Viện", onPress: handlePickImage },
+            { text: "Video", onPress: handlePickVideo },
+            { text: "Audio", onPress: handlePickAudioFile },
+            { text: "Tài Liệu", onPress: handlePickDocument },
+            {
+                text: "Chia sẻ liên hệ",
+                onPress: () => {
+                    setShowMediaMenu(false);
+                    setShowContactPicker(true);
+                },
+            },
+            { text: "Tạo lịch", onPress: handleCreateSchedulePrompt },
+        ], [handleCreateSchedulePrompt, handlePickAudioFile, handlePickDocument, handlePickImage, handlePickVideo]);
+
+        const getMediaActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
+            if (label.includes("Thư")) return "image";
+            if (label.includes("Video")) return "videocam";
+            if (label.includes("Audio")) return "musical-note";
+            if (label.includes("Tài")) return "document";
+            if (label.includes("liên hệ")) return "person-circle-outline";
+            if (label.includes("lịch")) return "calendar-outline";
+            return "ellipse-outline";
+        }, []);
+
+        const handleMediaMenuButtonPress = useCallback((button: MessageActionButton) => {
+            closeMediaMenu();
+            setTimeout(() => {
+                button.onPress();
+            }, 170);
+        }, [closeMediaMenu]);
 
         const handleOpenProfileCardUser = useCallback((profileUser: any) => {
             const targetUserId = profileUser?.id || profileUser?._id || profileUser?.userId;
@@ -1756,12 +1947,19 @@ export const GroupChatScreen: React.FC<{
             }
         }, [groupId]);
 
-        const handleMessageLongPress = useCallback((message: any) => {
+        const handleMessageLongPress = useCallback((message: any, anchor?: MessageActionAnchor) => {
             const messageId = message._id || message.id;
             if (!messageId) return;
 
             const isOwn = !!currentUserId && String(message.senderId || "") === String(currentUserId);
             setActionMenuMessage(message);
+            setActionMenuAnchor(anchor || {
+                x: Dimensions.get("window").width / 2 - 20,
+                y: Dimensions.get("window").height / 2,
+                width: 40,
+                height: 40,
+            });
+            setIsClosingActionMenu(false);
             setActionMenuButtons(
                 buildMessageActionSheetOptions({
                     isOwn,
@@ -1835,6 +2033,11 @@ export const GroupChatScreen: React.FC<{
                 })
             );
         }, [currentUserId]);
+
+        const handleActionMenuButtonPress = useCallback((button: MessageActionButton) => {
+            button.onPress();
+            closeActionMenu();
+        }, [closeActionMenu]);
 
         const handleSaveEdit = useCallback(async () => {
             if (!selectedMessageId || !editText.trim()) {
@@ -1993,7 +2196,7 @@ export const GroupChatScreen: React.FC<{
 
                     return (
                         <HighlightableMessage
-                            onLongPress={() => handleMessageLongPress(item)}
+                            onLongPress={(event) => handleMessageLongPress(item, getActionAnchorFromEvent(event))}
                             delayLongPress={300}
                             isHighlighted={isHighlighted}
                             style={[
@@ -2078,7 +2281,7 @@ export const GroupChatScreen: React.FC<{
                             senderInitials={senderInitials}
                             senderAvatar={senderMember?.avatar}
                             roleIcon={roleIcon}
-                            onLongPress={() => handleMessageLongPress(item)}
+                            onLongPress={(event) => handleMessageLongPress(item, getActionAnchorFromEvent(event))}
                             onToggleReaction={(emoji, selected) => {
                                 if (messageId) {
                                     handleToggleReaction(messageId, emoji, selected);
@@ -2197,7 +2400,7 @@ export const GroupChatScreen: React.FC<{
 
                 return (
                     <HighlightableMessage
-                        onLongPress={() => handleMessageLongPress(item)}
+                        onLongPress={(event) => handleMessageLongPress(item, getActionAnchorFromEvent(event))}
                         delayLongPress={300}
                         isHighlighted={isHighlighted}
                         style={[
@@ -2573,7 +2776,7 @@ export const GroupChatScreen: React.FC<{
                     </HighlightableMessage>
                 );
             },
-            [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId, handleOpenProfileCardUser, reactionPickerMessageId]
+            [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, getActionAnchorFromEvent, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId, handleOpenProfileCardUser, reactionPickerMessageId]
         );
 
         const handleViewableItemsChanged = useCallback(
@@ -2617,6 +2820,36 @@ export const GroupChatScreen: React.FC<{
             if (label.includes("Xóa")) return "trash-outline";
             return "ellipse-outline";
         }, []);
+
+        const avatarFanActions = useMemo<FanMenuAction[]>(() => {
+            const actions: FanMenuAction[] = [];
+
+            if (canCreatePoll) {
+                actions.push({
+                    key: "poll",
+                    icon: "stats-chart-outline",
+                    color: colors.text,
+                    onPress: () => setShowCreatePollModal(true),
+                });
+            }
+
+            actions.push(
+                {
+                    key: "ai",
+                    icon: "sparkles",
+                    color: colors.accentStrong,
+                    onPress: showAiMenu,
+                },
+                {
+                    key: "settings",
+                    icon: "settings-outline",
+                    color: colors.text,
+                    onPress: () => onSettingsPress?.(),
+                },
+            );
+
+            return actions;
+        }, [canCreatePoll, onSettingsPress, showAiMenu]);
 
         if (!groupState.group) {
             return (
@@ -2662,13 +2895,6 @@ export const GroupChatScreen: React.FC<{
                     <View style={styles.headerIconGroup}>
                         <Pressable
                             style={styles.headerIconButton}
-                            onPress={showAiMenu}
-                            hitSlop={8}
-                        >
-                            <Ionicons name="sparkles" size={16} color={colors.accentStrong} />
-                        </Pressable>
-                        <Pressable
-                            style={styles.headerIconButton}
                             onPress={handleStartGroupCall}
                             disabled={callState.status !== "idle" || !!activeGroupCall?.callId}
                             hitSlop={8}
@@ -2679,36 +2905,31 @@ export const GroupChatScreen: React.FC<{
                                 color={callState.status === "idle" && !activeGroupCall?.callId ? colors.text : colors.textMuted}
                             />
                         </Pressable>
-                        {canCreatePoll && (
-                            <Pressable
-                                style={styles.headerIconButton}
-                                onPress={() => setShowCreatePollModal(true)}
-                                hitSlop={8}
-                            >
-                                <Ionicons
-                                    name="stats-chart-outline"
-                                    size={17}
-                                    color={colors.text}
-                                />
-                            </Pressable>
-                        )}
                     </View>
-                    <Pressable style={styles.groupHeaderAvatarWrap} onPress={onSettingsPress}>
-                        {groupState.group?.avatarUrl ? (
-                            <Image
-                                source={{ uri: groupState.group.avatarUrl }}
-                                blurRadius={0.5}
-                                style={styles.groupAvatarImage}
+                    <View style={styles.groupAvatarMenuWrap}>
+                        <Pressable style={styles.groupHeaderAvatarWrap} onPress={() => setShowAvatarFanMenu((value) => !value)}>
+                            {groupState.group?.avatarUrl ? (
+                                <Image
+                                    source={{ uri: groupState.group.avatarUrl }}
+                                    blurRadius={0.5}
+                                    style={styles.groupAvatarImage}
+                                />
+                            ) : (
+                                <Avatar
+                                    label={(groupState.group?.name || "G").charAt(0).toUpperCase()}
+                                    size={40}
+                                    backgroundColor={colors.accentAlt}
+                                    textSize={14}
+                                />
+                            )}
+                        </Pressable>
+                        {showAvatarFanMenu ? (
+                            <GroupAvatarFanMenu
+                                actions={avatarFanActions}
+                                onDismiss={() => setShowAvatarFanMenu(false)}
                             />
-                        ) : (
-                            <Avatar
-                                label={(groupState.group?.name || "G").charAt(0).toUpperCase()}
-                                size={40}
-                                backgroundColor={colors.accentAlt}
-                                textSize={14}
-                            />
-                        )}
-                    </Pressable>
+                        ) : null}
+                    </View>
                 </View>
                 {activeGroupCall?.callId && callState.status === "idle" ? (
                     <Pressable style={styles.joinCallBanner} onPress={handleStartGroupCall}>
@@ -2953,57 +3174,17 @@ export const GroupChatScreen: React.FC<{
                     }}
                 />
 
-                {/* Media Menu */}
-                {showMediaMenu && !showVoiceRecorder && (
-                    <View style={styles.mediaMenuContainer}>
-                        <Text style={styles.mediaMenuTitle}>Ghim</Text>
-                        <Pressable
-                            style={styles.mediaMenuItem}
-                            onPress={handlePickImage}
-                        >
-                            <Ionicons name="image" size={24} color={colors.mediaImageIcon} />
-                            <Text style={styles.mediaMenuItemText}>Thư Viện</Text>
-                        </Pressable>
-                        <Pressable
-                            style={styles.mediaMenuItem}
-                            onPress={handlePickVideo}
-                        >
-                            <Ionicons name="videocam" size={24} color={colors.mediaVideoIcon} />
-                            <Text style={styles.mediaMenuItemText}>Video</Text>
-                        </Pressable>
-                        <Pressable
-                            style={styles.mediaMenuItem}
-                            onPress={handlePickAudioFile}
-                        >
-                            <Ionicons name="musical-note" size={24} color={colors.mediaAudioIcon} />
-                            <Text style={styles.mediaMenuItemText}>Audio</Text>
-                        </Pressable>
-                        <Pressable
-                            style={styles.mediaMenuItem}
-                            onPress={handlePickDocument}
-                        >
-                            <Ionicons name="document" size={24} color={colors.mediaDocumentIcon} />
-                            <Text style={styles.mediaMenuItemText}>Tài Liệu</Text>
-                        </Pressable>
-                        <Pressable
-                            style={styles.mediaMenuItem}
-                            onPress={() => {
-                                setShowMediaMenu(false);
-                                setShowContactPicker(true);
-                            }}
-                        >
-                            <Ionicons name="person-circle-outline" size={24} color={colors.accent} />
-                            <Text style={styles.mediaMenuItemText}>Chia sẻ liên hệ</Text>
-                        </Pressable>
-                        <Pressable
-                            style={styles.mediaMenuItem}
-                            onPress={handleCreateSchedulePrompt}
-                        >
-                            <Ionicons name="calendar-outline" size={24} color={colors.accentStrong} />
-                            <Text style={styles.mediaMenuItemText}>Tạo lịch</Text>
-                        </Pressable>
-                    </View>
-                )}
+                {showMediaMenu && !showVoiceRecorder && mediaMenuAnchor ? (
+                    <MessageActionBar
+                        anchor={mediaMenuAnchor}
+                        buttons={mediaMenuButtons}
+                        closing={isClosingMediaMenu}
+                        getIconName={getMediaActionIconName}
+                        onActionPress={handleMediaMenuButtonPress}
+                        onDismiss={closeMediaMenu}
+                        onClosed={clearMediaMenu}
+                    />
+                ) : null}
 
                 {/* Message Composer */}
                 {chatState.replyingTo && (
@@ -3059,7 +3240,7 @@ export const GroupChatScreen: React.FC<{
                 <View style={styles.messageComposer}>
                     <Pressable
                         style={styles.composerIconButton}
-                        onPress={() => setShowMediaMenu(!showMediaMenu)}
+                        onPress={handleOpenMediaMenu}
                         disabled={uploading}
                     >
                         <Ionicons
@@ -3261,53 +3442,17 @@ export const GroupChatScreen: React.FC<{
                         </View>
                     </View>
                 </Modal>
-                <Modal
-                    transparent
-                    visible={!!actionMenuMessage}
-                    animationType="fade"
-                    onRequestClose={closeActionMenu}
-                >
-                    <Pressable style={styles.contextOverlay} onPress={closeActionMenu}>
-                        <View style={styles.contextMenu}>
-                            <View style={styles.contextHeader}>
-                                <Text style={styles.contextTitle} numberOfLines={1}>
-                                    {actionMenuMessage?.text?.trim() || "[Media]"}
-                                </Text>
-                            </View>
-
-                            {actionMenuButtons
-                                .filter((button) => button.style !== "cancel")
-                                .map((button) => (
-                                    <Pressable
-                                        key={button.text}
-                                        style={styles.contextItem}
-                                        onPress={() => {
-                                            closeActionMenu();
-                                            button.onPress();
-                                        }}
-                                    >
-                                        <Ionicons
-                                            name={getActionIconName(button.text)}
-                                            size={20}
-                                            color={button.style === "destructive" ? colors.danger : colors.accent}
-                                        />
-                                        <Text
-                                            style={[
-                                                styles.contextItemText,
-                                                button.style === "destructive" && { color: colors.danger },
-                                            ]}
-                                        >
-                                            {button.text}
-                                        </Text>
-                                    </Pressable>
-                                ))}
-
-                            <Pressable style={[styles.contextItem, styles.contextCancel]} onPress={closeActionMenu}>
-                                <Text style={[styles.contextItemText, { color: colors.textMuted, textAlign: "center" }]}>Hủy</Text>
-                            </Pressable>
-                        </View>
-                    </Pressable>
-                </Modal>
+                {actionMenuMessage && actionMenuAnchor ? (
+                    <MessageActionBar
+                        anchor={actionMenuAnchor}
+                        buttons={actionMenuButtons}
+                        closing={isClosingActionMenu}
+                        getIconName={getActionIconName}
+                        onActionPress={handleActionMenuButtonPress}
+                        onDismiss={closeActionMenu}
+                        onClosed={clearActionMenu}
+                    />
+                ) : null}
 
                 {/* Forward Dialog Modal */}
                 <ForwardDialog
@@ -3538,6 +3683,50 @@ const styles = StyleSheet.create({
         backgroundColor: "rgba(255,255,255,0.1)",
         borderWidth: 1,
         borderColor: colors.overlayWhite18,
+    },
+    groupAvatarMenuWrap: {
+        width: 46,
+        height: 46,
+        position: "relative",
+        zIndex: 40,
+    },
+    avatarFanOverlay: {
+        position: "absolute",
+        left: -140,
+        right: -16,
+        top: -92,
+        bottom: -16,
+        zIndex: 60,
+    },
+    avatarFanMenu: {
+        position: "absolute",
+        right: 3,
+        top: 95,
+        width: FAN_ICON_SIZE,
+        height: FAN_ICON_SIZE,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    avatarFanActionWrap: {
+        position: "absolute",
+        width: FAN_ICON_SIZE,
+        height: FAN_ICON_SIZE,
+        borderRadius: FAN_ICON_SIZE / 2,
+    },
+    avatarFanAction: {
+        width: FAN_ICON_SIZE,
+        height: FAN_ICON_SIZE,
+        borderRadius: FAN_ICON_SIZE / 2,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.overlayDark94,
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.28,
+        shadowRadius: 10,
+        elevation: 9,
     },
     chatHeaderTitle: {
         fontSize: 16,
@@ -4246,39 +4435,6 @@ const styles = StyleSheet.create({
         color: colors.text,
     },
 
-
-    // Media menu
-    mediaMenuContainer: {
-        backgroundColor: colors.background,
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        paddingHorizontal: 16,
-        paddingTop: 20,
-        paddingBottom: 32,
-    },
-    mediaMenuTitle: {
-        fontSize: 18,
-        fontWeight: "700",
-        color: colors.text,
-        marginBottom: 16,
-    },
-    mediaMenuItem: {
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-        borderRadius: 12,
-        backgroundColor: colors.surface,
-        borderWidth: 1,
-        borderColor: colors.border,
-        gap: 12,
-        marginBottom: 10,
-    },
-    mediaMenuItemText: {
-        fontSize: 16,
-        fontWeight: "600",
-        color: colors.text,
-    },
 
     // Modals
     modalOverlay: {

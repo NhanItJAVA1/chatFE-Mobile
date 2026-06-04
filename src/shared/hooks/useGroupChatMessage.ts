@@ -655,6 +655,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const messagesStateRef = useRef(state);
+    const userRef = useRef(user);
 
     const getMessageId = useCallback((message: MessagePayload): string => {
         return message._id || message.id || message.clientMessageId || `${message.senderId}-${message.createdAt}`;
@@ -664,6 +665,10 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
     useEffect(() => {
         messagesStateRef.current = state;
     }, [state]);
+
+    useEffect(() => {
+        userRef.current = user;
+    }, [user]);
 
     const updateStateAndCache = useCallback(
         (updates: Partial<UseChatMessageState>) => {
@@ -1792,7 +1797,8 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     }
 
                     const messageId = getMessageId(message);
-                    const currentUserId = user?.id || (user as any)?._id;
+                    const currentUser = userRef.current as any;
+                    const currentUserId = currentUser?.id || currentUser?._id || currentUser?.userId;
                     const deletedForMe =
                         Array.isArray((message as any).deletedForUserIds) &&
                         !!currentUserId &&
@@ -1829,7 +1835,8 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                     }
 
                     const viewerId = String(data.userId || "");
-                    const currentUserId = String(user?.id || (user as any)?._id || (user as any)?.userId || "");
+                    const currentUser = userRef.current as any;
+                    const currentUserId = String(currentUser?.id || currentUser?._id || currentUser?.userId || "");
                     if (!viewerId || viewerId === currentUserId) {
                         return;
                     }
@@ -1964,7 +1971,9 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
                 });
 
                 SocketService.onTyping((data: TypingData) => {
-                    if (data.conversationId === conversationId && data.userId !== user?._id) {
+                    const currentUser = userRef.current as any;
+                    const currentUserId = String(currentUser?._id || currentUser?.id || currentUser?.userId || "");
+                    if (data.conversationId === conversationId && String(data.userId) !== currentUserId) {
                         setState((prev) => {
                             const newTypingUsers = new Set(prev.typingUsers);
                             if (data.isTyping) {
@@ -2124,7 +2133,7 @@ export const useGroupChatMessage = (groupId: string, token: string): UseChatMess
             SocketService.offPollEvent();
             SocketService.offReminderEvents();
         };
-    }, [groupId, token, user?.id, user?._id, updateStateAndCache, updateReminderBubble, upsertPollInState, removePollFromState]);
+    }, [groupId, token]);
 
     // Keep the scroll-index map in sync whenever messages change
     useEffect(() => {

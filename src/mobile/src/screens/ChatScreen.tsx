@@ -39,6 +39,7 @@ import {
   ContactPickerSheet,
   ShareProfileCardSheet,
 } from "../components";
+import MessageActionBar, { type MessageActionAnchor } from "../components/MessageActionBar";
 import { colors, assets } from "../theme";
 import { buildMessageActionSheetOptions, type MessageActionButton } from "../../../shared/utils";
 import MediaMessage from "../components/MediaMessage";
@@ -58,7 +59,7 @@ import { FriendSocketService, type FriendshipNotification } from "../../../share
 import { BlockService } from "../../../shared/services/blockService";
 import profileCardService from "../../../shared/services/profileCardService";
 import type { ChatScreenProps, MessageMedia } from "@/types";
-import type { MessagePayload } from "../../../shared/services/socketService";
+import type { GroupReminder, MessagePayload } from "../../../shared/services/socketService";
 
 type MuteOptionKey = "1h" | "4h" | "8am" | "forever";
 
@@ -121,6 +122,37 @@ const isMuteUntilActive = (muteUntil?: string | null): boolean => {
   return !Number.isNaN(mutedUntilMs) && mutedUntilMs > Date.now();
 };
 
+const getReminderFromMessage = (message: any, conversationId: string): GroupReminder | null => {
+  const itemType = String(message?.type || message?.messageType || "").toLowerCase();
+  const rawReminder = message?.reminder || message?.metadata?.reminder;
+  const reminderId = rawReminder?.id || rawReminder?._id || message?.reminderId || message?.metadata?.reminderId;
+  const remindAt = rawReminder?.remindAt || message?.remindAt || message?.metadata?.remindAt;
+
+  if (!rawReminder && itemType !== "reminder" && !reminderId && !remindAt) {
+    return null;
+  }
+
+  return {
+    id: String(reminderId || message?.id || message?._id || ""),
+    conversationId: String(rawReminder?.conversationId || message?.conversationId || conversationId || ""),
+    messageId: rawReminder?.messageId || message?.id || message?._id,
+    title: rawReminder?.title || message?.title || message?.metadata?.title || message?.text || "Lịch hẹn",
+    description: rawReminder?.description || message?.description || message?.metadata?.description || "",
+    remindAt: remindAt || "",
+    repeatRule: rawReminder?.repeatRule || message?.repeatRule || message?.metadata?.repeatRule || "none",
+    notifyBeforeMinutes:
+      rawReminder?.notifyBeforeMinutes ||
+      message?.notifyBeforeMinutes ||
+      message?.metadata?.notifyBeforeMinutes ||
+      0,
+    status: rawReminder?.status || message?.status || message?.metadata?.status || "active",
+    pinned: !!(rawReminder?.pinned || message?.pinned || message?.metadata?.pinned),
+    createdBy: rawReminder?.createdBy || message?.senderId || "",
+    createdAt: rawReminder?.createdAt || message?.createdAt || new Date().toISOString(),
+    updatedAt: rawReminder?.updatedAt || message?.updatedAt || message?.createdAt || new Date().toISOString(),
+  };
+};
+
 /**
  * Message Bubble Component
  */
@@ -128,7 +160,7 @@ const MessageBubble: React.FC<{
   message: MessagePayload;
   isOwn: boolean;
   currentUserId?: string;
-  onLongPress?: () => void;
+  onLongPress?: (event?: any) => void;
   onPressQuoted?: (quotedMessageId: string) => void;
   onToggleReaction?: (emoji: string, selected: boolean) => void;
   onClearMyReactions?: () => void;
@@ -565,7 +597,7 @@ const groupMessagesForGallery = (messages: MessagePayload[], currentUserId: stri
 const ImageGalleryBubble: React.FC<{
   messages: MessagePayload[];
   isOwn: boolean;
-  onLongPress?: () => void;
+  onLongPress?: (event?: any) => void;
   onImagePress?: (messages: MessagePayload[], startIndex: number) => void;
 }> = ({ messages, isOwn, onLongPress, onImagePress }) => {
   const formatTime = (date: string) => {
@@ -672,6 +704,7 @@ export const ChatScreen = ({
   chatUser = null,
   onOpenPrivateChat,
   onConversationReady,
+  onOpenReminderList,
   aiSmartReplyEnabled = false,
 }: ChatScreenProps & { aiSmartReplyEnabled?: boolean }) => {
   const authContext = useAuth();
@@ -679,6 +712,8 @@ export const ChatScreen = ({
   const currentUser = authContext.user;
   const token = authContext.token;
   const [showMediaMenu, setShowMediaMenu] = React.useState(false);
+  const [mediaMenuAnchor, setMediaMenuAnchor] = React.useState<MessageActionAnchor | null>(null);
+  const [isClosingMediaMenu, setIsClosingMediaMenu] = React.useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = React.useState(false);
   const [showForwardDialog, setShowForwardDialog] = React.useState(false);
   const [showContactPicker, setShowContactPicker] = React.useState(false);
@@ -695,6 +730,8 @@ export const ChatScreen = ({
   const [selectedMessageId, setSelectedMessageId] = React.useState<string | null>(null);
   const [actionMenuMessage, setActionMenuMessage] = React.useState<MessagePayload | null>(null);
   const [actionMenuButtons, setActionMenuButtons] = React.useState<MessageActionButton[]>([]);
+  const [actionMenuAnchor, setActionMenuAnchor] = React.useState<MessageActionAnchor | null>(null);
+  const [isClosingActionMenu, setIsClosingActionMenu] = React.useState(false);
   const [showEditDialog, setShowEditDialog] = React.useState(false);
   const [editText, setEditText] = React.useState("");
   const [viewingGalleryMessages, setViewingGalleryMessages] = React.useState<MessagePayload[] | null>(null);
@@ -1704,6 +1741,25 @@ export const ChatScreen = ({
     requestAnimationFrame(() => messageInputRef.current?.focus());
   }, [messageText, setMessageText]);
 
+  const handleOpenReminderList = useCallback(() => {
+    if (!conversationId) {
+      Alert.alert("Lịch hẹn", "Chưa có cuộc trò chuyện để xem lịch hẹn.");
+      return;
+    }
+
+    const initialReminders = (state.messages || [])
+      .map((message: any) => getReminderFromMessage(message, conversationId))
+      .filter((reminder): reminder is GroupReminder => !!reminder)
+      .filter((reminder, index, items) => {
+        const reminderId = String(reminder.id || "");
+        if (!reminderId) return true;
+        return items.findIndex((item) => String(item.id || "") === reminderId) === index;
+      });
+
+    setShowMediaMenu(false);
+    onOpenReminderList?.(conversationId, initialReminders);
+  }, [conversationId, onOpenReminderList, state.messages]);
+
   const openAiPanel = useCallback(
     async (mode: AiPanelMode) => {
       if (!conversationId) {
@@ -2015,20 +2071,103 @@ export const ChatScreen = ({
   }, [conversationId]);
 
   const closeActionMenu = useCallback(() => {
+    if (!actionMenuMessage) return;
+    setIsClosingActionMenu(true);
+  }, [actionMenuMessage]);
+
+  const clearActionMenu = useCallback(() => {
     setActionMenuMessage(null);
     setActionMenuButtons([]);
+    setActionMenuAnchor(null);
+    setIsClosingActionMenu(false);
   }, []);
+
+  const getActionAnchorFromEvent = useCallback((event: any): MessageActionAnchor => {
+    const nativeEvent = event?.nativeEvent || {};
+    const pageX = Number(nativeEvent.pageX);
+    const pageY = Number(nativeEvent.pageY);
+
+    return {
+      x: Number.isFinite(pageX) ? pageX - 20 : Dimensions.get("window").width / 2 - 20,
+      y: Number.isFinite(pageY) ? pageY - 20 : Dimensions.get("window").height / 2,
+      width: 40,
+      height: 40,
+    };
+  }, []);
+
+  const closeMediaMenu = useCallback(() => {
+    if (!showMediaMenu) return;
+    setIsClosingMediaMenu(true);
+  }, [showMediaMenu]);
+
+  const clearMediaMenu = useCallback(() => {
+    setShowMediaMenu(false);
+    setMediaMenuAnchor(null);
+    setIsClosingMediaMenu(false);
+  }, []);
+
+  const handleOpenMediaMenu = useCallback((event: any) => {
+    if (showMediaMenu) {
+      closeMediaMenu();
+      return;
+    }
+
+    setMediaMenuAnchor(getActionAnchorFromEvent(event));
+    setIsClosingMediaMenu(false);
+    setShowMediaMenu(true);
+  }, [closeMediaMenu, getActionAnchorFromEvent, showMediaMenu]);
+
+  const mediaMenuButtons = useMemo<MessageActionButton[]>(() => [
+    { text: "Thư Viện", onPress: handlePickImage },
+    { text: "Video", onPress: handlePickVideo },
+    { text: "Audio", onPress: handlePickAudioFile },
+    { text: "Tài Liệu", onPress: handlePickDocument },
+    {
+      text: "Chia sẻ liên hệ",
+      onPress: () => {
+        setShowMediaMenu(false);
+        setShowContactPicker(true);
+      },
+    },
+    { text: "Tạo lịch", onPress: handleCreateSchedulePrompt },
+    { text: "Xem lịch hẹn", onPress: handleOpenReminderList },
+  ], [handleCreateSchedulePrompt, handleOpenReminderList, handlePickAudioFile, handlePickDocument, handlePickImage, handlePickVideo]);
+
+  const getMediaActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
+    if (label.includes("Thư")) return "image";
+    if (label.includes("Video")) return "videocam";
+    if (label.includes("Audio")) return "musical-note";
+    if (label.includes("Tài")) return "document";
+    if (label.includes("liên hệ")) return "person-circle-outline";
+    if (label.includes("Xem")) return "calendar-number-outline";
+    if (label.includes("lịch")) return "calendar-outline";
+    return "ellipse-outline";
+  }, []);
+
+  const handleMediaMenuButtonPress = useCallback((button: MessageActionButton) => {
+    closeMediaMenu();
+    setTimeout(() => {
+      button.onPress();
+    }, 170);
+  }, [closeMediaMenu]);
 
   /**
    * Handle message long press - show action menu
    */
   const handleMessageLongPress = useCallback(
-    (message: MessagePayload) => {
+    (message: MessagePayload, anchor?: MessageActionAnchor) => {
       const messageId = message._id || message.id;
       if (!messageId) return;
 
       const isOwn = message.senderId === currentUser?.id;
       setActionMenuMessage(message);
+      setActionMenuAnchor(anchor || {
+        x: Dimensions.get("window").width / 2 - 20,
+        y: Dimensions.get("window").height / 2,
+        width: 40,
+        height: 40,
+      });
+      setIsClosingActionMenu(false);
       setActionMenuButtons(
         buildMessageActionSheetOptions({
           isOwn,
@@ -2100,6 +2239,11 @@ export const ChatScreen = ({
     [currentUser?.id, handleTranslateMessage],
   );
 
+  const handleActionMenuButtonPress = useCallback((button: MessageActionButton) => {
+    button.onPress();
+    closeActionMenu();
+  }, [closeActionMenu]);
+
   /**
    * Handle save edited message
    */
@@ -2146,7 +2290,7 @@ export const ChatScreen = ({
             message={item.message}
             isOwn={item.message.senderId === currentUserId}
             currentUserId={currentUserId}
-            onLongPress={() => handleMessageLongPress(item.message)}
+            onLongPress={(event) => handleMessageLongPress(item.message, getActionAnchorFromEvent(event))}
             onToggleReaction={(emoji, selected) => {
               const messageId = item.message._id || item.message.id;
               if (messageId) {
@@ -2181,7 +2325,7 @@ export const ChatScreen = ({
         <ImageGalleryBubble
           messages={item.messages}
           isOwn={item.isOwn}
-          onLongPress={() => handleMessageLongPress(item.messages[0])}
+          onLongPress={(event) => handleMessageLongPress(item.messages[0], getActionAnchorFromEvent(event))}
           onImagePress={async (galleryMessages, index) => {
             // Logic for image viewer
             const senderId = galleryMessages[0].senderId;
@@ -2193,14 +2337,14 @@ export const ChatScreen = ({
         />
       );
     },
-    [currentUserId, handleMessageLongPress, actions, highlightedMessageId, messageMap, getAllUserImages, translatedMessages, translatingMessageId, handleOpenProfileCardUser],
+    [currentUserId, handleMessageLongPress, getActionAnchorFromEvent, actions, highlightedMessageId, messageMap, getAllUserImages, translatedMessages, translatingMessageId, handleOpenProfileCardUser],
   );
 
   const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
-    if (label.includes("Trả lời")) return "return-up-back-outline";
+    if (label.includes("Trả lời")) return "arrow-undo-outline";
     if (label.includes("Ghim")) return "pin";
     if (label.includes("Sửa")) return "create-outline";
-    if (label.includes("Thu hồi")) return "refresh-outline";
+    if (label.includes("Thu hồi")) return "return-up-back-outline";
     if (label.includes("Chuyển tiếp")) return "arrow-redo-outline";
     if (label.includes("Xóa")) return "trash-outline";
     return "ellipse-outline";
@@ -2500,9 +2644,7 @@ export const ChatScreen = ({
       <View style={styles.messageComposer}>
         <Pressable
           style={styles.composerIconButton}
-          onPress={() => {
-            setShowMediaMenu(!showMediaMenu);
-          }}
+          onPress={handleOpenMediaMenu}
           disabled={uploading || isBlockedChatError}
         >
           <Ionicons name="attach-outline" size={24} color={uploading || isBlockedChatError ? colors.textMuted : colors.text} />
@@ -2763,53 +2905,17 @@ export const ChatScreen = ({
         </View>
       )}
 
-      <Modal
-        transparent
-        visible={!!actionMenuMessage}
-        animationType="fade"
-        onRequestClose={closeActionMenu}
-      >
-        <Pressable style={styles.contextOverlay} onPress={closeActionMenu}>
-          <View style={styles.contextMenu}>
-            <View style={styles.contextHeader}>
-              <Text style={styles.contextTitle} numberOfLines={1}>
-                {actionMenuMessage?.text?.trim() || "[Media]"}
-              </Text>
-            </View>
-
-            {actionMenuButtons
-              .filter((button) => button.style !== "cancel")
-              .map((button) => (
-                <Pressable
-                  key={button.text}
-                  style={styles.contextItem}
-                  onPress={() => {
-                    closeActionMenu();
-                    button.onPress();
-                  }}
-                >
-                  <Ionicons
-                    name={getActionIconName(button.text)}
-                    size={20}
-                    color={button.style === "destructive" ? colors.danger : colors.accent}
-                  />
-                  <Text
-                    style={[
-                      styles.contextItemText,
-                      button.style === "destructive" && { color: colors.danger },
-                    ]}
-                  >
-                    {button.text}
-                  </Text>
-                </Pressable>
-              ))}
-
-            <Pressable style={[styles.contextItem, styles.contextCancel]} onPress={closeActionMenu}>
-              <Text style={[styles.contextItemText, { color: colors.textMuted, textAlign: "center" }]}>Hủy</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Modal>
+      {actionMenuMessage && actionMenuAnchor ? (
+        <MessageActionBar
+          anchor={actionMenuAnchor}
+          buttons={actionMenuButtons}
+          closing={isClosingActionMenu}
+          getIconName={getActionIconName}
+          onActionPress={handleActionMenuButtonPress}
+          onDismiss={closeActionMenu}
+          onClosed={clearActionMenu}
+        />
+      ) : null}
 
       <ForwardDialog
         visible={showForwardDialog}
@@ -3045,76 +3151,17 @@ export const ChatScreen = ({
         </Pressable>
       </Modal>
 
-      {/* Media Menu Modal */}
-      <Modal
-        transparent
-        visible={showMediaMenu}
-        animationType="fade"
-        onRequestClose={() => {
-          setShowMediaMenu(false);
-        }}
-      >
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => {
-            setShowMediaMenu(false);
-          }}
-        >
-          <View style={styles.mediaMenuContainer}>
-            <Text style={styles.mediaMenuTitle}>Ghim</Text>
-
-            <Pressable
-              style={styles.mediaMenuButton}
-              onPress={() => {
-                handlePickImage();
-              }}
-            >
-              <Ionicons name="image" size={24} color={colors.mediaImageIcon} />
-              <Text style={styles.mediaMenuButtonText}>Thư Viện</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.mediaMenuButton}
-              onPress={() => {
-                handlePickVideo();
-              }}
-            >
-              <Ionicons name="videocam" size={24} color={colors.mediaVideoIcon} />
-              <Text style={styles.mediaMenuButtonText}>Video</Text>
-            </Pressable>
-
-            <Pressable style={styles.mediaMenuButton} onPress={handlePickAudioFile}>
-              <Ionicons name="musical-note" size={24} color={colors.mediaAudioIcon} />
-              <Text style={styles.mediaMenuButtonText}>Audio</Text>
-            </Pressable>
-
-            <Pressable style={styles.mediaMenuButton} onPress={handlePickDocument}>
-              <Ionicons name="document" size={24} color={colors.mediaDocumentIcon} />
-              <Text style={styles.mediaMenuButtonText}>Tài Liệu</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.mediaMenuButton}
-              onPress={() => {
-                setShowMediaMenu(false);
-                setShowContactPicker(true);
-              }}
-            >
-              <Ionicons name="person-circle-outline" size={24} color={colors.accent} />
-              <Text style={styles.mediaMenuButtonText}>Chia sẻ liên hệ</Text>
-            </Pressable>
-
-            <Pressable style={styles.mediaMenuButton} onPress={handleCreateSchedulePrompt}>
-              <Ionicons name="calendar-outline" size={24} color={colors.accentStrong} />
-              <Text style={styles.mediaMenuButtonText}>Tạo lịch</Text>
-            </Pressable>
-
-            <Pressable style={styles.mediaMenuCloseButton} onPress={() => setShowMediaMenu(false)}>
-              <Text style={styles.mediaMenuCloseText}>Hủy</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Modal>
+      {showMediaMenu && mediaMenuAnchor ? (
+        <MessageActionBar
+          anchor={mediaMenuAnchor}
+          buttons={mediaMenuButtons}
+          closing={isClosingMediaMenu}
+          getIconName={getMediaActionIconName}
+          onActionPress={handleMediaMenuButtonPress}
+          onDismiss={closeMediaMenu}
+          onClosed={clearMediaMenu}
+        />
+      ) : null}
     </KeyboardAvoidingView>
   );
 };
@@ -3893,59 +3940,11 @@ const styles = StyleSheet.create({
     color: colors.textOnAccent,
   },
 
-  // Media menu styles
   modalOverlay: {
     flex: 1,
     backgroundColor: colors.overlayDark50,
     justifyContent: "flex-end",
   },
-  mediaMenuContainer: {
-    backgroundColor: colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 32,
-  },
-  mediaMenuTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.text,
-    marginBottom: 16,
-  },
-  mediaMenuButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 12,
-    marginBottom: 10,
-  },
-  mediaMenuButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: colors.text,
-  },
-  mediaMenuCloseButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.contrastBorder,
-    alignItems: "center",
-    marginTop: 6,
-  },
-  mediaMenuCloseText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: colors.contrastText,
-  },
-
   contextOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",

@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { NavigationContainer, createNavigationContainerRef, DefaultTheme } from "@react-navigation/native";
 import { createNativeStackNavigator, type NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useAuth, useFriendRequests, useFriendship } from "../../shared/hooks";
-import { SocketService, type MessagePayload } from "../../shared/services/socketService";
+import { SocketService, type GroupReminder, type MessagePayload } from "../../shared/services/socketService";
 import { playIncomingMessageSound } from "../../shared/services/messageSoundService";
 import { BottomTabBar } from "./components";
 import {
@@ -21,6 +21,7 @@ import {
     GroupChatScreen,
     GroupSettingsScreen,
     AddMembersScreen,
+    ReminderListScreen,
 } from "./screens";
 import { assets, colors } from "./theme";
 
@@ -119,6 +120,12 @@ type RootStackParamList = {
     CreateGroup: undefined;
     GroupSettings: { groupId: string };
     AddMembers: { groupId: string };
+    ReminderList: {
+        conversationId: string;
+        conversationType?: "GROUP" | "PRIVATE";
+        initialReminders?: GroupReminder[];
+        title?: string;
+    };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -513,6 +520,12 @@ const MainShell = () => {
                 navigation.goBack();
             }}
             onOpenPrivateChat={(targetUser) => openPrivateChat(navigation, targetUser)}
+            onOpenReminderList={(conversationId, initialReminders) => navigation.navigate("ReminderList", {
+                conversationId,
+                conversationType: "PRIVATE",
+                initialReminders,
+                title: "Lịch hẹn",
+            })}
             aiSmartReplyEnabled={aiSmartReplyEnabled}
         />
     );
@@ -615,6 +628,11 @@ const MainShell = () => {
                                             navigation.popToTop();
                                             setActiveTab("home");
                                         },
+                                        openReminderList: (conversationId: string) => navigation.navigate("ReminderList", {
+                                            conversationId,
+                                            conversationType: "GROUP",
+                                            title: "Lịch hẹn nhóm",
+                                        }),
                                     }}
                                     onBackPress={() => {
                                         setGroupChatVersion((version) => version + 1);
@@ -628,6 +646,21 @@ const MainShell = () => {
                             {({ route, navigation }) => (
                                 <AddMembersScreen
                                     route={{ params: { groupId: route.params.groupId } }}
+                                    onBackPress={() => navigation.goBack()}
+                                />
+                            )}
+                        </Stack.Screen>
+                        <Stack.Screen name="ReminderList">
+                            {({ route, navigation }) => (
+                                <ReminderListScreen
+                                    route={{
+                                        params: {
+                                            conversationId: route.params.conversationId,
+                                            conversationType: route.params.conversationType,
+                                            initialReminders: route.params.initialReminders,
+                                            title: route.params.title,
+                                        },
+                                    }}
                                     onBackPress={() => navigation.goBack()}
                                 />
                             )}

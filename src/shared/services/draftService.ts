@@ -12,6 +12,14 @@ const DRAFT_KEY_PREFIX = "draft_message_v1_";
 export const DRAFT_MESSAGE_CHANGED_EVENT = "draftMessageChanged";
 
 const getDraftKey = (conversationId: string) => `${DRAFT_KEY_PREFIX}${conversationId}`;
+const REMOTE_DRAFT_DEDUPE_MS = 5000;
+
+const remoteDraftState = new Map<string, { text: string; syncedAt: number; deletedAt: number }>();
+const remoteSyncInFlight = new Map<string, Promise<void>>();
+const remoteDeleteInFlight = new Map<string, Promise<void>>();
+
+const getRemoteState = (conversationId: string) =>
+    remoteDraftState.get(conversationId) || { text: "", syncedAt: 0, deletedAt: 0 };
 
 export const draftService = {
     async getDraft(conversationId: string): Promise<DraftMessage | null> {
@@ -71,20 +79,65 @@ export const draftService = {
     async syncDraft(conversationId: string, text: string): Promise<void> {
         if (!conversationId) return;
 
-        await api.post(
+        const state = getRemoteState(conversationId);
+        const now = Date.now();
+        if (state.text === text && now - state.syncedAt < REMOTE_DRAFT_DEDUPE_MS) {
+            return;
+        }
+
+        const inFlightKey = `${conversationId}:${text}`;
+        const inFlight = remoteSyncInFlight.get(inFlightKey);
+        if (inFlight) {
+            return inFlight;
+        }
+
+        const request = api.post(
             `/conversations/${conversationId}/drafts`,
             { text },
             { suppressErrorLog: true, skipRefresh: true },
-        );
+        ).then(() => {
+            remoteDraftState.set(conversationId, {
+                text,
+                syncedAt: Date.now(),
+                deletedAt: 0,
+            });
+        }).finally(() => {
+            remoteSyncInFlight.delete(inFlightKey);
+        });
+
+        remoteSyncInFlight.set(inFlightKey, request);
+        await request;
     },
 
     async deleteRemoteDraft(conversationId: string): Promise<void> {
         if (!conversationId) return;
 
-        await api.delete(`/conversations/${conversationId}/drafts`, {
+        const state = getRemoteState(conversationId);
+        const now = Date.now();
+        if (!state.text && now - state.deletedAt < REMOTE_DRAFT_DEDUPE_MS) {
+            return;
+        }
+
+        const inFlight = remoteDeleteInFlight.get(conversationId);
+        if (inFlight) {
+            return inFlight;
+        }
+
+        const request = api.delete(`/conversations/${conversationId}/drafts`, {
             suppressErrorLog: true,
             skipRefresh: true,
+        }).then(() => {
+            remoteDraftState.set(conversationId, {
+                text: "",
+                syncedAt: 0,
+                deletedAt: Date.now(),
+            });
+        }).finally(() => {
+            remoteDeleteInFlight.delete(conversationId);
         });
+
+        remoteDeleteInFlight.set(conversationId, request);
+        await request;
     },
 };
 

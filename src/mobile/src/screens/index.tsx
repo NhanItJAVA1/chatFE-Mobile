@@ -13,3 +13,4 @@ export { GroupChatScreen } from "./GroupChatScreen";
 export { GroupInfoScreen } from "./GroupInfoScreen";
 export { GroupSettingsScreen } from "./GroupSettingsScreen";
 export { AddMembersScreen } from "./AddMembersScreen";
+export { ReminderListScreen } from "./ReminderListScreen";

@@ -130,6 +130,10 @@ export interface ReminderEventPayload {
     [key: string]: any;
 }
 
+const PINNED_MESSAGES_CACHE_TTL_MS = 15 * 1000;
+const pinnedMessagesCache = new Map<string, { items: any[]; expiresAt: number }>();
+const pinnedMessagesInFlight = new Map<string, Promise<any[]>>();
+
 // ============================================================================
 // GROUP CHAT EVENT TYPES
 // ============================================================================
@@ -1625,9 +1629,21 @@ export class SocketService {
      * Get pinned messages for conversation (HTTP GET)
      */
     static async getPinnedMessages(conversationId: string): Promise<any[]> {
+        const cached = pinnedMessagesCache.get(conversationId);
+        if (cached && cached.expiresAt > Date.now()) {
+            return cached.items;
+        }
+
+        const inFlight = pinnedMessagesInFlight.get(conversationId);
+        if (inFlight) {
+            return inFlight;
+        }
+
+        const request = (async () => {
         try {
             const response = await apiCall(`/conversations/${conversationId}/pinned-messages`, {
                 method: "GET",
+                suppressErrorLog: true,
             });
 
             // Handle various response formats
@@ -1677,12 +1693,22 @@ export class SocketService {
                     pinnedAt: pin.pinnedAt || new Date().toISOString(),
                 };
             });
+            pinnedMessagesCache.set(conversationId, {
+                items: normalized,
+                expiresAt: Date.now() + PINNED_MESSAGES_CACHE_TTL_MS,
+            });
             return normalized;
         } catch (error: any) {
             console.error('[SocketService] ❌ Failed to load pinned messages:', error?.message);
             // Return empty array on error instead of throwing, so chat still loads
             return [];
+        } finally {
+            pinnedMessagesInFlight.delete(conversationId);
         }
+        })();
+
+        pinnedMessagesInFlight.set(conversationId, request);
+        return request;
     }
 }
 

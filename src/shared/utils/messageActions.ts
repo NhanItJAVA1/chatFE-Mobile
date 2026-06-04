@@ -32,7 +32,7 @@ export const buildMessageActionSheetOptions = ({
     ];
 
     if (isOwn && onRevoke) {
-        buttons.push({ text: "Xóa", style: "destructive", onPress: onRevoke });
+        buttons.push({ text: "Thu hồi", style: "destructive", onPress: onRevoke });
     }
 
     buttons.push({ text: "Xóa phía tôi", style: "destructive", onPress: onDeleteForMe });
