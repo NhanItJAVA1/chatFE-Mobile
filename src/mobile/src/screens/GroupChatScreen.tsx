@@ -2891,10 +2891,9 @@ export const GroupChatScreen: React.FC<{
         return (
             <KeyboardAvoidingView
                 style={styles.screen}
-                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                behavior={Platform.OS === "ios" ? "padding" : undefined}
                 keyboardVerticalOffset={Platform.select({
                     ios: 60,
-                    android: 76 + (StatusBar.currentHeight || 0),
                     default: 0,
                 })}
             >

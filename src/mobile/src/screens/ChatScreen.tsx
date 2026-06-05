@@ -2573,10 +2573,9 @@ export const ChatScreen = ({
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={Platform.select({
         ios: 60,
-        android: 76 + (StatusBar.currentHeight || 0),
         default: 0,
       })}
     >
