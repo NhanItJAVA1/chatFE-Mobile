@@ -18,6 +18,7 @@ import {
   Modal,
   Dimensions,
   ImageBackground,
+  Animated,
 } from "react-native";
 import { Audio } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
@@ -78,6 +79,129 @@ const SAME_MESSAGE_LIMIT = 5;
 const SAME_MESSAGE_DELAY_MS = 3000;
 const AI_ACTION_COOLDOWN_MS = 10000;
 const SMART_REPLY_COOLDOWN_MS = 4000;
+const AVATAR_FAN_ICON_SIZE = 42;
+const AVATAR_FAN_ACTION_OFFSETS = [
+  { x: -108, y: 10 },
+  { x: -88, y: 64 },
+  { x: -34, y: 96 },
+];
+
+type AvatarFanAction = {
+  key: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  onPress: () => void;
+};
+
+const ChatAvatarFanMenu = ({
+  actions,
+  closing,
+  onDismiss,
+  onClosed,
+}: {
+  actions: AvatarFanAction[];
+  closing: boolean;
+  onDismiss: () => void;
+  onClosed: () => void;
+}) => {
+  const animatedValues = useRef<Animated.Value[]>([]);
+  const closingRef = useRef(false);
+
+  if (animatedValues.current.length !== actions.length) {
+    animatedValues.current = actions.map((_, index) => animatedValues.current[index] || new Animated.Value(0));
+  }
+
+  useEffect(() => {
+    closingRef.current = false;
+    animatedValues.current.forEach((value) => value.setValue(0));
+
+    Animated.stagger(
+      28,
+      animatedValues.current.map((value, index) =>
+        Animated.spring(value, {
+          toValue: 1,
+          delay: index * 16,
+          friction: 8,
+          tension: 95,
+          useNativeDriver: true,
+        }),
+      ),
+    ).start();
+  }, [actions.length]);
+
+  const close = useCallback((afterClose?: () => void) => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+
+    Animated.stagger(
+      14,
+      [...animatedValues.current].reverse().map((value) =>
+        Animated.timing(value, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ),
+    ).start(() => {
+      onClosed();
+      afterClose?.();
+    });
+  }, [onClosed]);
+
+  useEffect(() => {
+    if (closing) {
+      close();
+    }
+  }, [close, closing]);
+
+  return (
+    <View style={styles.avatarFanOverlay} pointerEvents="box-none">
+      <Pressable style={StyleSheet.absoluteFill} onPress={onDismiss} />
+      <View style={styles.avatarFanMenu}>
+        {actions.map((action, index) => {
+          const progress = animatedValues.current[index];
+          const offset = AVATAR_FAN_ACTION_OFFSETS[index] || AVATAR_FAN_ACTION_OFFSETS[AVATAR_FAN_ACTION_OFFSETS.length - 1];
+
+          return (
+            <Animated.View
+              key={action.key}
+              style={[
+                styles.avatarFanActionWrap,
+                {
+                  opacity: progress,
+                  transform: [
+                    {
+                      translateX: progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, offset.x],
+                      }),
+                    },
+                    {
+                      translateY: progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, offset.y],
+                      }),
+                    },
+                    {
+                      scale: progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.8, 1],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
+              <Pressable style={styles.avatarFanAction} onPress={() => close(action.onPress)}>
+                <Ionicons name={action.icon} size={20} color={action.color} />
+              </Pressable>
+            </Animated.View>
+          );
+        })}
+      </View>
+    </View>
+  );
+};
 
 const normalizeRateLimitText = (text: string): string => text.trim().replace(/\s+/g, " ").toLowerCase();
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -171,6 +295,7 @@ const MessageBubble: React.FC<{
   isTranslating?: boolean;
 }> = ({ message, isOwn, currentUserId, onLongPress, onPressQuoted, isHighlighted, messageMap, onToggleReaction, onClearMyReactions, onProfileCardPress, translation, isTranslating }) => {
   const [showReactionPicker, setShowReactionPicker] = React.useState(false);
+  const [reactionPickerAnchor, setReactionPickerAnchor] = React.useState<{ x: number; y: number } | null>(null);
   const formatTime = (date: string) => {
     const d = new Date(date);
     return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
@@ -236,37 +361,62 @@ const MessageBubble: React.FC<{
     .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
   const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
   const hasDefaultReaction = !!myLastReaction;
+  const openReactionPicker = (event?: any) => {
+    const nativeEvent = event?.nativeEvent || {};
+    const pageX = Number(nativeEvent.pageX);
+    const pageY = Number(nativeEvent.pageY);
+    setReactionPickerAnchor({
+      x: Number.isFinite(pageX) ? pageX : Dimensions.get("window").width / 2,
+      y: Number.isFinite(pageY) ? pageY : Dimensions.get("window").height / 2,
+    });
+    setShowReactionPicker((value) => !value);
+  };
   const renderReactionPicker = () => (
-    <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
-      {QUICK_REACTIONS.map((emoji) => {
-        const selected = (message.reactions || []).some(
-          (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId,
-        );
-        return (
+    <Modal visible={showReactionPicker} transparent animationType="fade" onRequestClose={() => setShowReactionPicker(false)}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowReactionPicker(false)} />
+      <View
+        style={[
+          styles.quickReactionBar,
+          styles.quickReactionModalBar,
+          {
+            left: Math.min(
+              Math.max(8, (reactionPickerAnchor?.x || Dimensions.get("window").width / 2) - (hasDefaultReaction ? 118 : 102)),
+              Dimensions.get("window").width - (hasDefaultReaction ? 236 : 204) - 8,
+            ),
+            top: Math.max(8, (reactionPickerAnchor?.y || Dimensions.get("window").height / 2) - 56),
+          },
+        ]}
+      >
+        {QUICK_REACTIONS.map((emoji) => {
+          const selected = (message.reactions || []).some(
+            (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId,
+          );
+          return (
+            <Pressable
+              key={emoji}
+              style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+              onPress={() => {
+                setShowReactionPicker(false);
+                onToggleReaction?.(emoji, false);
+              }}
+            >
+              <Text style={styles.quickReactionText}>{emoji}</Text>
+            </Pressable>
+          );
+        })}
+        {hasDefaultReaction && (
           <Pressable
-            key={emoji}
-            style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+            style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
             onPress={() => {
               setShowReactionPicker(false);
-              onToggleReaction?.(emoji, false);
+              onClearMyReactions?.();
             }}
           >
-            <Text style={styles.quickReactionText}>{emoji}</Text>
+            <Ionicons name="close" size={17} color={colors.danger} />
           </Pressable>
-        );
-      })}
-      {hasDefaultReaction && (
-        <Pressable
-          style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
-          onPress={() => {
-            setShowReactionPicker(false);
-            onClearMyReactions?.();
-          }}
-        >
-          <Ionicons name="close" size={17} color={colors.danger} />
-        </Pressable>
-      )}
-    </View>
+        )}
+      </View>
+    </Modal>
   );
 
   React.useEffect(() => {
@@ -303,7 +453,7 @@ const MessageBubble: React.FC<{
               <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
             </View>
           )}
-          {!hasText && showReactionPicker && renderReactionPicker()}
+          {!hasText && renderReactionPicker()}
           {message.media.map((m: any, idx: number) => (
             <MediaMessage
               key={idx}
@@ -329,7 +479,7 @@ const MessageBubble: React.FC<{
               style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
               hitSlop={8}
               onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
-              onLongPress={() => setShowReactionPicker((value) => !value)}
+              onLongPress={openReactionPicker}
               delayLongPress={220}
             >
               {hasDefaultReaction ? (
@@ -346,7 +496,7 @@ const MessageBubble: React.FC<{
 
       {!isProfileCard && !hasMedia && isJumboEmojiOnly && (
         <View style={styles.jumboEmojiWrap}>
-          {showReactionPicker && renderReactionPicker()}
+          {renderReactionPicker()}
           <AnimatedEmojiMessage
             emoji={trimmedText}
             isNew={message.createdAt ? new Date().getTime() - new Date(message.createdAt).getTime() < 5000 : false}
@@ -382,7 +532,7 @@ const MessageBubble: React.FC<{
             style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
             hitSlop={8}
             onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
-            onLongPress={() => setShowReactionPicker((value) => !value)}
+            onLongPress={openReactionPicker}
             delayLongPress={220}
           >
             {hasDefaultReaction ? (
@@ -398,14 +548,18 @@ const MessageBubble: React.FC<{
 
       {/* Text bubble */}
       {!isProfileCard && hasText && !isJumboEmojiOnly && (
-        <View style={[styles.bubble, isOwn ? styles.outgoingBubble : styles.incomingBubble]}>
+        <View style={[
+          styles.bubble,
+          isOwn ? styles.outgoingBubble : styles.incomingBubble,
+          reactionGroups.length > 0 && styles.bubbleWithReactions,
+        ]}>
           {isForwarded && (
             <View style={styles.forwardedLabelRow}>
               <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
               <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
             </View>
           )}
-          {showReactionPicker && renderReactionPicker()}
+          {renderReactionPicker()}
           {/* Quoted message block if this is a reply */}
           {(() => {
             const hasQuoted = resolvedQuotedMessage || message.quotedMessageId;
@@ -465,7 +619,7 @@ const MessageBubble: React.FC<{
             style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
             hitSlop={8}
             onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
-            onLongPress={() => setShowReactionPicker((value) => !value)}
+            onLongPress={openReactionPicker}
             delayLongPress={220}
           >
             {hasDefaultReaction ? (
@@ -737,6 +891,8 @@ export const ChatScreen = ({
   const [viewingGalleryMessages, setViewingGalleryMessages] = React.useState<MessagePayload[] | null>(null);
   const [selectedImageIndex, setSelectedImageIndex] = React.useState(0);
   const [allViewerImages, setAllViewerImages] = React.useState<Array<{ uri: string; key: string }>>([]);
+  const [showAvatarFanMenu, setShowAvatarFanMenu] = React.useState(false);
+  const [isClosingAvatarFanMenu, setIsClosingAvatarFanMenu] = React.useState(false);
   const [showAvatarMenu, setShowAvatarMenu] = React.useState(false);
   const [unfriending, setUnfriending] = React.useState(false);
   const [showAiQuickMenu, setShowAiQuickMenu] = React.useState(false);
@@ -1838,6 +1994,50 @@ export const ChatScreen = ({
     setShowAiQuickMenu(true);
   }, []);
 
+  const closeAvatarFanMenu = useCallback(() => {
+    if (!showAvatarFanMenu || isClosingAvatarFanMenu) return;
+    setIsClosingAvatarFanMenu(true);
+  }, [isClosingAvatarFanMenu, showAvatarFanMenu]);
+
+  const clearAvatarFanMenu = useCallback(() => {
+    setShowAvatarFanMenu(false);
+    setIsClosingAvatarFanMenu(false);
+  }, []);
+
+  const toggleAvatarFanMenu = useCallback(() => {
+    if (showAvatarFanMenu) {
+      closeAvatarFanMenu();
+      return;
+    }
+
+    setIsClosingAvatarFanMenu(false);
+    setShowAvatarFanMenu(true);
+  }, [closeAvatarFanMenu, showAvatarFanMenu]);
+
+  const avatarFanActions = useMemo<AvatarFanAction[]>(() => [
+    {
+      key: "ai",
+      icon: "sparkles",
+      color: colors.textOnAccent,
+      onPress: showAiMenu,
+    },
+    {
+      key: "share",
+      icon: "share-social-outline",
+      color: colors.text,
+      onPress: () => {
+        if (!friendId || isSelfChat) return;
+        setShowShareProfileSheet(true);
+      },
+    },
+    {
+      key: "menu",
+      icon: "ellipsis-horizontal",
+      color: colors.text,
+      onPress: () => setShowAvatarMenu(true),
+    },
+  ], [friendId, isSelfChat, showAiMenu]);
+
   const handleTranslateMessage = useCallback(async (message: MessagePayload) => {
     const messageId = message._id || message.id;
     if (!messageId || !message.text?.trim()) return;
@@ -2341,10 +2541,10 @@ export const ChatScreen = ({
   );
 
   const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
-    if (label.includes("Trả lời")) return "arrow-undo-outline";
+    if (label.includes("Trả lời")) return "chatbox-ellipses-outline";
     if (label.includes("Ghim")) return "pin";
     if (label.includes("Sửa")) return "create-outline";
-    if (label.includes("Thu hồi")) return "return-up-back-outline";
+    if (label.includes("Thu hồi")) return "refresh-outline";
     if (label.includes("Chuyển tiếp")) return "arrow-redo-outline";
     if (label.includes("Xóa")) return "trash-outline";
     return "ellipse-outline";
@@ -2392,9 +2592,6 @@ export const ChatScreen = ({
           <Text style={styles.chatHeaderSubtitle}>{typingUsers.size > 0 ? "đang gõ..." : "trực tuyến 1 giờ trước"}</Text>
         </View>
         <View style={styles.headerActionCluster}>
-          <Pressable style={styles.aiHeaderButton} onPress={showAiMenu}>
-            <Ionicons name="sparkles" size={18} color={colors.textOnAccent} />
-          </Pressable>
           <Pressable
             style={[styles.headerIconButton, isSelfChat && styles.headerIconButtonDisabled]}
             onPress={handleStartAudioCall}
@@ -2403,18 +2600,34 @@ export const ChatScreen = ({
             <Ionicons name="call" size={18} color={isSelfChat ? colors.textMuted : colors.text} />
           </Pressable>
         </View>
-        <Pressable style={styles.headerAvatarWrap} onPress={() => setShowAvatarMenu(true)}>
-          {userAvatar ? (
-            <Image
-              source={{ uri: userAvatar }}
-              blurRadius={0.5}
-              style={[styles.avatarImage, { width: 40, height: 40, borderRadius: 20 }]}
+        <View style={styles.headerAvatarMenuWrap}>
+          <Pressable style={styles.headerAvatarWrap} onPress={toggleAvatarFanMenu}>
+            {userAvatar ? (
+              <Image
+                source={{ uri: userAvatar }}
+                blurRadius={0.5}
+                style={[styles.avatarImage, { width: 40, height: 40, borderRadius: 20 }]}
+              />
+            ) : (
+              <Avatar label={userInitials} size={40} backgroundColor={userColor} textSize={13} />
+            )}
+          </Pressable>
+          {showAvatarFanMenu ? (
+            <ChatAvatarFanMenu
+              actions={avatarFanActions}
+              closing={isClosingAvatarFanMenu}
+              onDismiss={closeAvatarFanMenu}
+              onClosed={clearAvatarFanMenu}
             />
-          ) : (
-            <Avatar label={userInitials} size={40} backgroundColor={userColor} textSize={13} />
-          )}
-        </Pressable>
+          ) : null}
+        </View>
       </View>
+      {showAvatarFanMenu ? (
+        <Pressable
+          style={styles.avatarFanScreenDismiss}
+          onPress={closeAvatarFanMenu}
+        />
+      ) : null}
 
       <Modal visible={showMuteDialog} transparent animationType="fade" onRequestClose={() => setShowMuteDialog(false)}>
         <Pressable style={styles.muteDialogOverlay} onPress={() => setShowMuteDialog(false)}>
@@ -2910,6 +3123,7 @@ export const ChatScreen = ({
           anchor={actionMenuAnchor}
           buttons={actionMenuButtons}
           closing={isClosingActionMenu}
+          layout={String(actionMenuMessage.senderId || "") === String(currentUserId) ? "fan-left" : "fan-right"}
           getIconName={getActionIconName}
           onActionPress={handleActionMenuButtonPress}
           onDismiss={closeActionMenu}
@@ -3094,18 +3308,6 @@ export const ChatScreen = ({
                   )}
                 </Pressable>
                 <View style={styles.menuDivider} />
-                <Pressable
-                  style={styles.menuItem}
-                  onPress={() => {
-                    setShowAvatarMenu(false);
-                    setShowShareProfileSheet(true);
-                  }}
-                  disabled={!friendId}
-                >
-                  <Ionicons name="share-social-outline" size={20} color={colors.text} />
-                  <Text style={styles.menuItemText}>Chia sẻ hồ sơ</Text>
-                </Pressable>
-                <View style={styles.menuDivider} />
                 <Pressable style={[styles.menuItem, isBlockedByMe && styles.menuItemDanger]} onPress={handleToggleBlock} disabled={blockLoading}>
                   {blockLoading ? (
                     <ActivityIndicator color={isBlockedByMe ? colors.dangerStrong : colors.accent} />
@@ -3221,14 +3423,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "rgba(0,0,0,0.1)",
+    backgroundColor: "transparent",
     borderBottomWidth: 0,
+    overflow: "visible",
+    zIndex: 30,
+    elevation: 30,
   },
   backButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "rgba(30,30,30,0.9)",
+    backgroundColor: "rgba(28,28,32,0.38)",
     borderWidth: 1,
     borderColor: colors.overlayWhite18,
     alignItems: "center",
@@ -3237,18 +3442,14 @@ const styles = StyleSheet.create({
   chatHeaderCard: {
     flex: 1,
     maxWidth: 280,
-    backgroundColor: "rgba(30,30,30,0.9)",
+    backgroundColor: "rgba(28,28,32,0.38)",
     borderRadius: 24,
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: colors.overlayWhite18,
     alignItems: "center",
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.22,
-    shadowRadius: 12,
-    elevation: 6,
+    elevation: 0,
   },
   headerActionCluster: {
     flexDirection: "row",
@@ -3259,7 +3460,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: "rgba(30,30,30,0.86)",
+    backgroundColor: "rgba(28,28,32,0.38)",
     borderWidth: 1,
     borderColor: colors.overlayWhite18,
     alignItems: "center",
@@ -3284,9 +3485,68 @@ const styles = StyleSheet.create({
     borderRadius: 23,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(28,28,32,0.38)",
     borderWidth: 1,
     borderColor: colors.overlayWhite18,
+  },
+  headerAvatarMenuWrap: {
+    width: 46,
+    height: 46,
+    position: "relative",
+    overflow: "visible",
+    zIndex: 80,
+    elevation: 80,
+  },
+  avatarFanOverlay: {
+    position: "absolute",
+    left: -154,
+    right: -16,
+    top: -16,
+    bottom: -150,
+    overflow: "visible",
+    zIndex: 90,
+    elevation: 90,
+  },
+  avatarFanScreenDismiss: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "transparent",
+    zIndex: 20,
+    elevation: 20,
+  },
+  avatarFanMenu: {
+    position: "absolute",
+    right: 3,
+    top: 19,
+    width: AVATAR_FAN_ICON_SIZE,
+    height: AVATAR_FAN_ICON_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "visible",
+    zIndex: 100,
+    elevation: 100,
+  },
+  avatarFanActionWrap: {
+    position: "absolute",
+    width: AVATAR_FAN_ICON_SIZE,
+    height: AVATAR_FAN_ICON_SIZE,
+    borderRadius: AVATAR_FAN_ICON_SIZE / 2,
+    zIndex: 110,
+    elevation: 110,
+  },
+  avatarFanAction: {
+    width: AVATAR_FAN_ICON_SIZE,
+    height: AVATAR_FAN_ICON_SIZE,
+    borderRadius: AVATAR_FAN_ICON_SIZE / 2,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.overlayDark94,
+    borderWidth: 1,
+    borderColor: colors.overlayWhite18,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    elevation: 110,
   },
   aiHeaderButton: {
     width: 28,
@@ -3311,6 +3571,7 @@ const styles = StyleSheet.create({
   },
   bubbleRow: {
     flexDirection: "column",
+    position: "relative",
   },
   incomingRow: {
     alignItems: "flex-start",
@@ -3321,12 +3582,15 @@ const styles = StyleSheet.create({
   bubble: {
     maxWidth: "82%",
     minWidth: 76,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    paddingBottom: 18,
-    marginBottom: 10,
+    borderRadius: 17,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    paddingBottom: 8,
+    marginBottom: 7,
     position: "relative",
+  },
+  bubbleWithReactions: {
+    marginBottom: 18,
   },
   galleryBubble: {
     paddingHorizontal: 10,
@@ -3344,7 +3608,7 @@ const styles = StyleSheet.create({
   bubbleText: {
     color: colors.textOnAccent,
     fontSize: 15,
-    lineHeight: 20,
+    lineHeight: 18,
     fontWeight: "500",
   },
   incomingText: {
@@ -3395,15 +3659,14 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     alignItems: "center",
     gap: 6,
-    marginTop: 6,
+    marginTop: 1,
   },
   bubbleTime: {
     color: colors.overlayWhite75,
-    fontSize: 11,
+    fontSize: 10,
   },
   reactionRow: {
     position: "absolute",
-    left: 0,
     bottom: -12,
     flexDirection: "row",
     flexWrap: "wrap",
@@ -3412,9 +3675,11 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   reactionRowOwn: {
+    left: 18,
     justifyContent: "flex-start",
   },
   reactionRowOther: {
+    right: 18,
     justifyContent: "flex-start",
   },
   reactionPill: {
@@ -3450,7 +3715,7 @@ const styles = StyleSheet.create({
     color: colors.overlayWhite75,
   },
   mediaReactionWrap: {
-    marginBottom: 10,
+    marginBottom: 18,
     minWidth: 76,
     position: "relative",
   },
@@ -3467,7 +3732,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   quickHeartButtonOwn: {
-    right: -8,
+    left: -8,
   },
   quickHeartButtonOther: {
     right: -8,
@@ -3490,14 +3755,19 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
     borderColor: colors.border,
-    zIndex: 10,
-    elevation: 10,
+    zIndex: 999,
+    elevation: 999,
   },
   quickReactionBarOwn: {
     right: 0,
   },
   quickReactionBarOther: {
     left: 0,
+  },
+  quickReactionModalBar: {
+    bottom: undefined,
+    right: undefined,
+    position: "absolute",
   },
   quickReactionOption: {
     width: 28,
@@ -3619,9 +3889,8 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: colors.surfaceTransparent,
-    borderTopWidth: 1,
-    borderTopColor: colors.overlayWhite10,
+    backgroundColor: "transparent",
+    borderTopWidth: 0,
   },
   blockBanner: {
     flexDirection: "row",
@@ -3643,9 +3912,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.inputBgTransparent,
+    backgroundColor: "rgba(28,28,32,0.46)",
     borderWidth: 1,
-    borderColor: colors.overlayWhite10,
+    borderColor: colors.overlayWhite18,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -3653,10 +3922,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.inputBgTransparent,
+    backgroundColor: "rgba(28,28,32,0.46)",
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: colors.overlayWhite10,
+    borderColor: colors.overlayWhite18,
     paddingHorizontal: 16,
   },
   composerInput: {
@@ -3758,9 +4027,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentStrong,
   },
   composerMicButton: {
-    backgroundColor: colors.inputBgTransparent,
+    backgroundColor: "rgba(28,28,32,0.46)",
     borderWidth: 1,
-    borderColor: colors.overlayWhite10,
+    borderColor: colors.overlayWhite18,
   },
   composerActionButtonDisabled: {
     opacity: 0.55,

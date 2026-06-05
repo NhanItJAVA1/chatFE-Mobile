@@ -8,7 +8,6 @@ import {
 import { colors } from "../theme";
 import type { MessagePayload, QuotedMessage } from "../../../shared/services/socketService";
 import { useUserCache } from "@/shared/hooks/useUserCache";
-import { resolveUserName } from "@/shared/cache/userCache";
 
 interface QuotedMessageBlockProps {
     quotedMessage?: MessagePayload | QuotedMessage;
@@ -33,17 +32,17 @@ export const QuotedMessageBlock: React.FC<QuotedMessageBlockProps> = ({
     onPress,
 }) => {
     // Sử dụng Hook để lấy thông tin user một cách đúng đắn trong React
-    const { user } = useUserCache(quotedMessage.senderId);
+    const { user } = useUserCache(quotedMessage?.senderId || "");
     const senderName = user?.name ?? "Unknown";
 
 
 
     // Handle different message types
-    const hasMedia = quotedMessage.media && quotedMessage.media.length > 0;
-    const messageText = quotedMessage.text
+    const hasMedia = quotedMessage?.media && quotedMessage.media.length > 0;
+    const messageText = quotedMessage?.text
         ? quotedMessage.text
         : hasMedia
-            ? `📎 Media: ${quotedMessage.media.length} item(s)`
+            ? `Media: ${quotedMessage?.media?.length || 0} item(s)`
             : "[Message not available]";
 
     // Truncate long text with ellipsis
@@ -89,58 +88,60 @@ export const QuotedMessageBlock: React.FC<QuotedMessageBlockProps> = ({
 
 const styles = StyleSheet.create({
     quotedWrapper: {
-        marginBottom: 12,
+        marginBottom: 7,
         alignSelf: 'stretch',
-        minWidth: 200,
+        minWidth: 168,
     },
     quotedContainer: {
         flexDirection: "row",
         alignItems: "flex-start",
-        paddingHorizontal: 12,
-        paddingVertical: 12,
-        borderRadius: 8,
+        paddingHorizontal: 9,
+        paddingVertical: 7,
+        borderRadius: 10,
         overflow: "hidden",
-        minHeight: 70,
         alignSelf: 'stretch',
         flexShrink: 0,
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.16)",
     },
     quotedContainerOwn: {
         // Own message (pink background) - use subtle white overlay
-        backgroundColor: "rgba(255, 255, 255, 0.2)",
+        backgroundColor: "rgba(255, 255, 255, 0.14)",
     },
     quotedContainerOther: {
         // Other message (gray background) - use subtle white overlay
-        backgroundColor: "rgba(255, 255, 255, 0.1)",
+        backgroundColor: "rgba(255, 255, 255, 0.08)",
     },
     quotedBorderLeft: {
-        width: 4,
+        width: 3,
         backgroundColor: colors.accent,
-        borderRadius: 2,
-        marginRight: 10,
+        borderRadius: 3,
+        marginRight: 8,
+        alignSelf: "stretch",
     },
     quotedContent: {
         flex: 1,
         justifyContent: "center",
     },
     quotedSender: {
-        fontSize: 12,
-        fontWeight: "800", // Extra bold
+        fontSize: 11,
+        fontWeight: "800",
         color: colors.textOnAccent, // White text for contrast
-        marginBottom: 5,
+        marginBottom: 2,
     },
     quotedText: {
-        fontSize: 13,
-        lineHeight: 18,
+        fontSize: 12,
+        lineHeight: 16,
         color: colors.textOnAccent,
         opacity: 0.85, // High opacity for readability
     },
     quotedDivider: {
-        height: 1.5,
+        height: 1,
         backgroundColor: colors.textOnAccent,
-        opacity: 0.3,
-        marginLeft: 12,
-        marginRight: 12,
-        marginTop: 0,
+        opacity: 0.18,
+        marginLeft: 10,
+        marginRight: 10,
+        marginTop: 5,
     },
 });
 

@@ -255,25 +255,33 @@ type FanMenuAction = {
 
 const FAN_ICON_SIZE = 42;
 const FAN_ACTION_OFFSETS = [
-    { x: -76, y: 18 },
-    { x: -42, y: -34 },
-    { x: 22, y: -34 },
+    { x: -108, y: 10 },
+    { x: -88, y: 64 },
+    { x: -34, y: 96 },
 ];
 
 const GroupAvatarFanMenu = ({
     actions,
+    closing,
     onDismiss,
+    onClosed,
 }: {
     actions: FanMenuAction[];
+    closing: boolean;
     onDismiss: () => void;
+    onClosed: () => void;
 }) => {
     const animatedValues = useRef<Animated.Value[]>([]);
+    const closingRef = useRef(false);
 
     if (animatedValues.current.length !== actions.length) {
         animatedValues.current = actions.map((_, index) => animatedValues.current[index] || new Animated.Value(0));
     }
 
     useEffect(() => {
+        closingRef.current = false;
+        animatedValues.current.forEach((value) => value.setValue(0));
+
         Animated.stagger(
             28,
             animatedValues.current.map((value, index) =>
@@ -289,6 +297,9 @@ const GroupAvatarFanMenu = ({
     }, [actions.length]);
 
     const close = useCallback((afterClose?: () => void) => {
+        if (closingRef.current) return;
+        closingRef.current = true;
+
         Animated.stagger(
             14,
             [...animatedValues.current].reverse().map((value) =>
@@ -299,14 +310,20 @@ const GroupAvatarFanMenu = ({
                 }),
             ),
         ).start(() => {
-            onDismiss();
+            onClosed();
             afterClose?.();
         });
-    }, [onDismiss]);
+    }, [onClosed]);
+
+    useEffect(() => {
+        if (closing) {
+            close();
+        }
+    }, [close, closing]);
 
     return (
         <View style={styles.avatarFanOverlay} pointerEvents="box-none">
-            <Pressable style={StyleSheet.absoluteFill} onPress={() => close()} />
+            <Pressable style={StyleSheet.absoluteFill} onPress={onDismiss} />
             <View style={styles.avatarFanMenu}>
                 {actions.map((action, index) => {
                     const progress = animatedValues.current[index];
@@ -388,6 +405,7 @@ const GroupMessageBubble: React.FC<{
     messageMap = {},
 }) => {
         const [showReactionPicker, setShowReactionPicker] = useState(false);
+        const [reactionPickerAnchor, setReactionPickerAnchor] = useState<{ x: number; y: number } | null>(null);
         const hasMedia = message.media && message.media.length > 0;
         const trimmedText = String(message.text || "").trim();
         const compactText = String(message.text || "").replace(/\s+/g, "");
@@ -429,6 +447,16 @@ const GroupMessageBubble: React.FC<{
         const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
         const hasDefaultReaction = !!myLastReaction;
         const timeText = new Date(message.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+        const openReactionPicker = (event?: any) => {
+            const nativeEvent = event?.nativeEvent || {};
+            const pageX = Number(nativeEvent.pageX);
+            const pageY = Number(nativeEvent.pageY);
+            setReactionPickerAnchor({
+                x: Number.isFinite(pageX) ? pageX : Dimensions.get("window").width / 2,
+                y: Number.isFinite(pageY) ? pageY : Dimensions.get("window").height / 2,
+            });
+            setShowReactionPicker((value) => !value);
+        };
 
         const renderSenderName = () => !isOwn ? (
             <View style={styles.senderNameRow}>
@@ -438,7 +466,21 @@ const GroupMessageBubble: React.FC<{
         ) : null;
 
         const renderReactionPicker = () => (
-            <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
+            <Modal visible={showReactionPicker} transparent animationType="fade" onRequestClose={() => setShowReactionPicker(false)}>
+                <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowReactionPicker(false)} />
+                <View
+                    style={[
+                        styles.quickReactionBar,
+                        styles.quickReactionModalBar,
+                        {
+                            left: Math.min(
+                                Math.max(8, (reactionPickerAnchor?.x || Dimensions.get("window").width / 2) - (hasDefaultReaction ? 118 : 102)),
+                                Dimensions.get("window").width - (hasDefaultReaction ? 236 : 204) - 8,
+                            ),
+                            top: Math.max(8, (reactionPickerAnchor?.y || Dimensions.get("window").height / 2) - 56),
+                        },
+                    ]}
+                >
                 {QUICK_REACTIONS.map((emoji) => {
                     const selected = ((message.reactions || []) as any[]).some(
                         (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
@@ -467,7 +509,8 @@ const GroupMessageBubble: React.FC<{
                         <Ionicons name="close" size={17} color={colors.danger} />
                     </Pressable>
                 )}
-            </View>
+                </View>
+            </Modal>
         );
 
         const renderReactionSummary = () => reactionGroups.length > 0 ? (
@@ -488,7 +531,7 @@ const GroupMessageBubble: React.FC<{
                 style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
                 hitSlop={8}
                 onPress={() => onToggleReaction?.(defaultReactionEmoji, false)}
-                onLongPress={() => setShowReactionPicker((value) => !value)}
+                onLongPress={openReactionPicker}
                 delayLongPress={220}
             >
                 {hasDefaultReaction ? (
@@ -549,7 +592,7 @@ const GroupMessageBubble: React.FC<{
                                     <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
                                 </View>
                             )}
-                            {!hasText && showReactionPicker && renderReactionPicker()}
+                            {!hasText && renderReactionPicker()}
                             {message.media.map((m: any, idx: number) => (
                                 <MediaMessage
                                     key={idx}
@@ -565,7 +608,7 @@ const GroupMessageBubble: React.FC<{
 
                     {!isProfileCard && !hasMedia && isJumboEmojiOnly && (
                         <View style={styles.jumboEmojiWrap}>
-                            {showReactionPicker && renderReactionPicker()}
+                            {renderReactionPicker()}
                             {renderSenderName()}
                             <AnimatedEmojiMessage
                                 emoji={trimmedText}
@@ -592,14 +635,18 @@ const GroupMessageBubble: React.FC<{
                     )}
 
                     {!isProfileCard && hasText && !isJumboEmojiOnly && (
-                        <View style={[styles.messageBubble, isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther]}>
+                        <View style={[
+                            styles.messageBubble,
+                            isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
+                            reactionGroups.length > 0 && styles.messageBubbleWithReactions,
+                        ]}>
                             {isForwarded && (
                                 <View style={styles.forwardedLabelRow}>
                                     <Ionicons name="arrow-redo-outline" size={12} color={isOwn ? colors.overlayWhite75 : colors.textMuted} />
                                     <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
                                 </View>
                             )}
-                            {showReactionPicker && renderReactionPicker()}
+                            {renderReactionPicker()}
                             {renderSenderName()}
                             {resolvedQuotedMessage ? (
                                 <QuotedMessageBlock
@@ -811,6 +858,7 @@ export const GroupChatScreen: React.FC<{
         const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
         const [showForwardDialog, setShowForwardDialog] = useState(false);
         const [showAvatarFanMenu, setShowAvatarFanMenu] = useState(false);
+        const [isClosingAvatarFanMenu, setIsClosingAvatarFanMenu] = useState(false);
         const [forwardMessageIds, setForwardMessageIds] = useState<string[]>([]);
         const [showEditDialog, setShowEditDialog] = useState(false);
         const [editText, setEditText] = useState("");
@@ -820,6 +868,7 @@ export const GroupChatScreen: React.FC<{
         const [actionMenuAnchor, setActionMenuAnchor] = useState<MessageActionAnchor | null>(null);
         const [isClosingActionMenu, setIsClosingActionMenu] = useState(false);
         const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
+        const [reactionPickerAnchor, setReactionPickerAnchor] = useState<{ x: number; y: number } | null>(null);
         const [selectedImageIndex, setSelectedImageIndex] = useState(0);
         const [allViewerImages, setAllViewerImages] = useState<Array<{ uri: string; key: string }>>([]);
         const [showAiQuickMenu, setShowAiQuickMenu] = useState(false);
@@ -1840,6 +1889,18 @@ export const GroupChatScreen: React.FC<{
             }
         }, []);
 
+        const openReactionPicker = useCallback((event: any, messageId: string) => {
+            const nativeEvent = event?.nativeEvent || {};
+            const pageX = Number(nativeEvent.pageX);
+            const pageY = Number(nativeEvent.pageY);
+
+            setReactionPickerAnchor({
+                x: Number.isFinite(pageX) ? pageX : Dimensions.get("window").width / 2,
+                y: Number.isFinite(pageY) ? pageY : Dimensions.get("window").height / 2,
+            });
+            setReactionPickerMessageId((value) => value === messageId ? null : messageId);
+        }, []);
+
         const closeActionMenu = useCallback(() => {
             if (!actionMenuMessage) return;
             setIsClosingActionMenu(true);
@@ -2397,6 +2458,57 @@ export const GroupChatScreen: React.FC<{
                     .find((reaction: any) => reaction?.emoji && currentUserId && reaction.userId === currentUserId);
                 const defaultReactionEmoji = myLastReaction?.emoji || "❤️";
                 const hasDefaultReaction = !!myLastReaction;
+                const renderInlineReactionPicker = () => (
+                    <Modal visible={reactionPickerMessageId === messageId} transparent animationType="fade" onRequestClose={() => setReactionPickerMessageId(null)}>
+                        <Pressable style={StyleSheet.absoluteFill} onPress={() => setReactionPickerMessageId(null)} />
+                        <View
+                            style={[
+                                styles.quickReactionBar,
+                                styles.quickReactionModalBar,
+                                {
+                                    left: Math.min(
+                                        Math.max(8, (reactionPickerAnchor?.x || Dimensions.get("window").width / 2) - (hasDefaultReaction ? 118 : 102)),
+                                        Dimensions.get("window").width - (hasDefaultReaction ? 236 : 204) - 8,
+                                    ),
+                                    top: Math.max(8, (reactionPickerAnchor?.y || Dimensions.get("window").height / 2) - 56),
+                                },
+                            ]}
+                        >
+                            {QUICK_REACTIONS.map((emoji) => {
+                                const selected = ((item.reactions || []) as any[]).some(
+                                    (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
+                                );
+                                return (
+                                    <Pressable
+                                        key={emoji}
+                                        style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
+                                        onPress={() => {
+                                            setReactionPickerMessageId(null);
+                                            if (messageId) {
+                                                handleToggleReaction(messageId, emoji, false);
+                                            }
+                                        }}
+                                    >
+                                        <Text style={styles.quickReactionText}>{emoji}</Text>
+                                    </Pressable>
+                                );
+                            })}
+                            {hasDefaultReaction && (
+                                <Pressable
+                                    style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
+                                    onPress={() => {
+                                        setReactionPickerMessageId(null);
+                                        if (messageId) {
+                                            handleToggleReaction(messageId, "", true);
+                                        }
+                                    }}
+                                >
+                                    <Ionicons name="close" size={17} color={colors.danger} />
+                                </Pressable>
+                            )}
+                        </View>
+                    </Modal>
+                );
 
                 return (
                     <HighlightableMessage
@@ -2439,42 +2551,7 @@ export const GroupChatScreen: React.FC<{
                                             <Text style={styles.forwardedLabelText}>Chuyển tiếp</Text>
                                         </View>
                                     )}
-                                    {!hasText && reactionPickerMessageId === messageId && (
-                                        <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
-                                            {QUICK_REACTIONS.map((emoji) => {
-                                                const selected = ((item.reactions || []) as any[]).some(
-                                                    (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
-                                                );
-                                                return (
-                                                    <Pressable
-                                                        key={emoji}
-                                                        style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
-                                                        onPress={() => {
-                                                            setReactionPickerMessageId(null);
-                                                            if (messageId) {
-                                                                handleToggleReaction(messageId, emoji, false);
-                                                            }
-                                                        }}
-                                                    >
-                                                        <Text style={styles.quickReactionText}>{emoji}</Text>
-                                                    </Pressable>
-                                                );
-                                            })}
-                                            {hasDefaultReaction && (
-                                                <Pressable
-                                                    style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
-                                                    onPress={() => {
-                                                        setReactionPickerMessageId(null);
-                                                        if (messageId) {
-                                                            handleToggleReaction(messageId, "", true);
-                                                        }
-                                                    }}
-                                                >
-                                                    <Ionicons name="close" size={17} color={colors.danger} />
-                                                </Pressable>
-                                            )}
-                                        </View>
-                                    )}
+                                    {!hasText && renderInlineReactionPicker()}
                                     {hasGalleryMedia ? (
                                         <View style={styles.galleryBubble}>
                                             <View style={styles.galleryGrid}>
@@ -2524,7 +2601,7 @@ export const GroupChatScreen: React.FC<{
                                             style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
                                             hitSlop={8}
                                             onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
-                                            onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
+                                            onLongPress={(event) => messageId && openReactionPicker(event, messageId)}
                                             delayLongPress={220}
                                         >
                                             {hasDefaultReaction ? (
@@ -2541,42 +2618,7 @@ export const GroupChatScreen: React.FC<{
 
                             {!hasMedia && isJumboEmojiOnly && (
                                 <View style={styles.jumboEmojiWrap}>
-                                    {reactionPickerMessageId === messageId && (
-                                        <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
-                                            {QUICK_REACTIONS.map((emoji) => {
-                                                const selected = ((item.reactions || []) as any[]).some(
-                                                    (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
-                                                );
-                                                return (
-                                                    <Pressable
-                                                        key={emoji}
-                                                        style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
-                                                        onPress={() => {
-                                                            setReactionPickerMessageId(null);
-                                                            if (messageId) {
-                                                                handleToggleReaction(messageId, emoji, false);
-                                                            }
-                                                        }}
-                                                    >
-                                                        <Text style={styles.quickReactionText}>{emoji}</Text>
-                                                    </Pressable>
-                                                );
-                                            })}
-                                            {hasDefaultReaction && (
-                                                <Pressable
-                                                    style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
-                                                    onPress={() => {
-                                                        setReactionPickerMessageId(null);
-                                                        if (messageId) {
-                                                            handleToggleReaction(messageId, "", true);
-                                                        }
-                                                    }}
-                                                >
-                                                    <Ionicons name="close" size={17} color={colors.danger} />
-                                                </Pressable>
-                                            )}
-                                        </View>
-                                    )}
+                                    {renderInlineReactionPicker()}
                                     {!isOwn && (
                                         <View style={styles.senderNameRow}>
                                             <Text style={styles.senderName}>{senderName}</Text>
@@ -2609,7 +2651,7 @@ export const GroupChatScreen: React.FC<{
                                         style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
                                         hitSlop={8}
                                         onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
-                                        onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
+                                        onLongPress={(event) => messageId && openReactionPicker(event, messageId)}
                                         delayLongPress={220}
                                     >
                                         {hasDefaultReaction ? (
@@ -2629,6 +2671,7 @@ export const GroupChatScreen: React.FC<{
                                     style={[
                                         styles.messageBubble,
                                         isOwn ? styles.messageBubbleOwn : styles.messageBubbleOther,
+                                        reactionGroups.length > 0 && styles.messageBubbleWithReactions,
                                     ]}
                                 >
                                     {isForwarded && (
@@ -2637,42 +2680,7 @@ export const GroupChatScreen: React.FC<{
                                             <Text style={[styles.forwardedLabelText, isOwn && styles.forwardedLabelTextOwn]}>Chuyển tiếp</Text>
                                         </View>
                                     )}
-                                    {reactionPickerMessageId === messageId && (
-                                        <View style={[styles.quickReactionBar, isOwn ? styles.quickReactionBarOwn : styles.quickReactionBarOther]}>
-                                            {QUICK_REACTIONS.map((emoji) => {
-                                                const selected = ((item.reactions || []) as any[]).some(
-                                                    (reaction: any) => reaction?.emoji === emoji && currentUserId && reaction.userId === currentUserId
-                                                );
-                                                return (
-                                                    <Pressable
-                                                        key={emoji}
-                                                        style={[styles.quickReactionOption, selected && styles.quickReactionOptionSelected]}
-                                                        onPress={() => {
-                                                            setReactionPickerMessageId(null);
-                                                            if (messageId) {
-                                                                handleToggleReaction(messageId, emoji, false);
-                                                            }
-                                                        }}
-                                                    >
-                                                        <Text style={styles.quickReactionText}>{emoji}</Text>
-                                                    </Pressable>
-                                                );
-                                            })}
-                                            {hasDefaultReaction && (
-                                                <Pressable
-                                                    style={[styles.quickReactionOption, styles.quickReactionDeleteOption]}
-                                                    onPress={() => {
-                                                        setReactionPickerMessageId(null);
-                                                        if (messageId) {
-                                                            handleToggleReaction(messageId, "", true);
-                                                        }
-                                                    }}
-                                                >
-                                                    <Ionicons name="close" size={17} color={colors.danger} />
-                                                </Pressable>
-                                            )}
-                                        </View>
-                                    )}
+                                    {renderInlineReactionPicker()}
                                     {!isOwn && (
                                         <View style={styles.senderNameRow}>
                                             <Text style={styles.senderName}>
@@ -2747,7 +2755,7 @@ export const GroupChatScreen: React.FC<{
                                         style={[styles.quickHeartButton, isOwn ? styles.quickHeartButtonOwn : styles.quickHeartButtonOther]}
                                         hitSlop={8}
                                         onPress={() => messageId && handleToggleReaction(messageId, defaultReactionEmoji, false)}
-                                        onLongPress={() => setReactionPickerMessageId((value) => value === messageId ? null : messageId)}
+                                        onLongPress={(event) => messageId && openReactionPicker(event, messageId)}
                                         delayLongPress={220}
                                     >
                                         {hasDefaultReaction ? (
@@ -2776,7 +2784,7 @@ export const GroupChatScreen: React.FC<{
                     </HighlightableMessage>
                 );
             },
-            [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, getActionAnchorFromEvent, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId, handleOpenProfileCardUser, reactionPickerMessageId]
+            [user?.id, currentUserId, canManagePoll, chatState.polls, handleMessageLongPress, getActionAnchorFromEvent, handleToggleReaction, groupState.members, openImageViewer, messageMap, highlightedMessageId, handleOpenProfileCardUser, reactionPickerMessageId, reactionPickerAnchor, openReactionPicker]
         );
 
         const handleViewableItemsChanged = useCallback(
@@ -2812,7 +2820,7 @@ export const GroupChatScreen: React.FC<{
         );
 
         const getActionIconName = useCallback((label: string): keyof typeof Ionicons.glyphMap => {
-            if (label.includes("Trả lời")) return "return-up-back-outline";
+            if (label.includes("Trả lời")) return "chatbox-ellipses-outline";
             if (label.includes("Ghim")) return "pin";
             if (label.includes("Sửa")) return "create-outline";
             if (label.includes("Thu hồi")) return "refresh-outline";
@@ -2820,6 +2828,26 @@ export const GroupChatScreen: React.FC<{
             if (label.includes("Xóa")) return "trash-outline";
             return "ellipse-outline";
         }, []);
+
+        const closeAvatarFanMenu = useCallback(() => {
+            if (!showAvatarFanMenu || isClosingAvatarFanMenu) return;
+            setIsClosingAvatarFanMenu(true);
+        }, [isClosingAvatarFanMenu, showAvatarFanMenu]);
+
+        const clearAvatarFanMenu = useCallback(() => {
+            setShowAvatarFanMenu(false);
+            setIsClosingAvatarFanMenu(false);
+        }, []);
+
+        const toggleAvatarFanMenu = useCallback(() => {
+            if (showAvatarFanMenu) {
+                closeAvatarFanMenu();
+                return;
+            }
+
+            setIsClosingAvatarFanMenu(false);
+            setShowAvatarFanMenu(true);
+        }, [closeAvatarFanMenu, showAvatarFanMenu]);
 
         const avatarFanActions = useMemo<FanMenuAction[]>(() => {
             const actions: FanMenuAction[] = [];
@@ -2907,7 +2935,7 @@ export const GroupChatScreen: React.FC<{
                         </Pressable>
                     </View>
                     <View style={styles.groupAvatarMenuWrap}>
-                        <Pressable style={styles.groupHeaderAvatarWrap} onPress={() => setShowAvatarFanMenu((value) => !value)}>
+                        <Pressable style={styles.groupHeaderAvatarWrap} onPress={toggleAvatarFanMenu}>
                             {groupState.group?.avatarUrl ? (
                                 <Image
                                     source={{ uri: groupState.group.avatarUrl }}
@@ -2926,11 +2954,19 @@ export const GroupChatScreen: React.FC<{
                         {showAvatarFanMenu ? (
                             <GroupAvatarFanMenu
                                 actions={avatarFanActions}
-                                onDismiss={() => setShowAvatarFanMenu(false)}
+                                closing={isClosingAvatarFanMenu}
+                                onDismiss={closeAvatarFanMenu}
+                                onClosed={clearAvatarFanMenu}
                             />
                         ) : null}
                     </View>
                 </View>
+                {showAvatarFanMenu ? (
+                    <Pressable
+                        style={styles.avatarFanScreenDismiss}
+                        onPress={closeAvatarFanMenu}
+                    />
+                ) : null}
                 {activeGroupCall?.callId && callState.status === "idle" ? (
                     <Pressable style={styles.joinCallBanner} onPress={handleStartGroupCall}>
                         <View style={styles.joinCallBannerIcon}>
@@ -3049,7 +3085,10 @@ export const GroupChatScreen: React.FC<{
                                         chatActions.scrollToMessage(pinnedMsgId);
                                     }
                                 }}
-                                isAdmin={groupState?.group?.admins?.includes(currentUserId)}
+                                isAdmin={
+                                    String(groupState?.group?.ownerId || "") === String(currentUserId) ||
+                                    (groupState?.group?.admins || []).some((adminId: any) => String(adminId) === String(currentUserId))
+                                }
                             />
                         )}
                         <FlatList
@@ -3447,6 +3486,7 @@ export const GroupChatScreen: React.FC<{
                         anchor={actionMenuAnchor}
                         buttons={actionMenuButtons}
                         closing={isClosingActionMenu}
+                        layout={String(actionMenuMessage.senderId || "") === String(currentUserId) ? "fan-left" : "fan-right"}
                         getIconName={getActionIconName}
                         onActionPress={handleActionMenuButtonPress}
                         onDismiss={closeActionMenu}
@@ -3637,15 +3677,18 @@ const styles = StyleSheet.create({
         paddingHorizontal: 14,
         paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight || 0) + 6 : 8,
         paddingBottom: 6,
-        backgroundColor: "rgba(0,0,0,0.1)",
+        backgroundColor: "transparent",
         borderBottomWidth: 0,
         gap: 8,
+        overflow: "visible",
+        zIndex: 30,
+        elevation: 30,
     },
     backButton: {
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: "rgba(30,30,30,0.9)",
+        backgroundColor: "rgba(28,28,32,0.38)",
         borderWidth: 1,
         borderColor: colors.overlayWhite18,
         justifyContent: "center",
@@ -3656,17 +3699,13 @@ const styles = StyleSheet.create({
         maxWidth: 280,
         justifyContent: "center",
         alignItems: "center",
-        backgroundColor: "rgba(30,30,30,0.9)",
+        backgroundColor: "rgba(28,28,32,0.38)",
         borderRadius: 24,
         paddingVertical: 6,
         paddingHorizontal: 12,
         borderWidth: 1,
         borderColor: colors.overlayWhite18,
-        shadowColor: "#000000",
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.22,
-        shadowRadius: 12,
-        elevation: 6,
+        elevation: 0,
     },
     groupAvatarImage: {
         width: 40,
@@ -3680,7 +3719,7 @@ const styles = StyleSheet.create({
         borderRadius: 23,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "rgba(255,255,255,0.1)",
+        backgroundColor: "rgba(28,28,32,0.38)",
         borderWidth: 1,
         borderColor: colors.overlayWhite18,
     },
@@ -3688,30 +3727,45 @@ const styles = StyleSheet.create({
         width: 46,
         height: 46,
         position: "relative",
-        zIndex: 40,
+        overflow: "visible",
+        zIndex: 80,
+        elevation: 80,
     },
     avatarFanOverlay: {
         position: "absolute",
-        left: -140,
+        left: -154,
         right: -16,
-        top: -92,
-        bottom: -16,
-        zIndex: 60,
+        top: -16,
+        bottom: -150,
+        overflow: "visible",
+        zIndex: 90,
+        elevation: 90,
+    },
+    avatarFanScreenDismiss: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: "transparent",
+        zIndex: 20,
+        elevation: 20,
     },
     avatarFanMenu: {
         position: "absolute",
         right: 3,
-        top: 95,
+        top: 19,
         width: FAN_ICON_SIZE,
         height: FAN_ICON_SIZE,
         alignItems: "center",
         justifyContent: "center",
+        overflow: "visible",
+        zIndex: 100,
+        elevation: 100,
     },
     avatarFanActionWrap: {
         position: "absolute",
         width: FAN_ICON_SIZE,
         height: FAN_ICON_SIZE,
         borderRadius: FAN_ICON_SIZE / 2,
+        zIndex: 110,
+        elevation: 110,
     },
     avatarFanAction: {
         width: FAN_ICON_SIZE,
@@ -3726,7 +3780,7 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.28,
         shadowRadius: 10,
-        elevation: 9,
+        elevation: 110,
     },
     chatHeaderTitle: {
         fontSize: 16,
@@ -3744,7 +3798,7 @@ const styles = StyleSheet.create({
         width: 28,
         height: 28,
         borderRadius: 14,
-        backgroundColor: "rgba(30,30,30,0.84)",
+        backgroundColor: "rgba(28,28,32,0.38)",
         borderWidth: 1,
         borderColor: colors.overlayWhite18,
         justifyContent: "center",
@@ -3801,6 +3855,7 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "flex-end",
         gap: 8,
+        position: "relative",
     },
     pollWidgetRow: {
         alignItems: "center",
@@ -3838,12 +3893,15 @@ const styles = StyleSheet.create({
     messageBubble: {
         maxWidth: "100%",
         minWidth: 76,
-        borderRadius: 18,
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        paddingBottom: 18,
-        marginBottom: 10,
+        borderRadius: 17,
+        paddingHorizontal: 11,
+        paddingVertical: 5,
+        paddingBottom: 8,
+        marginBottom: 7,
         position: "relative",
+    },
+    messageBubbleWithReactions: {
+        marginBottom: 18,
     },
     messageBubbleOwn: {
         backgroundColor: colors.bubbleOutgoingBgTransparent,
@@ -3868,7 +3926,7 @@ const styles = StyleSheet.create({
     },
     messageText: {
         fontSize: 15,
-        lineHeight: 20,
+        lineHeight: 18,
         fontWeight: "500",
     },
     messageTextOwn: {
@@ -3900,16 +3958,16 @@ const styles = StyleSheet.create({
         alignSelf: "flex-start",
     },
     messageTime: {
-        fontSize: 11,
+        fontSize: 10,
         color: colors.overlayWhite75,
-        marginTop: 6,
+        marginTop: 1,
     },
     messageMetaRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "flex-end",
         gap: 6,
-        marginTop: 6,
+        marginTop: 1,
     },
     messageStatusText: {
         fontSize: 10,
@@ -3934,7 +3992,6 @@ const styles = StyleSheet.create({
     },
     reactionRow: {
         position: "absolute",
-        left: 0,
         bottom: -12,
         flexDirection: "row",
         flexWrap: "wrap",
@@ -3943,9 +4000,11 @@ const styles = StyleSheet.create({
         elevation: 5,
     },
     reactionRowOwn: {
+        left: 18,
         justifyContent: "flex-start",
     },
     reactionRowOther: {
+        right: 18,
         justifyContent: "flex-start",
     },
     reactionPill: {
@@ -3981,7 +4040,7 @@ const styles = StyleSheet.create({
         color: colors.overlayWhite75,
     },
     mediaReactionWrap: {
-        marginBottom: 10,
+        marginBottom: 18,
         minWidth: 76,
         position: "relative",
     },
@@ -3998,7 +4057,7 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     quickHeartButtonOwn: {
-        right: -8,
+        left: -8,
     },
     quickHeartButtonOther: {
         right: -8,
@@ -4021,14 +4080,19 @@ const styles = StyleSheet.create({
         backgroundColor: colors.surfaceElevated,
         borderWidth: 1,
         borderColor: colors.border,
-        zIndex: 10,
-        elevation: 10,
+        zIndex: 999,
+        elevation: 999,
     },
     quickReactionBarOwn: {
         right: 0,
     },
     quickReactionBarOther: {
         left: 0,
+    },
+    quickReactionModalBar: {
+        bottom: undefined,
+        right: undefined,
+        position: "absolute",
     },
     quickReactionOption: {
         width: 28,
@@ -4229,13 +4293,16 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         paddingVertical: 8,
         gap: 8,
-        backgroundColor: colors.surfaceTransparent,
-        borderTopWidth: 1,
-        borderTopColor: colors.overlayWhite10,
+        backgroundColor: "transparent",
+        borderTopWidth: 0,
     },
     composerIconButton: {
-        paddingHorizontal: 8,
-        paddingVertical: 4,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
+        backgroundColor: "rgba(28,28,32,0.46)",
         justifyContent: "center",
         alignItems: "center",
     },
@@ -4243,10 +4310,10 @@ const styles = StyleSheet.create({
         flex: 1,
         flexDirection: "row",
         alignItems: "center",
-        backgroundColor: colors.inputBgTransparent,
+        backgroundColor: "rgba(28,28,32,0.46)",
         borderRadius: 22,
         borderWidth: 1,
-        borderColor: colors.overlayWhite10,
+        borderColor: colors.overlayWhite18,
         paddingHorizontal: 16,
     },
     composerInput: {
@@ -4348,7 +4415,9 @@ const styles = StyleSheet.create({
         backgroundColor: colors.accentStrong,
     },
     composerMicButton: {
-        backgroundColor: colors.inputBgTransparent,
+        backgroundColor: "rgba(28,28,32,0.46)",
+        borderWidth: 1,
+        borderColor: colors.overlayWhite18,
     },
     composerActionButtonDisabled: {
         opacity: 0.5,

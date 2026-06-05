@@ -15,6 +15,7 @@ type MessageActionBarProps = {
     anchor: MessageActionAnchor;
     buttons: MessageActionButton[];
     closing: boolean;
+    layout?: "horizontal" | "fan-left" | "fan-right";
     getIconName: (label: string) => keyof typeof Ionicons.glyphMap;
     onActionPress: (button: MessageActionButton) => void;
     onDismiss: () => void;
@@ -25,20 +26,37 @@ const ACTION_SIZE = 40;
 const ACTION_GAP = 8;
 const BAR_HEIGHT = 52;
 const STAGGER_MS = 24;
+const FAN_RADIUS = 90;
+const FAN_START_DEG = -90;
+const FAN_END_DEG = 90;
+
+const getFanOffset = (index: number, count: number, layout: "fan-left" | "fan-right") => {
+    const progress = count <= 1 ? 0.5 : index / (count - 1);
+    const angle = (FAN_START_DEG + (FAN_END_DEG - FAN_START_DEG) * progress) * (Math.PI / 180);
+    const x = Math.cos(angle) * FAN_RADIUS + 24;
+    const y = Math.sin(angle) * FAN_RADIUS;
+
+    return {
+        x: layout === "fan-left" ? -x : x,
+        y,
+    };
+};
 
 export const MessageActionBar: React.FC<MessageActionBarProps> = ({
     anchor,
     buttons,
     closing,
+    layout = "horizontal",
     getIconName,
     onActionPress,
     onDismiss,
     onClosed,
 }) => {
-    const { width } = useWindowDimensions();
+    const { width, height } = useWindowDimensions();
     const animatedValues = useRef<Animated.Value[]>([]);
     const barProgress = useRef(new Animated.Value(0)).current;
     const visibleButtons = useMemo(() => buttons.filter((button) => button.style !== "cancel"), [buttons]);
+    const isFanLayout = layout === "fan-left" || layout === "fan-right";
 
     if (animatedValues.current.length !== visibleButtons.length) {
         animatedValues.current = visibleButtons.map((_, index) => animatedValues.current[index] || new Animated.Value(0));
@@ -69,6 +87,28 @@ export const MessageActionBar: React.FC<MessageActionBarProps> = ({
         inputRange: [0, 1],
         outputRange: [0.7, 1],
     });
+    const fanButtonPositions = useMemo(() => {
+        if (!isFanLayout) return [];
+
+        return visibleButtons.map((_, index) => {
+            const offset = getFanOffset(index, visibleButtons.length, layout);
+            const finalLeft = Math.min(
+                Math.max(8, anchorCenterX + offset.x - ACTION_SIZE / 2),
+                width - ACTION_SIZE - 8,
+            );
+            const finalTop = Math.min(
+                Math.max(8, anchorCenterY + offset.y - ACTION_SIZE / 2),
+                height - ACTION_SIZE - 8,
+            );
+
+            return {
+                left: finalLeft,
+                top: finalTop,
+                initialTranslateX: anchorCenterX - (finalLeft + ACTION_SIZE / 2),
+                initialTranslateY: anchorCenterY - (finalTop + ACTION_SIZE / 2),
+            };
+        });
+    }, [anchorCenterX, anchorCenterY, height, isFanLayout, layout, visibleButtons, width]);
 
     useEffect(() => {
         barProgress.setValue(0);
@@ -124,66 +164,49 @@ export const MessageActionBar: React.FC<MessageActionBarProps> = ({
     return (
         <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
             <Pressable style={StyleSheet.absoluteFill} onPress={onDismiss} />
-            <Animated.View
-                style={[
-                    styles.barWrap,
-                    {
-                        left: rowLeft,
-                        top: rowTop,
-                        width: barWidth,
-                        opacity: barProgress,
-                        transform: [
-                            { translateX: barTranslateX },
-                            { translateY: barTranslateY },
-                            { scaleX: barScaleX },
-                            { scaleY: barScaleY },
-                        ],
-                    },
-                ]}
-            >
-                <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.barContent}
-                    keyboardShouldPersistTaps="handled"
-                >
+            {isFanLayout ? (
+                <>
                     {visibleButtons.map((button, index) => {
                         const progress = animatedValues.current[index];
-                        const finalCenterX = rowLeft + 12 + index * (ACTION_SIZE + ACTION_GAP) + ACTION_SIZE / 2;
-                        const finalCenterY = rowTop + 6 + ACTION_SIZE / 2;
-                        const initialTranslateX = anchorCenterX - finalCenterX;
-                        const initialTranslateY = anchorCenterY - finalCenterY;
+                        const position = fanButtonPositions[index];
+                        if (!position) return null;
 
                         return (
                             <Animated.View
                                 key={`${button.text}-${index}`}
-                                style={{
-                                    opacity: progress,
-                                    transform: [
-                                        {
-                                            translateX: progress.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [initialTranslateX, 0],
-                                            }),
-                                        },
-                                        {
-                                            translateY: progress.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [initialTranslateY, 0],
-                                            }),
-                                        },
-                                        {
-                                            scale: progress.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [0.8, 1],
-                                            }),
-                                        },
-                                    ],
-                                }}
+                                style={[
+                                    styles.fanActionWrap,
+                                    {
+                                        left: position.left,
+                                        top: position.top,
+                                        opacity: progress,
+                                        transform: [
+                                            {
+                                                translateX: progress.interpolate({
+                                                    inputRange: [0, 1],
+                                                    outputRange: [position.initialTranslateX, 0],
+                                                }),
+                                            },
+                                            {
+                                                translateY: progress.interpolate({
+                                                    inputRange: [0, 1],
+                                                    outputRange: [position.initialTranslateY, 0],
+                                                }),
+                                            },
+                                            {
+                                                scale: progress.interpolate({
+                                                    inputRange: [0, 1],
+                                                    outputRange: [0.8, 1],
+                                                }),
+                                            },
+                                        ],
+                                    },
+                                ]}
                             >
                                 <Pressable
                                     style={[
                                         styles.actionButton,
+                                        styles.fanActionButton,
                                         button.style === "destructive" && styles.actionButtonDanger,
                                     ]}
                                     onPress={() => onActionPress(button)}
@@ -194,14 +217,90 @@ export const MessageActionBar: React.FC<MessageActionBarProps> = ({
                                         color={button.style === "destructive" ? colors.dangerSoft : colors.text}
                                     />
                                 </Pressable>
-                                <Text style={styles.actionLabel} numberOfLines={1}>
-                                    {button.text}
-                                </Text>
                             </Animated.View>
                         );
                     })}
-                </ScrollView>
-            </Animated.View>
+                </>
+            ) : (
+                <Animated.View
+                    style={[
+                        styles.barWrap,
+                        {
+                            left: rowLeft,
+                            top: rowTop,
+                            width: barWidth,
+                            opacity: barProgress,
+                            transform: [
+                                { translateX: barTranslateX },
+                                { translateY: barTranslateY },
+                                { scaleX: barScaleX },
+                                { scaleY: barScaleY },
+                            ],
+                        },
+                    ]}
+                >
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.barContent}
+                        keyboardShouldPersistTaps="handled"
+                    >
+                        {visibleButtons.map((button, index) => {
+                            const progress = animatedValues.current[index];
+                            const finalCenterX = rowLeft + 12 + index * (ACTION_SIZE + ACTION_GAP) + ACTION_SIZE / 2;
+                            const finalCenterY = rowTop + 6 + ACTION_SIZE / 2;
+                            const initialTranslateX = anchorCenterX - finalCenterX;
+                            const initialTranslateY = anchorCenterY - finalCenterY;
+
+                            return (
+                                <Animated.View
+                                    key={`${button.text}-${index}`}
+                                    style={{
+                                        opacity: progress,
+                                        transform: [
+                                            {
+                                                translateX: progress.interpolate({
+                                                    inputRange: [0, 1],
+                                                    outputRange: [initialTranslateX, 0],
+                                                }),
+                                            },
+                                            {
+                                                translateY: progress.interpolate({
+                                                    inputRange: [0, 1],
+                                                    outputRange: [initialTranslateY, 0],
+                                                }),
+                                            },
+                                            {
+                                                scale: progress.interpolate({
+                                                    inputRange: [0, 1],
+                                                    outputRange: [0.8, 1],
+                                                }),
+                                            },
+                                        ],
+                                    }}
+                                >
+                                    <Pressable
+                                        style={[
+                                            styles.actionButton,
+                                            button.style === "destructive" && styles.actionButtonDanger,
+                                        ]}
+                                        onPress={() => onActionPress(button)}
+                                    >
+                                        <Ionicons
+                                            name={getIconName(button.text)}
+                                            size={19}
+                                            color={button.style === "destructive" ? colors.dangerSoft : colors.text}
+                                        />
+                                    </Pressable>
+                                    <Text style={styles.actionLabel} numberOfLines={1}>
+                                        {button.text}
+                                    </Text>
+                                </Animated.View>
+                            );
+                        })}
+                    </ScrollView>
+                </Animated.View>
+            )}
         </View>
     );
 };
@@ -240,6 +339,19 @@ const styles = StyleSheet.create({
     actionButtonDanger: {
         borderColor: "rgba(255,107,107,0.4)",
         backgroundColor: "rgba(239,68,68,0.18)",
+    },
+    fanActionWrap: {
+        position: "absolute",
+        width: ACTION_SIZE,
+        height: ACTION_SIZE,
+        borderRadius: ACTION_SIZE / 2,
+    },
+    fanActionButton: {
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.28,
+        shadowRadius: 10,
+        elevation: 12,
     },
     actionLabel: {
         display: "none",
