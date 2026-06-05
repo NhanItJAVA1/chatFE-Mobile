@@ -56,6 +56,11 @@ interface CallState {
     error: string | null;
 }
 
+interface WaitingCallState {
+    payload: CallSocketPayload;
+    displayName: string;
+}
+
 interface CallVideoTile {
     id: string;
     participantIdentity: string;
@@ -124,10 +129,13 @@ interface CallContextValue {
     videoTiles: CallVideoTile[];
     isCameraEnabled: boolean;
     isMicrophoneEnabled: boolean;
+    waitingCall: WaitingCallState | null;
     startCall: (conversationIdOrOptions: string | StartCallOptions, type?: CallType) => Promise<void>;
     joinActiveCall: (call: CallSession, conversationType?: CallConversationType) => Promise<void>;
     acceptCall: () => Promise<void>;
     rejectCall: () => Promise<void>;
+    acceptWaitingCall: () => Promise<void>;
+    rejectWaitingCall: () => Promise<void>;
     endCall: () => Promise<void>;
     toggleCamera: () => Promise<void>;
     toggleMicrophone: () => Promise<void>;
@@ -187,6 +195,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
     const [videoTiles, setVideoTiles] = useState<CallVideoTile[]>([]);
     const [isCameraEnabled, setIsCameraEnabled] = useState(false);
     const [isMicrophoneEnabled, setIsMicrophoneEnabled] = useState(false);
+    const [waitingCall, setWaitingCall] = useState<WaitingCallState | null>(null);
     const stateRef = useRef<CallState>(initialState);
     const currentUserIdRef = useRef(currentUserId);
     const roomRef = useRef<Room | null>(null);
@@ -220,6 +229,17 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             "";
 
         return rawUserId ? String(rawUserId) : "";
+    }, []);
+
+    const getPayloadDisplayName = useCallback((payload: CallSocketPayload) => {
+        return String(
+            (payload as any).callerName ||
+            (payload as any).displayName ||
+            (payload as any).name ||
+            (payload as any).caller?.name ||
+            (payload as any).user?.name ||
+            (payload.callerId ? `Người gọi ${String(payload.callerId).slice(-4)}` : "Người gọi"),
+        );
     }, []);
 
     const updateParticipantStatus = useCallback((payload: CallSocketPayload, status: CallParticipantStatus) => {
@@ -379,7 +399,25 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
     const showIncomingCall = useCallback(
         (payload: CallSocketPayload) => {
             if (!payload.callId || payload.callerId === currentUserId) return;
-            if (currentCallIdRef.current && currentCallIdRef.current !== payload.callId) return;
+            const currentState = stateRef.current;
+            if (
+                currentCallIdRef.current &&
+                currentCallIdRef.current !== payload.callId &&
+                currentState.status !== "idle"
+            ) {
+                setWaitingCall({
+                    payload,
+                    displayName: getPayloadDisplayName(payload),
+                });
+                return;
+            }
+            if (
+                currentCallIdRef.current === payload.callId &&
+                currentState.status !== "idle" &&
+                currentState.status !== "incoming"
+            ) {
+                return;
+            }
 
             currentCallIdRef.current = payload.callId;
             participantsRef.current = {};
@@ -390,12 +428,12 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             void startRingtone();
             clearIncomingTimer();
             incomingTimerRef.current = setTimeout(() => {
-                if (payload.callId === currentCallIdRef.current) {
+                if (payload.callId === currentCallIdRef.current && stateRef.current.status === "incoming") {
                     void callService.missedCall(payload.callId).finally(resetCall);
                 }
             }, 30000);
         },
-        [clearIncomingTimer, currentUserId, resetCall, startRingtone],
+        [clearIncomingTimer, currentUserId, getPayloadDisplayName, resetCall, startRingtone],
     );
 
     const connectToLiveKit = useCallback(
@@ -545,7 +583,11 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                     clearOutgoingTimer();
                     outgoingTimerRef.current = setTimeout(() => {
                         const hasRemoteParticipant = roomRef.current?.remoteParticipants.size > 0;
-                        if (currentCallIdRef.current === created.call.callId && !hasRemoteParticipant) {
+                        if (
+                            currentCallIdRef.current === created.call.callId &&
+                            stateRef.current.status === "calling" &&
+                            !hasRemoteParticipant
+                        ) {
                             void callService.endCall(created.call.callId).finally(resetCall);
                         }
                     }, 15000);
@@ -645,6 +687,65 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
         state.status,
     ]);
 
+    const acceptWaitingCall = useCallback(async () => {
+        const nextCall = waitingCall;
+        if (!nextCall?.payload?.callId) return;
+
+        setWaitingCall(null);
+        try {
+            if (currentCallIdRef.current) {
+                await endCall();
+            }
+
+            const payload = nextCall.payload;
+            const conversationType =
+                payload.conversationType ||
+                (payload.isGroup ? "GROUP" : "PRIVATE");
+            const nextType = payload.type || "audio";
+
+            currentCallIdRef.current = payload.callId;
+            participantsRef.current = {};
+            if (payload.callerId) {
+                participantsRef.current[String(payload.callerId)] = { status: "joined" };
+            }
+            if (currentUserIdRef.current) {
+                participantsRef.current[currentUserIdRef.current] = { status: "joined" };
+            }
+
+            dispatch({
+                type: "CALLING",
+                conversationType,
+                call: {
+                    callId: payload.callId,
+                    conversationId: payload.conversationId,
+                    callerId: payload.callerId || "",
+                    type: nextType,
+                    roomName: payload.roomName,
+                    livekitProvider: payload.livekitProvider,
+                },
+            });
+            await joinAndConnect(payload.callId, nextType);
+        } catch (error) {
+            const message = getErrorMessage(error, "Không thể chuyển sang cuộc gọi mới");
+            dispatch({ type: "ERROR", error: message });
+            Alert.alert("Lỗi cuộc gọi", message);
+            await resetCall();
+        }
+    }, [endCall, joinAndConnect, resetCall, waitingCall]);
+
+    const rejectWaitingCall = useCallback(async () => {
+        const nextCall = waitingCall;
+        setWaitingCall(null);
+        if (!nextCall?.payload?.callId) return;
+
+        try {
+            await callService.rejectCall(nextCall.payload.callId);
+            callSocket.leaveCallRoom(nextCall.payload.callId);
+        } catch (error) {
+            Alert.alert("Lỗi cuộc gọi", getErrorMessage(error, "Không thể từ chối cuộc gọi"));
+        }
+    }, [waitingCall]);
+
     const toggleCamera = useCallback(async () => {
         const room = roomRef.current;
         if (!room || state.status !== "active") return;
@@ -689,6 +790,7 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                     showIncomingCall(payload);
                 }),
                 callSocket.on<CallSocketPayload>("call:ended", (payload) => {
+                    setWaitingCall((current) => current?.payload.callId === payload.callId ? null : current);
                     if (payload.callId === currentCallIdRef.current) {
                         void resetCall();
                     }
@@ -714,22 +816,34 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                 }),
                 callSocket.on<CallSocketPayload>("call:declined", (payload) => {
+                    setWaitingCall((current) => current?.payload.callId === payload.callId ? null : current);
                     if (payload.callId === currentCallIdRef.current) {
                         updateParticipantStatus(payload, "declined");
+                        if (stateRef.current.status === "active") {
+                            return;
+                        }
                         Alert.alert("Cuộc gọi", "Đối phương đã từ chối cuộc gọi.");
                         void resetCall();
                     }
                 }),
                 callSocket.on<CallSocketPayload>("call:missed", (payload) => {
+                    setWaitingCall((current) => current?.payload.callId === payload.callId ? null : current);
                     if (payload.callId === currentCallIdRef.current) {
                         updateParticipantStatus(payload, "missed");
+                        if (stateRef.current.status === "active") {
+                            return;
+                        }
                         Alert.alert("Cuộc gọi", "Cuộc gọi không được trả lời.");
                         void resetCall();
                     }
                 }),
                 callSocket.on<CallSocketPayload>("call:busy", (payload) => {
+                    setWaitingCall((current) => current?.payload.callId === payload.callId ? null : current);
                     if (payload.callId === currentCallIdRef.current) {
                         updateParticipantStatus(payload, "busy");
+                        if (stateRef.current.status === "active") {
+                            return;
+                        }
                         Alert.alert("Cuộc gọi", "Người nhận đang bận.");
                         void resetCall();
                     }
@@ -762,26 +876,32 @@ export const CallProvider = ({ children }: { children: React.ReactNode }) => {
             videoTiles,
             isCameraEnabled,
             isMicrophoneEnabled,
+            waitingCall,
             startCall,
             joinActiveCall,
             acceptCall,
             rejectCall,
+            acceptWaitingCall,
+            rejectWaitingCall,
             endCall,
             toggleCamera,
             toggleMicrophone,
         }),
         [
+            acceptWaitingCall,
             acceptCall,
             endCall,
             isCameraEnabled,
             isMicrophoneEnabled,
             joinActiveCall,
+            rejectWaitingCall,
             rejectCall,
             startCall,
             state,
             toggleCamera,
             toggleMicrophone,
             videoTiles,
+            waitingCall,
         ],
     );
 
@@ -893,8 +1013,11 @@ const CallOverlay = () => {
         videoTiles,
         isCameraEnabled,
         isMicrophoneEnabled,
+        waitingCall,
         acceptCall,
         rejectCall,
+        acceptWaitingCall,
+        rejectWaitingCall,
         endCall,
         toggleCamera,
         toggleMicrophone,
@@ -910,6 +1033,26 @@ const CallOverlay = () => {
     return (
         <Modal transparent animationType="fade" visible>
             <View style={styles.overlay}>
+                {waitingCall ? (
+                    <View style={styles.waitingBanner}>
+                        <View style={styles.waitingTextWrap}>
+                            <Text style={styles.waitingTitle} numberOfLines={1}>
+                                {waitingCall.displayName}
+                            </Text>
+                            <Text style={styles.waitingSubtitle} numberOfLines={1}>
+                                Đang gọi đến
+                            </Text>
+                        </View>
+                        <View style={styles.waitingActions}>
+                            <Pressable style={[styles.waitingButton, styles.waitingReject]} onPress={rejectWaitingCall}>
+                                <Ionicons name="call" size={18} color="#FFFFFF" />
+                            </Pressable>
+                            <Pressable style={[styles.waitingButton, styles.waitingAccept]} onPress={acceptWaitingCall}>
+                                <Ionicons name="call" size={18} color="#FFFFFF" />
+                            </Pressable>
+                        </View>
+                    </View>
+                ) : null}
                 <View style={[styles.card, isActive && hasVideo && styles.videoCard]}>
                     {isActive && hasVideo ? (
                         <View style={styles.videoStage}>
@@ -1047,6 +1190,57 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         padding: 24,
+    },
+    waitingBanner: {
+        position: "absolute",
+        top: 48,
+        left: 16,
+        right: 16,
+        zIndex: 100,
+        elevation: 100,
+        minHeight: 62,
+        borderRadius: 18,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        backgroundColor: "rgba(22,22,22,0.94)",
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.14)",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    waitingTextWrap: {
+        flex: 1,
+        minWidth: 0,
+    },
+    waitingTitle: {
+        color: "#FFFFFF",
+        fontSize: 15,
+        fontWeight: "800",
+    },
+    waitingSubtitle: {
+        color: "rgba(255,255,255,0.68)",
+        fontSize: 12,
+        marginTop: 2,
+        fontWeight: "600",
+    },
+    waitingActions: {
+        flexDirection: "row",
+        gap: 10,
+    },
+    waitingButton: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    waitingReject: {
+        backgroundColor: "#DC2626",
+        transform: [{ rotate: "135deg" }],
+    },
+    waitingAccept: {
+        backgroundColor: "#16A34A",
     },
     card: {
         width: "100%",
